@@ -1,3 +1,0 @@
-plumbum==1.9.0
-pyparsing==3.2.3
-rpyc==6.0.2
