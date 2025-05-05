@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mt5linux"
+version = "0.2.0"
+description = "MetaTrader5 for linux users"
+readme = "README.md"
+authors = [
+  { name = "Lucas Prett Campagna" }
+]
+license = { file = "LICENSE.txt" }
+requires-python = ">=3.7"
+dependencies = [
+  "plumbum==1.9.0",
+  "pyparsing==3.2.3",
+  "rpyc==6.0.2"
+]
+keywords = ["MetaTrader5", "linux", "wine", "rpyc"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux"
+]
+
+[project.urls]
+Homepage = "https://github.com/lucas-campagna/mt5linux"
+
