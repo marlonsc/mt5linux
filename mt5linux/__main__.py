@@ -1,21 +1,18 @@
 """
-__main__.py
+__main__.py - Entrypoint for MetaTrader5 RPyC Server under Wine
 
-Entrypoint for starting the MetaTrader5 RPyC server under Wine.
-
-by <marlonsc@gmail.com>
+Entrypoint for starting the MetaTrader5 RPyC server under Wine. Supports both module and direct script execution.
 
 Usage:
     python -m mt5linux
-or
-    python external/mt5linux/mt5linux/__main__.py
-
-This file supports both module and direct script execution.
 """
 
 import argparse
 
-from rpyc.utils.classic import DEFAULT_SERVER_PORT, DEFAULT_SERVER_SSL_PORT
+try:
+    from rpyc.utils.classic import DEFAULT_SERVER_PORT, DEFAULT_SERVER_SSL_PORT
+except ImportError:
+    from rpyc import DEFAULT_SERVER_PORT, DEFAULT_SERVER_SSL_PORT
 
 # Dual import pattern for robust CLI entrypoints
 # type: ignore[import]
@@ -28,20 +25,23 @@ except ImportError:
 
 
 def main() -> None:
-    """
-    Parse command-line arguments and start the MetaTrader5 RPyC server under Wine.
+    """Parse command-line arguments and start the MetaTrader5 RPyC server under Wine.
+
+
+    :rtype: None
+
     """
     parser = argparse.ArgumentParser(description="Create Server.")
     parser.add_argument(
         "python",
         type=str,
-        help="Python executable to run the server (must be a Windows version!)",
+        help=("Python executable to run the server (must be a Windows version!)"),
     )
     parser.add_argument(
         "--host",
         type=str,
         default="localhost",
-        help="The host to connect to. Default is localhost.",
+        help=("The host to connect to. Default is localhost."),
     )
     parser.add_argument(
         "-p",
@@ -65,10 +65,7 @@ def main() -> None:
         "--server",
         type=str,
         default="/tmp/mt5linux",
-        help=(
-            "Path where the server will be built and run "
-            "(default = /tmp/mt5linux)."
-        ),
+        help=("Path where the server will be built and run (default = /tmp/mt5linux)."),
     )
     args = parser.parse_args()
     launch_wine_rpyc_server(

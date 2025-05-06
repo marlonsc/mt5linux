@@ -1,3 +1,4 @@
+# pylint: disable=no-name-in-module
 from mt5linux import MetaTrader5
 
 mt5 = MetaTrader5(port=1235)

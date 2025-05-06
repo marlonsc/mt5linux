@@ -1,14 +1,17 @@
+"""
+api_history.py - MetaTrader5 History API for Neptor
+
+# NOTE: This module exceeds 1000 lines due to the need for full API compatibility and extensive
+documentation. This exception is justified and documented per Neptor and GEN-AI guidelines.
+
+Provides order, deal, and position history methods compatible with the official MetaTrader5 Python API. Used for historical queries and reporting in the Neptor platform.
+"""
+
 # flake8: noqa: E501
 # fmt: off
 # pylance: disable=reportLineTooLong
 # pylint: disable=line-too-long
 # noqa: E501
-
-"""
-MetaTrader5 History API
-
-Provides order, deal, and position history methods compatible with the official MetaTrader5 Python API.
-"""
 
 from typing import Any
 
@@ -19,152 +22,167 @@ class MetaTrader5HistoryAPI:
     """Order, deal, and position history for MetaTrader5."""
 
     def __init__(self, host: str = 'localhost', port: int = 18812) -> None:
+        """
+
+        :param host:  (Default value = 'localhost')
+        :type host: str
+        :param port:  (Default value = 18812)
+        :type port: int
+        :rtype: None
+
+        """
         self.__conn: Any = rpyc.classic.connect(host, port)  # type: ignore
         self.__conn._config['sync_request_timeout'] = 300
         self.__conn.execute('import MetaTrader5 as mt5')
 
     def orders_total(self, *args: object, **kwargs: object) -> Any:
-        """Get the number of active orders."""
+        """Get the number of active orders.
+
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :rtype: Any
+
+        """
         code = f'mt5.orders_total(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def orders_get(self, *args: object, **kwargs: object) -> Any:
-        r'''
-# orders_get
+        r"""# orders_get
 
-Get active orders with the ability to filter by symbol or ticket. There are three call options.
+        Get active orders with the ability to filter by symbol or ticket. There are three call options.
 
-Call without parameters. Return active orders on all symbols.
+        Call without parameters. Return active orders on all symbols.
 
-```python
-orders_get()
-```
+        ```python
+        orders_get()
+        ```
 
-Call specifying a symbol active orders should be received for.
+        Call specifying a symbol active orders should be received for.
 
-```python
-orders_get(
-    symbol="SYMBOL"      # symbol name
-)
-```
+        ```python
+        orders_get(
+            symbol="SYMBOL"      # symbol name
+        )
+        ```
 
-Call specifying a group of symbols active orders should be received for.
+        Call specifying a group of symbols active orders should be received for.
 
-```python
-orders_get(
-    group="GROUP"        # filter for selecting orders for symbols
-)
-```
+        ```python
+        orders_get(
+            group="GROUP"        # filter for selecting orders for symbols
+        )
+        ```
 
-Call specifying the order ticket.
+        Call specifying the order ticket.
 
-```python
-orders_get(
-   ticket=TICKET        # ticket
-)
-```
+        ```python
+        orders_get(
+        ticket=TICKET        # ticket
+        )
+        ```
 
-- symbol="SYMBOL"
+        - symbol="SYMBOL"
+            [in]  Symbol name. Optional named parameter. If a symbol is specified, the ticket parameter is ignored.
 
-    [in]  Symbol name. Optional named parameter. If a symbol is specified, the ticket parameter is ignored.
+        - group="GROUP"
+            [in]  The filter for arranging a group of necessary symbols. Optional named parameter. If the group is specified, the function returns only active orders meeting a specified criteria for a symbol name.
 
-- group="GROUP"
+        - ticket=TICKET
+            [in]  Order ticket (ORDER_TICKET). Optional named parameter.
 
-    [in]  The filter for arranging a group of necessary symbols. Optional named parameter. If the group is specified, the function returns only active orders meeting a specified criteria for a symbol name.
+        ## Return Value
 
-- ticket=TICKET
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
-    [in]  Order ticket (ORDER_TICKET). Optional named parameter.
+        The function allows receiving all active orders within one call similar to the OrdersTotal and OrderSelect tandem.
 
-## Return Value
+        The group parameter allows sorting out orders by symbols. '*' can be used at the beginning and the end of a string.
 
-Return info in the form of a named tuple structure (namedtuple). Return None in case of an error. The info on the error can be obtained using `last_error()`.
+        The group parameter may contain several comma separated conditions. A condition can be set as a mask using '*'. The logical negation symbol '!' can be used for an exclusion. All conditions are applied sequentially, which means conditions of including to a group should be specified first followed by an exclusion condition. For example, group="*, !EUR" means that orders for all symbols should be selected first and the ones containing "EUR" in symbol names should be excluded afterwards.
 
-## Note
+        ## Example:
 
-The function allows receiving all active orders within one call similar to the OrdersTotal and OrderSelect tandem.
+        ```python
+        import MetaTrader5 as mt5
+        import pandas as pd
+        pd.set_option('display.max_columns', 500) # number of columns to be displayed
+        pd.set_option('display.width', 1500)      # max table width to display
+        # display data on the MetaTrader 5 package
+        print("MetaTrader5 package author: ",mt5.__author__)
+        print("MetaTrader5 package version: ",mt5.__version__)
+        print()
+        # establish connection to the MetaTrader 5 terminal
+        if not mt5.initialize():
+            print("initialize() failed, error code =",mt5.last_error())
+            quit()
 
-The group parameter allows sorting out orders by symbols. '*' can be used at the beginning and the end of a string.
+        # display data on active orders on GBPUSD
+        orders=mt5.orders_get(symbol="GBPUSD")
+        if orders is None:
+            print("No orders on GBPUSD, error code={}".format(mt5.last_error()))
+        else:
+            print("Total orders on GBPUSD:",len(orders))
+            # display all active orders
+            for order in orders:
+                print(order)
+        print()
 
-The group parameter may contain several comma separated conditions. A condition can be set as a mask using '*'. The logical negation symbol '!' can be used for an exclusion. All conditions are applied sequentially, which means conditions of including to a group should be specified first followed by an exclusion condition. For example, group="*, !EUR" means that orders for all symbols should be selected first and the ones containing "EUR" in symbol names should be excluded afterwards.
+        # get the list of orders on symbols whose names contain "*GBP*"
+        gbp_orders=mt5.orders_get(group="*GBP*")
+        if gbp_orders is None:
+            print("No orders with group=\"*GBP*\", error code={}".format(mt5.last_error()))
+        else:
+            print("orders_get(group=\"*GBP*\")={}".format(len(gbp_orders)))
+            # display these orders as a table using pandas.DataFrame
+            df=pd.DataFrame(list(gbp_orders),columns=gbp_orders[0]._asdict().keys())
+            df.drop(['time_done', 'time_done_msc', 'position_id', 'position_by_id', 'reason', 'volume_initial', 'price_stoplimit'], axis=1, inplace=True)
+            df['time_setup'] = pd.to_datetime(df['time_setup'], unit='s')
+            print(df)
 
-## Example:
+        # shut down connection to the MetaTrader 5 terminal
+        mt5.shutdown()
+        ```
 
-```python
-import MetaTrader5 as mt5
-import pandas as pd
-pd.set_option('display.max_columns', 500) # number of columns to be displayed
-pd.set_option('display.width', 1500)      # max table width to display
-# display data on the MetaTrader 5 package
-print("MetaTrader5 package author: ",mt5.__author__)
-print("MetaTrader5 package version: ",mt5.__version__)
-print()
-# establish connection to the MetaTrader 5 terminal
-if not mt5.initialize():
-    print("initialize() failed, error code =",mt5.last_error())
-    quit()
+        ## Result:
 
-# display data on active orders on GBPUSD
-orders=mt5.orders_get(symbol="GBPUSD")
-if orders is None:
-    print("No orders on GBPUSD, error code={}".format(mt5.last_error()))
-else:
-    print("Total orders on GBPUSD:",len(orders))
-    # display all active orders
-    for order in orders:
-        print(order)
-print()
+        ```
+        MetaTrader5 package author:  MetaQuotes Software Corp.
+        MetaTrader5 package version:  5.0.29
 
-# get the list of orders on symbols whose names contain "*GBP*"
-gbp_orders=mt5.orders_get(group="*GBP*")
-if gbp_orders is None:
-    print("No orders with group=\"*GBP*\", error code={}".format(mt5.last_error()))
-else:
-    print("orders_get(group=\"*GBP*\")={}".format(len(gbp_orders)))
-    # display these orders as a table using pandas.DataFrame
-    df=pd.DataFrame(list(gbp_orders),columns=gbp_orders[0]._asdict().keys())
-    df.drop(['time_done', 'time_done_msc', 'position_id', 'position_by_id', 'reason', 'volume_initial', 'price_stoplimit'], axis=1, inplace=True)
-    df['time_setup'] = pd.to_datetime(df['time_setup'], unit='s')
-    print(df)
+        Total orders on GBPUSD: 2
+        TradeOrder(ticket=554733548, time_setup=1585153667, time_setup_msc=1585153667718, time_done=0, time_done_msc=0, time_expiration=0, type=3, type_time=0, ...
+        TradeOrder(ticket=554733621, time_setup=1585153671, time_setup_msc=1585153671419, time_done=0, time_done_msc=0, time_expiration=0, type=2, type_time=0, ...
 
-# shut down connection to the MetaTrader 5 terminal
-mt5.shutdown()
-```
+        orders_get(group="*GBP*")=4
+            ticket          time_setup  time_setup_msc  time_expiration  type  type_time  type_filling  state  magic  volume_current  price_open   sl   tp  price_current  symbol comment external_id
+        0  554733548 2020-03-25 16:27:47   1585153667718                0     3          0             2      1      0             0.2     1.25379  0.0  0.0        1.16803  GBPUSD
+        1  554733621 2020-03-25 16:27:51   1585153671419                0     2          0             2      1      0             0.2     1.14370  0.0  0.0        1.16815  GBPUSD
+        2  554746664 2020-03-25 16:38:14   1585154294401                0     3          0             2      1      0             0.2     0.93851  0.0  0.0        0.92428  EURGBP
+        3  554746710 2020-03-25 16:38:17   1585154297022                0     2          0             2      1      0             0.2     0.90527  0.0  0.0        0.92449  EURGBP
+        ```
 
-## Result:
+        ## See also
+            `orders_total`, `positions_get`
+        :rtype: Any
 
-```
-MetaTrader5 package author:  MetaQuotes Software Corp.
-MetaTrader5 package version:  5.0.29
-
-Total orders on GBPUSD: 2
-TradeOrder(ticket=554733548, time_setup=1585153667, time_setup_msc=1585153667718, time_done=0, time_done_msc=0, time_expiration=0, type=3, type_time=0, ...
-TradeOrder(ticket=554733621, time_setup=1585153671, time_setup_msc=1585153671419, time_done=0, time_done_msc=0, time_expiration=0, type=2, type_time=0, ...
-
-orders_get(group="*GBP*")=4
-      ticket          time_setup  time_setup_msc  time_expiration  type  type_time  type_filling  state  magic  volume_current  price_open   sl   tp  price_current  symbol comment external_id
-0  554733548 2020-03-25 16:27:47   1585153667718                0     3          0             2      1      0             0.2     1.25379  0.0  0.0        1.16803  GBPUSD
-1  554733621 2020-03-25 16:27:51   1585153671419                0     2          0             2      1      0             0.2     1.14370  0.0  0.0        1.16815  GBPUSD
-2  554746664 2020-03-25 16:38:14   1585154294401                0     3          0             2      1      0             0.2     0.93851  0.0  0.0        0.92428  EURGBP
-3  554746710 2020-03-25 16:38:17   1585154297022                0     2          0             2      1      0             0.2     0.90527  0.0  0.0        0.92449  EURGBP
-```
-
-## See also
-
-    `orders_total`, `positions_get`
-
-
-        '''
+        """
         code = f'mt5.orders_get(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def order_calc_margin(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # order_calc_margin
+        r"""# order_calc_margin
 
-        Return margin in the account currency to perform a specified trading operation.
-
-        ```python
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ```python
         order_calc_margin(
             action,      # order type (ORDER_TYPE_BUY or ORDER_TYPE_SELL)
             symbol,      # symbol name
@@ -272,17 +290,20 @@ orders_get(group="*GBP*")=4
         ```
         ## See also
             `order_calc_profit`, `order_check`
-        '''
+        :rtype: Any
+
+        """
         code = f'mt5.order_calc_margin(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def order_calc_profit(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # order_calc_profit
+        r"""# order_calc_profit
 
-        Return profit in the account currency for a specified trading operation.
-
-        ```python
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ```python
         order_calc_profit(
             action,          # order type (ORDER_TYPE_BUY or ORDER_TYPE_SELL)
             symbol,          # symbol name
@@ -396,13 +417,14 @@ orders_get(group="*GBP*")=4
         ## See also
 
             `order_calc_margin`, `order_check`
-        '''
+        :rtype: Any
+
+        """
         code = f'mt5.order_calc_profit(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def order_check(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # order_check
+        r"""# order_check
 
         Check funds sufficiency for performing a required trading operation. Check result are returned as the MqlTradeCheckResult structure.
 
@@ -558,13 +580,19 @@ orders_get(group="*GBP*")=4
 
         ## See also
             `order_send`, `OrderCheck`, Trading operation types, Trading request structure, Structure of the trading request check results, Structure of the trading request result
-        '''
+
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :rtype: Any
+
+        """
         code = f'mt5.order_check(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def order_send(self, request: object) -> Any:
-        r'''
-        # order_send
+        r"""# order_send
 
         Send a request to perform a trading operation from the terminal to the trade server. The function is similar to OrderSend.
 
@@ -767,13 +795,17 @@ orders_get(group="*GBP*")=4
         ## See also
 
             `order_check`, `OrderSend`,Trading operation types, Trading request structure, Structure of the trading request check results, Structure of the trading request result
-        '''
+
+        :param request: 
+        :type request: object
+        :rtype: Any
+
+        """
         code = f'mt5.order_send({request})'
         return self.__conn.eval(code)
 
     def positions_total(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # positions_total
+        r"""# positions_total
 
         Get the number of open positions.
 
@@ -817,14 +849,18 @@ orders_get(group="*GBP*")=4
 
             `positions_get`, `orders_total`
 
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :rtype: Any
 
-        '''
+        """
         code = f'mt5.positions_total(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def positions_get(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # positions_get
+        r"""# positions_get
 
         Get open positions with the ability to filter by symbol or ticket. There are three call options.
 
@@ -874,9 +910,11 @@ orders_get(group="*GBP*")=4
 
         ## Return Value
 
-        Return info in the form of a named tuple structure (namedtuple). Return None in case of an error. The info on the error can be obtained using `last_error()`.
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         The function allows receiving all open positions within one call similar to the `PositionsTotal` and `PositionSelect` tandem.
 
@@ -942,15 +980,14 @@ orders_get(group="*GBP*")=4
         ## See also
 
             `positions_total`, `orders_get`
+        :rtype: Any
 
-
-        '''
+        """
         code = f'mt5.positions_get(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def history_orders_total(self, date_from: object, date_to: object) -> Any:
-        r'''
-        # history_orders_total
+        r"""# history_orders_total
 
         Get the number of orders in trading history within the specified interval.
 
@@ -1009,13 +1046,19 @@ orders_get(group="*GBP*")=4
         ## See also
 
             `history_orders_get`, `history_deals_total`
-        '''
+
+        :param date_from: 
+        :type date_from: object
+        :param date_to: 
+        :type date_to: object
+        :rtype: Any
+
+        """
         code = f'mt5.history_orders_total({repr(date_from)}, {repr(date_to)})'
         return self.__conn.eval(code)
 
     def history_orders_get(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        #history_orders_get
+        r"""#history_orders_get
 
         Get orders from trading history with the ability to filter by ticket or position. There are three call options.
 
@@ -1069,9 +1112,11 @@ orders_get(group="*GBP*")=4
 
         ## Return Value
 
-        Return info in the form of a named tuple structure (namedtuple). Return None in case of an error. The info on the error can be obtained using `last_error()`.
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         The function allows receiving all history orders within a specified period in a single call similar to the HistoryOrdersTotal and HistoryOrderSelect tandem.
 
@@ -1147,16 +1192,15 @@ orders_get(group="*GBP*")=4
         ## See also
 
             `history_deals_total`, `history_deals_get`
+        :rtype: Any
 
-
-        '''
+        """
         code = f'mt5.history_orders_get(*{args},**{kwargs})'
         response = self.__conn.eval(code)
         return response
 
     def history_deals_total(self, date_from: object, date_to: object) -> Any:
-        r'''
-        # history_deals_total
+        r"""# history_deals_total
 
         Get the number of deals in trading history within the specified interval.
 
@@ -1216,14 +1260,18 @@ orders_get(group="*GBP*")=4
 
             `history_deals_get`, `history_orders_total`
 
+        :param date_from: 
+        :type date_from: object
+        :param date_to: 
+        :type date_to: object
+        :rtype: Any
 
-        '''
+        """
         code = f'mt5.history_deals_total({repr(date_from)}, {repr(date_to)})'
         return self.__conn.eval(code)
 
     def history_deals_get(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        #history_deals_get
+        r"""#history_deals_get
 
         Get deals from trading history within the specified interval with the ability to filter by ticket or position.
 
@@ -1277,9 +1325,11 @@ orders_get(group="*GBP*")=4
 
         ## Return Value
 
-        Return info in the form of a named tuple structure (namedtuple). Return None in case of an error. The info on the error can be obtained using `last_error()`.
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         The function allows receiving all history deals within a specified period in a single call similar to the HistoryDealsTotal and `HistoryDealSelect` tandem.
 
@@ -1382,7 +1432,9 @@ orders_get(group="*GBP*")=4
         ## See also
 
             `history_deals_total`, `history_orders_get`
-        '''
+        :rtype: Any
+
+        """
         code = f'mt5.history_deals_get(*{args},**{kwargs})'
         response = self.__conn.eval(code)
         return response
