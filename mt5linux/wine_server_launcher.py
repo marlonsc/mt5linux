@@ -1,16 +1,15 @@
 """
-wine_server_launcher.py
+Wine Server Launcher Module.
 
-Utilitários para lançar o servidor RPyC do MetaTrader5 sob Wine.
+Utilities for launching the MetaTrader5 RPyC server under Wine.
 
-by <marlonsc@gmail.com>
-
-Nota: Para que os imports absolutos funcionem, execute com:
-    PYTHONPATH=external/mt5linux python -m mt5linux
+Note: For absolute imports to work correctly, execute with:
+    PYTHONPATH=/path/to/mt5linux python -m mt5linux
 """
 
 import os
 from subprocess import Popen
+from typing import List
 
 from rpyc.utils.classic import DEFAULT_SERVER_PORT
 
@@ -25,19 +24,33 @@ def launch_wine_rpyc_server(
     server_dir: str = "/tmp/mt5linux",
 ) -> None:
     """
-    Lança o servidor RPyC do MetaTrader5 sob Wine.
+    Launch the MetaTrader5 RPyC server under Wine.
+    
+    This function generates an RPyC server script and launches it using Wine with the
+    specified Windows Python executable. The server enables remote procedure calls to
+    the MetaTrader5 API running on Windows from Linux.
 
     Args:
-        win_python_path: Caminho para o executável Python do Windows.
-        host: Host para o servidor.
-        port: Porta para o servidor.
-        wine_cmd: Comando do Wine.
-        server_dir: Diretório para build e execução do servidor.
+        win_python_path: Path to the Windows Python executable.
+        host: Host address for the server to bind to.
+        port: TCP port for the server to listen on.
+        wine_cmd: Wine command to use.
+        server_dir: Directory for building and running the server.
+        
+    Returns:
+        None
+        
+    Example:
+        >>> launch_wine_rpyc_server(
+        ...     win_python_path="C:\\Python39\\python.exe",
+        ...     host="0.0.0.0",
+        ...     port=18812
+        ... )
     """
     server_code = "server.py"
     Popen(["mkdir", "-p", server_dir], shell=True).wait()
     generate_rpyc_server_script(os.path.join(server_dir, server_code))
-    cmd: list[str] = [
+    cmd: List[str] = [
         wine_cmd,
         os.path.join(win_python_path),
         os.path.join(server_dir, server_code),

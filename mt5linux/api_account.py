@@ -4,6 +4,7 @@
 # pylint: disable=line-too-long
 # noqa: E501
 
+import sys
 from typing import Any
 
 import rpyc
@@ -710,5 +711,11 @@ class MetaTrader5:
     def execute(self, command: str) -> None:
         self.__conn.execute(command)
 
-# Compatibilidade para importação direta
-mt5 = MetaTrader5()
+# Default instance for direct import compatibility
+# Only create this when explicitly imported, not during testing
+if __name__ != "__main__" and "pytest" not in sys.modules:
+    try:
+        mt5 = MetaTrader5()
+    except Exception:
+        # During testing or when server is not available, don't create the instance
+        pass

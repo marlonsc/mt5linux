@@ -1,25 +1,33 @@
 """
-server_generator.py
+Server Generator Module.
 
-Utilitários para gerar o script do servidor RPyC para integração MetaTrader5.
+Utilities for generating the RPyC server script for MetaTrader5 integration.
 
-by <marlonsc@gmail.com>
+Note: For absolute imports to work correctly, execute with:
+    PYTHONPATH=/path/to/mt5linux python -m mt5linux
 
-Nota: Para que os imports absolutos funcionem, execute com:
-    PYTHONPATH=external/mt5linux python -m mt5linux
-
-# ATENÇÃO: Para evitar linter errors de importação, execute sempre como pacote:
-#   python -m mt5linux
-# O import absoluto é o padrão correto para pacotes Python modernos.
+IMPORTANT: To avoid linter import errors, always execute as a package:
+    python -m mt5linux
+Absolute imports are the correct standard for modern Python packages.
 """
 
 
 def generate_rpyc_server_script(fname: str) -> None:
     """
     Generate a Python script that starts an RPyC classic server for MetaTrader5 integration.
+    
+    This function creates a Python script file that will run an RPyC classic server
+    when executed. The server enables remote procedure calls to the MetaTrader5 API
+    running on Windows from Linux.
 
     Args:
         fname: Path to the file where the server script will be written.
+        
+    Returns:
+        None
+        
+    Example:
+        >>> generate_rpyc_server_script("/tmp/mt5linux/server.py")
     """
     code = r'''#!/usr/bin/env python
 # Code from: https://github.com/tomerfiliba-org/rpyc
