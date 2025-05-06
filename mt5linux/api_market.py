@@ -2,23 +2,8 @@
 """
 api_market.py - MetaTrader5 Market API bridge for Neptor
 
-Purpose:
-    - Provides Pythonic access to MetaTrader5 market and symbol queries via RPyC.
-    - Used for symbol, tick, and market depth operations in the Neptor platform.
-    - All methods are mockups or wrappers for remote MT5 API calls.
-
-Changelog:
-    - 2025-05-05: Added module docstring for linting compliance. (by marlonsc@gmail.com)
+Provides Pythonic access to MetaTrader5 market and symbol queries via RPyC. Used for symbol, tick, and market depth operations in the Neptor platform. All methods are mockups or wrappers for remote MT5 API calls.
 """
-# =====================================================================================
-# Changes made:
-# - Suppressed all fixme (TODO) warnings in this file using a pylint directive.
-# Reason/Purpose:
-# - To comply with linting and documentation requirements and suppress intentional TODO placeholders \
-#   (see Universal 5.5, Neptor 2.2).
-# Reference:
-# - Universal 5.5, Neptor 2.2
-# - by <marlonsc@gmail.com>
 # =====================================================================================
 # flake8: noqa: E501
 # fmt: off
@@ -34,13 +19,21 @@ class MetaTrader5MarketAPI:
     """Market and symbol queries for MetaTrader5."""
 
     def __init__(self, host: str = 'localhost', port: int = 18812) -> None:
+        """
+
+        :param host:  (Default value = 'localhost')
+        :type host: str
+        :param port:  (Default value = 18812)
+        :type port: int
+        :rtype: None
+
+        """
         self.__conn: Any = rpyc.classic.connect(host, port)  # type: ignore
         self.__conn._config['sync_request_timeout'] = 300
         self.__conn.execute('import MetaTrader5 as mt5')
 
     def symbols_total(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # symbols_total
+        r"""# symbols_total
 
         Get the number of all financial instruments in the MetaTrader 5 terminal.
 
@@ -84,14 +77,18 @@ class MetaTrader5MarketAPI:
 
             `symbols_get`, `symbol_select`, `symbol_info`
 
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :rtype: Any
 
-        '''
+        """
         code = f'mt5.symbols_total(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def symbols_get(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # symbols_get
+        r"""# symbols_get
 
         Get all financial instruments from the MetaTrader 5 terminal.
 
@@ -107,9 +104,11 @@ class MetaTrader5MarketAPI:
 
         ## Return Value
 
-        Return symbols in the form of a tuple. Return None in case of an error. The info on the error can be obtained using `last_error()`.
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         The group parameter allows sorting out symbols by name. '*' can be used at the beginning and the end of a string.
 
@@ -201,15 +200,14 @@ class MetaTrader5MarketAPI:
         ## See also
 
             `symbols_total`, `symbol_select`, `symbol_info`
+        :rtype: Any
 
-
-        '''
+        """
         code = f'mt5.symbols_get(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def symbol_info_tick(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # symbol_info_tick
+        r"""# symbol_info_tick
 
         Get the last tick for the specified financial instrument.
 
@@ -225,9 +223,11 @@ class MetaTrader5MarketAPI:
 
         ## Return Value
 
-        Return info in the form of a tuple. Return None in case of an error. The info on the error can be obtained using `last_error()`.
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         The function is similar to SymbolInfoTick.
 
@@ -284,13 +284,14 @@ class MetaTrader5MarketAPI:
         ## See also
 
             ``symbol_info`
-        '''
+        :rtype: Any
+
+        """
         code = f'mt5.symbol_info_tick(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def symbol_select(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # symbol_select
+        r"""# symbol_select
 
         Select a symbol in the MarketWatch window or remove a symbol from the window.
 
@@ -483,13 +484,19 @@ class MetaTrader5MarketAPI:
         ## See also
 
             `symbol_info`
-        '''
+
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :rtype: Any
+
+        """
         code = f'mt5.symbol_select(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def market_book_add(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # market_book_add
+        r"""# market_book_add
 
         Subscribes the MetaTrader 5 terminal to the Market Depth change events for a specified symbol.
 
@@ -515,14 +522,18 @@ class MetaTrader5MarketAPI:
 
             `market_book_get`, `market_book_release`, Market Depth structure
 
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :rtype: Any
 
-        '''
+        """
         code = f'mt5.market_book_add(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def market_book_get(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # market_book_get
+        r"""# market_book_get
 
         Returns a tuple from `BookInfo` featuring Market Depth entries for the specified symbol.
 
@@ -540,9 +551,11 @@ class MetaTrader5MarketAPI:
 
         Returns the Market Depth content as a tuple from `BookInfo` entries featuring order type, price and volume in lots. `BookInfo` is similar to the `MqlBookInfo` structure.
 
-        Return None in case of an error. The info on the error can be obtained using `last_error()`.
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         The subscription to the Market Depth change events should be preliminarily performed using the `market_book_add()` function.
 
@@ -654,15 +667,14 @@ class MetaTrader5MarketAPI:
         ## See also
 
             `market_book_add`, `market_book_release`, Market Depth structure
+        :rtype: Any
 
-
-        '''
+        """
         code = f'mt5.market_book_get(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def market_book_release(self, symbol: object) -> Any:
-        r'''
-        # market_book_release
+        r"""# market_book_release
 
         Cancels subscription of the MetaTrader 5 terminal to the Market Depth change events for a specified symbol.
 
@@ -688,7 +700,10 @@ class MetaTrader5MarketAPI:
 
             `market_book_add`, `market_book_get`, Market Depth structure
 
+        :param symbol: 
+        :type symbol: object
+        :rtype: Any
 
-        '''
+        """
         code = f'mt5.market_book_release({repr(symbol)})'
         return self.__conn.eval(code)

@@ -1,8 +1,3 @@
-# flake8: noqa: E501
-# fmt: off
-# pylance: disable=reportLineTooLong
-# pylint: disable=line-too-long
-# noqa: E501
 """
 MetaTrader5 Linux Integration Package
 
@@ -10,6 +5,12 @@ This module provides the main interface and constants for MetaTrader5 integratio
 It enables using the MetaTrader5 Python API on Linux systems by creating a bridge to a Windows
 installation running under Wine.
 """
+
+# flake8: noqa: E501
+# fmt: off
+# pylance: disable=reportLineTooLong
+# pylint: disable=line-too-long
+# noqa: E501
 
 from .constants_mt5 import *
 from .metatrader5 import MetaTrader5, mt5

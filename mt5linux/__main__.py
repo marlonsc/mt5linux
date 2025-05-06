@@ -17,7 +17,10 @@ This module supports both package and direct script execution.
 
 import argparse
 
-from rpyc.utils.classic import DEFAULT_SERVER_PORT, DEFAULT_SERVER_SSL_PORT
+try:
+    from rpyc.utils.classic import DEFAULT_SERVER_PORT, DEFAULT_SERVER_SSL_PORT
+except ImportError:
+    from rpyc import DEFAULT_SERVER_PORT, DEFAULT_SERVER_SSL_PORT
 
 # Dual import pattern for robust CLI entrypoints
 # type: ignore[import]

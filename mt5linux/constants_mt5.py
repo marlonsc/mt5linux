@@ -1,14 +1,14 @@
+"""
+constants_mt5.py - MetaTrader5 Constants for Neptor
+
+Defines all constants required for MetaTrader5 API compatibility.
+"""
+
 # flake8: noqa: E501
 # fmt: off
 # pylance: disable=reportLineTooLong
 # pylint: disable=line-too-long
 # noqa: E501
-
-"""
-MetaTrader5 Constants
-
-Defines all constants required for MetaTrader5 API compatibility.
-"""
 
 ACCOUNT_MARGIN_MODE_RETAIL_NETTING = 0
 ACCOUNT_MARGIN_MODE_EXCHANGE = 1

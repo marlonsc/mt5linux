@@ -1,3 +1,9 @@
+"""
+api_account.py - MetaTrader5 Account API for Neptor
+
+Provides a MetaTrader5 Python API compatible interface for account management, login, and terminal operations. Used for account, session, and terminal control in the Neptor platform.
+"""
+
 # flake8: noqa: E501
 # fmt: off
 # pylance: disable=reportLineTooLong
@@ -14,23 +20,33 @@ class MetaTrader5:
     """MetaTrader5 Python API compatible interface."""
 
     def __init__(self, host: str = 'localhost', port: int = 18812) -> None:
-        '''
-        host: str
+        """host: str
             default = localhost
         port: int
             default = 18812
-        '''
+
+        :param host:  (Default value = 'localhost')
+        :type host: str
+        :param port:  (Default value = 18812)
+        :type port: int
+        :rtype: None
+
+        """
         self.__conn: Any = rpyc.classic.connect(host, port)  # type: ignore
         self.__conn._config['sync_request_timeout'] = 300  # 5 min
         self.__conn.execute('import MetaTrader5 as mt5')
         self.__conn.execute('import datetime')
 
     def __del__(self) -> None:
-        pass
+        """
+
+
+        :rtype: None
+
+        """
 
     def initialize(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # initialize
+        r"""# initialize
 
         Establish a connection with the MetaTrader 5 terminal. There are three call options.
 
@@ -120,13 +136,19 @@ class MetaTrader5:
         ## See also
 
             `shutdown`, `terminal_info`, `version`
-        '''
+
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :rtype: Any
+
+        """
         code = f'mt5.initialize(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def login(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # login
+        r"""# login
 
         Connect to a trading account using specified parameters.
 
@@ -247,13 +269,19 @@ class MetaTrader5:
         ## See also
 
             `initialize`, `shutdown`
-        '''
+
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :rtype: Any
+
+        """
         code = f'mt5.login(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def shutdown(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # shutdown
+        r"""# shutdown
 
         Close the previously established connection to the MetaTrader 5 terminal.
 
@@ -291,14 +319,18 @@ class MetaTrader5:
 
             `initialize`, `login_py`, `terminal_info`, `version`
 
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :rtype: Any
 
-        '''
+        """
         code = f'mt5.shutdown(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def last_error(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # last_error
+        r"""# last_error
 
         Return data on the last error.
 
@@ -308,9 +340,11 @@ class MetaTrader5:
 
         ## Return Value
 
-        Return the last error code and description as a tuple.
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         `last_error()` allows obtaining an error code in case of a failed execution of a MetaTrader 5 library function. It is similar to `GetLastError()`. However, it applies its own error codes. Possible values:
 
@@ -352,13 +386,14 @@ class MetaTrader5:
         ## See also
 
             `version`, `GetLastError`
-        '''
+        :rtype: Any
+
+        """
         code = f'mt5.last_error(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def account_info(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # account_info
+        r"""# account_info
 
         Get info on the current trading account.
 
@@ -368,9 +403,11 @@ class MetaTrader5:
 
         ## Return Value
 
-        Return info in the form of a named tuple structure (namedtuple). Return None in case of an error. The info on the error can be obtained using `last_error()`.
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         The function returns all data that can be obtained using `AccountInfoInteger`, `AccountInfoDouble` and `AccountInfoString` in one call.
 
@@ -484,15 +521,14 @@ class MetaTrader5:
         ## See also
 
             `initialize`, `shutdown`, `login`
+        :rtype: Any
 
-
-        '''
+        """
         code = f'mt5.account_info(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def terminal_info(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # terminal_info
+        r"""# terminal_info
 
         Get the connected MetaTrader 5 client terminal status and settings.
 
@@ -502,9 +538,11 @@ class MetaTrader5:
 
         ## Return Value
 
-        Return info in the form of a named tuple structure (namedtuple). Return None in case of an error. The info on the error can be obtained using last_error().
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         The function returns all data that can be obtained using `TerminalInfoInteger`, `TerminalInfoDouble` and `TerminalInfoDouble` in one call.
 
@@ -604,15 +642,14 @@ class MetaTrader5:
         ## See also
 
             `initialize`, `shutdown`, `version`
+        :rtype: Any
 
-
-        '''
+        """
         code = f'mt5.terminal_info(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def version(self, *args: object, **kwargs: object) -> Any:
-        r'''
-        # version
+        r"""# version
 
         Return the MetaTrader 5 terminal version.
 
@@ -622,9 +659,11 @@ class MetaTrader5:
 
         ## Return Value
 
-        Return the MetaTrader 5 terminal version, build and release date. Return None in case of an error. The info on the error can be obtained using `last_error()`.
-
-        ## Note
+        :param *args: 
+        :type *args: object
+        :param **kwargs: 
+        :type **kwargs: object
+        :returns: ## Note
 
         The `version()` function returns the terminal version, build and release date as a tuple of three values:
 
@@ -701,14 +740,31 @@ class MetaTrader5:
         ## See also
 
             `initialize`, `shutdown`, `terminal_info`
-        '''
+        :rtype: Any
+
+        """
         code = f'mt5.version(*{args},**{kwargs})'
         return self.__conn.eval(code)
 
     def eval(self, command: str) -> Any:
+        r"""Evaluate a Python command in the remote MetaTrader 5 environment.
+
+        :param command: 
+        :type command: str
+        :returns: Result of the evaluation.
+        :rtype: Any
+
+        """
         return self.__conn.eval(command)
 
     def execute(self, command: str) -> None:
+        r"""Execute a Python command in the remote MetaTrader 5 environment.
+
+        :param command: Python command as string.
+        :type command: str
+        :rtype: None
+
+        """
         self.__conn.execute(command)
 
 # Default instance for direct import compatibility

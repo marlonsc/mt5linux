@@ -11,7 +11,10 @@ import os
 from subprocess import Popen
 from typing import List
 
-from rpyc.utils.classic import DEFAULT_SERVER_PORT
+try:
+    from rpyc.utils.classic import DEFAULT_SERVER_PORT
+except ImportError:
+    from rpyc import DEFAULT_SERVER_PORT
 
 from mt5linux.server_generator import generate_rpyc_server_script
 
