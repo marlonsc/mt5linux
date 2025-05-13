@@ -41,13 +41,17 @@ def launch_wine_rpyc_server(
     server_code = "server.py"
     Popen(["mkdir", "-p", server_dir], shell=True).wait()
     generate_rpyc_server_script(os.path.join(server_dir, server_code))
+    # Robustez: checar se o Python do Windows existe
+    if not os.path.isfile(win_python_path):
+        raise FileNotFoundError(f"Python do Windows não encontrado: {win_python_path}")
     cmd: list[str] = [
         wine_cmd,
-        os.path.join(win_python_path),
+        win_python_path,
         os.path.join(server_dir, server_code),
         "--host",
         host,
         "-p",
         str(port),
     ]
-    Popen(cmd, shell=True).wait()
+    print(f"[mt5linux] Executando comando: {' '.join(cmd)}")
+    Popen(cmd, shell=False).wait()
