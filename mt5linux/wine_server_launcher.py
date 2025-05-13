@@ -39,7 +39,8 @@ def launch_wine_rpyc_server(
 
     """
     server_code = "server.py"
-    Popen(["mkdir", "-p", server_dir], shell=True).wait()
+    # Robustez: criar diretório de forma multiplataforma
+    os.makedirs(server_dir, exist_ok=True)
     generate_rpyc_server_script(os.path.join(server_dir, server_code))
     # Robustez: checar se o Python do Windows existe
     if not os.path.isfile(win_python_path):
