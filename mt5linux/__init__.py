@@ -1,10 +1,27 @@
+"""
+Python MetaTrader5 library for remote access to MetaTrader 5 terminal using rpyc.
+
+This library provides a Python interface to the MetaTrader 5 terminal.
+It allows you to connect to a MetaTrader 5 terminal and execute various commands
+to manage accounts, symbols, orders, positions, and more.
+
+The library supports the following features:
+- Connect to a MetaTrader 5 terminal
+- Execute various commands to manage accounts, symbols, orders, positions, and more.
+- Get real-time market data
+- Execute trading operations
+- Manage positions and orders
+- Get account information
+- Get symbol information
+"""
+# pylint: disable=line-too-long
+# pylint: disable=too-many-lines
 import rpyc
-from numpy import array
-import datetime
+
 
 class MetaTrader5(object):
     ''' MetaTrader5'''
-    
+
     # Constants
     ACCOUNT_MARGIN_MODE_RETAIL_NETTING = 0
     ACCOUNT_MARGIN_MODE_EXCHANGE = 1
@@ -12,15 +29,15 @@ class MetaTrader5(object):
 
     ACCOUNT_STOPOUT_MODE_PERCENT = 0
     ACCOUNT_STOPOUT_MODE_MONEY = 1
-    
+
     ACCOUNT_TRADE_MODE_DEMO = 0
     ACCOUNT_TRADE_MODE_CONTEST = 1
     ACCOUNT_TRADE_MODE_REAL = 2
-    
+
     COPY_TICKS_ALL = -1
     COPY_TICKS_INFO = 1
     COPY_TICKS_TRADE = 2
-    
+
     DAY_OF_WEEK_SUNDAY = 0
     DAY_OF_WEEK_MONDAY = 1
     DAY_OF_WEEK_TUESDAY = 2
@@ -28,15 +45,15 @@ class MetaTrader5(object):
     DAY_OF_WEEK_THURSDAY = 4
     DAY_OF_WEEK_FRIDAY = 5
     DAY_OF_WEEK_SATURDAY = 6
-    
+
     DEAL_DIVIDEND = 15
     DEAL_DIVIDEND_FRANKED = 16
-    
+
     DEAL_ENTRY_IN = 0
     DEAL_ENTRY_OUT = 1
     DEAL_ENTRY_INOUT = 2
     DEAL_ENTRY_OUT_BY = 3
-    
+
     DEAL_REASON_CLIENT = 0
     DEAL_REASON_MOBILE = 1
     DEAL_REASON_WEB = 2
@@ -47,9 +64,9 @@ class MetaTrader5(object):
     DEAL_REASON_ROLLOVER = 7
     DEAL_REASON_VMARGIN = 8
     DEAL_REASON_SPLIT = 9
-    
+
     DEAL_TAX = 17
-    
+
     DEAL_TYPE_BUY = 0
     DEAL_TYPE_SELL = 1
     DEAL_TYPE_BALANCE = 2
@@ -65,7 +82,7 @@ class MetaTrader5(object):
     DEAL_TYPE_INTEREST = 12
     DEAL_TYPE_BUY_CANCELED = 13
     DEAL_TYPE_SELL_CANCELED = 14
-    
+
     ORDER_REASON_CLIENT = 0
     ORDER_REASON_MOBILE = 1
     ORDER_REASON_WEB = 2
@@ -73,7 +90,7 @@ class MetaTrader5(object):
     ORDER_REASON_SL = 4
     ORDER_REASON_TP = 5
     ORDER_REASON_SO = 6
-    
+
     ORDER_STATE_STARTED = 0
     ORDER_STATE_PLACED = 1
     ORDER_STATE_CANCELED = 2
@@ -84,15 +101,15 @@ class MetaTrader5(object):
     ORDER_STATE_REQUEST_ADD = 7
     ORDER_STATE_REQUEST_MODIFY = 8
     ORDER_STATE_REQUEST_CANCEL = 9
-    
+
     POSITION_REASON_CLIENT = 0
     POSITION_REASON_MOBILE = 1
     POSITION_REASON_WEB = 2
     POSITION_REASON_EXPERT = 3
-    
+
     POSITION_TYPE_BUY = 0
     POSITION_TYPE_SELL = 1
-    
+
     RES_E_INTERNAL_FAIL_TIMEOUT = -10005
     RES_E_INTERNAL_FAIL_CONNECT = -10004
     RES_E_INTERNAL_FAIL_INIT = -10003
@@ -108,7 +125,7 @@ class MetaTrader5(object):
     RES_E_FAIL = -1
     RES_E_INVALID_PARAMS = -2
     RES_S_OK = 1
-    
+
     SYMBOL_CALC_MODE_FOREX = 0
     SYMBOL_CALC_MODE_FUTURES = 1
     SYMBOL_CALC_MODE_CFD = 2
@@ -126,17 +143,17 @@ class MetaTrader5(object):
 
     SYMBOL_CHART_MODE_BID = 0
     SYMBOL_CHART_MODE_LAST = 1
-    
+
     SYMBOL_OPTION_MODE_EUROPEAN = 0
     SYMBOL_OPTION_MODE_AMERICAN = 1
 
     SYMBOL_OPTION_RIGHT_CALL = 0
     SYMBOL_OPTION_RIGHT_PUT = 1
-    
+
     SYMBOL_ORDERS_GTC = 0
     SYMBOL_ORDERS_DAILY = 1
     SYMBOL_ORDERS_DAILY_NO_STOPS = 2
-    
+
     SYMBOL_SWAP_MODE_DISABLED = 0
     SYMBOL_SWAP_MODE_POINTS = 1
     SYMBOL_SWAP_MODE_CURRENCY_SYMBOL = 2
@@ -146,12 +163,12 @@ class MetaTrader5(object):
     SYMBOL_SWAP_MODE_INTEREST_OPEN = 6
     SYMBOL_SWAP_MODE_REOPEN_CURRENT = 7
     SYMBOL_SWAP_MODE_REOPEN_BID = 8
-    
+
     SYMBOL_TRADE_EXECUTION_REQUEST = 0
     SYMBOL_TRADE_EXECUTION_INSTANT = 1
     SYMBOL_TRADE_EXECUTION_MARKET = 2
     SYMBOL_TRADE_EXECUTION_EXCHANGE = 3
-    
+
     SYMBOL_TRADE_MODE_DISABLED = 0
     SYMBOL_TRADE_MODE_LONGONLY = 1
     SYMBOL_TRADE_MODE_SHORTONLY = 2
@@ -295,7 +312,7 @@ class MetaTrader5(object):
     TRADE_RETCODE_FIFO_CLOSE = 10045
     # The request is rejected, because the "Opposite positions on a single symbol are disabled" rule is set for the trading account. For example, if the account has a Buy position, then a user cannot open a Sell position or place a pending sell order. The rule is only applied to accounts with hedging accounting system (ACCOUNT_MARGIN_MODE=ACCOUNT_MARGIN_MODE_RETAIL_HEDGING).
     TRADE_RETCODE_HEDGE_PROHIBITED = 10046
-    
+
     # Sell order (Offer)
     BOOK_TYPE_SELL = 1
     # Buy order (Bid)
@@ -368,11 +385,11 @@ port: int
 
     def __del__(self):
         pass
-            
+
     def initialize(self,*args,**kwargs):
         r'''
 # initialize
-        
+
 Establish a connection with the MetaTrader 5 terminal. There are three call options.
 
 Call without parameters. The terminal for connection is found automatically.
@@ -509,12 +526,12 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # display data on MetaTrader 5 version
 print(mt5.version())
 # connect to the trade account without specifying a password and a server
@@ -524,7 +541,7 @@ if authorized:
     print("connected to account #{}".format(account))
 else:
     print("failed to connect at account #{}, error code: {}".format(account, mt5.last_error()))
- 
+
 # now connect to another trading account specifying the password
 account=25115284
 authorized=mt5.login(account, password="gqrtz0lbdm")
@@ -538,20 +555,20 @@ if authorized:
         print("  {}={}".format(prop, account_info_dict[prop]))
 else:
     print("failed to connect at account #{}, error code: {}".format(account, mt5.last_error()))
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
- 
+
 ## Result:
 
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
 [500, 2367, '23 Mar 2020']
- 
+
 connected to account #17221085
- 
+
 connected to account #25115284
 AccountInfo(login=25115284, trade_mode=0, leverage=100, limit_orders=200, margin_so_mode=0, ...
 account properties:
@@ -613,17 +630,17 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed")
     quit()
- 
+
 # display data on connection status, server name and trading account
 print(mt5.terminal_info())
 # display data on MetaTrader 5 version
 print(mt5.version())
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -669,37 +686,37 @@ import pandas as pd
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # display data on MetaTrader 5 version
 print(mt5.version())
- 
+
 # display data on connection status, server name and trading account 'as is'
 print(mt5.terminal_info())
 print()
- 
+
 # get properties in the form of a dictionary
 terminal_info_dict=mt5.terminal_info()._asdict()
 # convert the dictionary into DataFrame and print
 df=pd.DataFrame(list(terminal_info_dict.items()),columns=['property','value'])
 print("terminal_info() as dataframe:")
 print(df[:-1])
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
- 
+
 ## Result:
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
 [500, 2367, '23 Mar 2020']
 TerminalInfo(community_account=True, community_connection=True, connected=True, dlls_allowed=False, trade_allowed=False, ...
- 
+
 terminal_info() as dataframe:
                  property                         value
 0       community_account                          True
@@ -775,12 +792,12 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -818,12 +835,12 @@ import pandas as pd
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # connect to the trade account specifying a password and a server
 authorized=mt5.login(25115284, password="gqz0343lbdm")
 if authorized:
@@ -837,18 +854,18 @@ if authorized:
         for prop in account_info_dict:
             print("  {}={}".format(prop, account_info_dict[prop]))
         print()
- 
+
         # convert the dictionary into DataFrame and print
         df=pd.DataFrame(list(account_info_dict.items()),columns=['property','value'])
         print("account_info() as dataframe:")
         print(df)
 else:
     print("failed to connect to trade account 25115284 with password=gqz0343lbdm, error code =",mt5.last_error())
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
- 
+
 ## Result:
 
 ```
@@ -884,7 +901,7 @@ Show account_info()._asdict():
   server=MetaQuotes-Demo
   currency=USD
   company=MetaQuotes Software Corp.
- 
+
 account_info() as dataframe
               property                      value
 0                login                   25115284
@@ -955,12 +972,12 @@ print("MetaTrader5 package version: ",mt5.__version__)
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # display data on MetaTrader 5 version
 print(mt5.version())
 # display info on the terminal settings and status
@@ -978,7 +995,7 @@ if terminal_info!=None:
     df=pd.DataFrame(list(terminal_info_dict.items()),columns=['property','value'])
     print("terminal_info() as dataframe:")
     print(df)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -1013,7 +1030,7 @@ Show terminal_info()._asdict():
   path=E:\ProgramFiles\MetaTrader 5
   data_path=E:\ProgramFiles\MetaTrader 5
   commondata_path=C:\Users\Rosh\AppData\Roaming\MetaQuotes\Terminal\Common
- 
+
 terminal_info() as dataframe:
                  property                      value
 0       community_account                       True
@@ -1071,19 +1088,19 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get the number of financial instruments
 symbols=mt5.symbols_total()
 if symbols>0:
     print("Total symbols =",symbols)
 else:
     print("symbols not found")
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -1105,7 +1122,7 @@ Get all financial instruments from the MetaTrader 5 terminal.
 
 ```python
 symbols_get(
-   group="GROUP"      # symbol selection filter 
+   group="GROUP"      # symbol selection filter
 )
 ```
 
@@ -1134,12 +1151,12 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get all symbols
 symbols=mt5.symbols_get()
 print('Symbols: ', len(symbols))
@@ -1150,20 +1167,20 @@ for s in symbols:
     print("{}. {}".format(count,s.name))
     if count==5: break
 print()
- 
+
 # get symbols containing RU in their names
 ru_symbols=mt5.symbols_get("*RU*")
 print('len(*RU*): ', len(ru_symbols))
 for s in ru_symbols:
     print(s.name)
 print()
- 
+
 # get symbols whose names do not contain USD, EUR, JPY and GBP
 group_symbols=mt5.symbols_get(group="*,!*USD*,!*EUR*,!*JPY*,!*GBP*")
 print('len(*,!*USD*,!*EUR*,!*JPY*,!*GBP*):', len(group_symbols))
 for s in group_symbols:
     print(s.name,":",s)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -1179,7 +1196,7 @@ Symbols:  84
 3. USDCHF
 4. USDJPY
 5. USDCNH
- 
+
 len(*RU*):  8
 EURUSD
 USDRUB
@@ -1189,7 +1206,7 @@ EURRUB
 FORTS.RUB.M5
 EURUSD_T20
 EURUSD4
- 
+
 len(*,!*USD*,!*EUR*,!*JPY*,!*GBP*):  13
 AUDCAD : SymbolInfo(custom=False, chart_mode=0, select=True, visible=True, session_deals=0, session_buy_orders=0, session...
 AUDCHF : SymbolInfo(custom=False, chart_mode=0, select=False, visible=False, session_deals=0, session_buy_orders=0, sessi...
@@ -1246,23 +1263,23 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # attempt to enable the display of the EURJPY symbol in MarketWatch
 selected=mt5.symbol_select("EURJPY",True)
 if not selected:
     print("Failed to select EURJPY")
     mt5.shutdown()
     quit()
- 
+
 # display EURJPY symbol properties
 symbol_info=mt5.symbol_info("EURJPY")
 if symbol_info!=None:
-    # display the terminal data 'as is'    
+    # display the terminal data 'as is'
     print(symbol_info)
     print("EURJPY: spread =",symbol_info.spread,"  digits =",symbol_info.digits)
     # display symbol properties as a list
@@ -1270,7 +1287,7 @@ if symbol_info!=None:
     symbol_info_dict = mt5.symbol_info("EURJPY")._asdict()
     for prop in symbol_info_dict:
         print("  {}={}".format(prop, symbol_info_dict[prop]))
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -1421,19 +1438,19 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # attempt to enable the display of the GBPUSD in MarketWatch
 selected=mt5.symbol_select("GBPUSD",True)
 if not selected:
     print("Failed to select GBPUSD")
     mt5.shutdown()
     quit()
- 
+
 # display the last GBPUSD tick
 lasttick=mt5.symbol_info_tick("GBPUSD")
 print(lasttick)
@@ -1442,7 +1459,7 @@ print("Show symbol_info_tick(\"GBPUSD\")._asdict():")
 symbol_info_tick_dict = mt5.symbol_info_tick("GBPUSD")._asdict()
 for prop in symbol_info_tick_dict:
     print("  {}={}".format(prop, symbol_info_tick_dict[prop]))
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -1513,7 +1530,7 @@ print()
 if not mt5.initialize(login=25115284, server="MetaQuotes-Demo",password="4zatlbqx"):
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # attempt to enable the display of the EURCAD in MarketWatch
 selected=mt5.symbol_select("EURCAD",True)
 if not selected:
@@ -1523,19 +1540,19 @@ else:
     print(symbol_info)
     print("EURCAD: currency_base =",symbol_info.currency_base,"  currency_profit =",symbol_info.currency_profit,"  currency_margin =",symbol_info.currency_margin)
     print()
- 
+
     # get symbol properties in the form of a dictionary
     print("Show symbol_info()._asdict():")
     symbol_info_dict = symbol_info._asdict()
     for prop in symbol_info_dict:
         print("  {}={}".format(prop, symbol_info_dict[prop]))
     print()
- 
+
     # convert the dictionary into DataFrame and print
     df=pd.DataFrame(list(symbol_info_dict.items()),columns=['property','value'])
     print("symbol_info_dict() as dataframe:")
     print(df)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -1547,7 +1564,7 @@ MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
 SymbolInfo(custom=False, chart_mode=0, select=True, visible=True, session_deals=0, session_buy_orders=0, session_sell_orders=0, volume=0, volumehigh=0, ....
 EURCAD: currency_base = EUR   currency_profit = CAD   currency_margin = EUR
- 
+
 Show symbol_info()._asdict():
   custom=False
   chart_mode=0
@@ -1645,7 +1662,7 @@ Show symbol_info()._asdict():
   name=EURCAD
   page=http://www.google.com/finance?q=EURCAD
   path=Forex\EURCAD
- 
+
 symbol_info_dict() as dataframe:
          property                                   value
 0          custom                                   False
@@ -1654,12 +1671,12 @@ symbol_info_dict() as dataframe:
 3         visible                                    True
 4   session_deals                                       0
 ..            ...                                     ...
-91        formula                                        
-92           isin                                        
+91        formula
+92           isin
 93           name                                  EURCAD
 94           page  http://www.google.com/finance?q=EURCAD
 95           path                            Forex\EURCAD
- 
+
 [96 rows x 2 columns]
 ```
 
@@ -1740,14 +1757,14 @@ import time
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
 print("")
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
    # shut down connection to the MetaTrader 5 terminal
     mt5.shutdown()
     quit()
- 
+
 # subscribe to market depth updates for EURUSD (Depth of Market)
 if mt5.market_book_add('EURUSD'):
   # get the market depth data 10 times in a loop
@@ -1767,7 +1784,7 @@ if mt5.market_book_add('EURUSD'):
    mt5.market_book_release('EURUSD')
 else:
     print("mt5.market_book_add('EURUSD') failed, error code =",mt5.last_error())
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -1777,7 +1794,7 @@ mt5.shutdown()
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.34
- 
+
 (BookInfo(type=1, price=1.20038, volume=250, volume_dbl=250.0), BookInfo(type=1, price=1.20032, volume=100, volume...
 {'type': 1, 'price': 1.20038, 'volume': 250, 'volume_dbl': 250.0}
 {'type': 1, 'price': 1.20032, 'volume': 100, 'volume_dbl': 100.0}
@@ -1873,7 +1890,7 @@ The function is similar to `MarketBookRelease`.
 
 
         '''
-        code=f'mt5.market_book_release(symbol)'
+        code=f'mt5.market_book_release({symbol})'
         return self.__conn.eval(code)
 
     def copy_rates_from(self,symbol, timeframe, date_from, count):
@@ -1919,7 +1936,7 @@ See the `CopyRates()` function for more information.
 
 MetaTrader 5 terminal provides bars only within a history available to a user on charts. The number of bars available to users is set in the "Max. bars in chart" parameter.
 
-When creating the 'datetime' object, Python uses the local time zone, while MetaTrader 5 stores tick and bar open time in UTC time zone (without the shift). Therefore, 'datetime' should be created in UTC time for executing functions that use time. Data received from the MetaTrader 5 terminal has UTC time.  
+When creating the 'datetime' object, Python uses the local time zone, while MetaTrader 5 stores tick and bar open time in UTC time zone (without the shift). Therefore, 'datetime' should be created in UTC time for executing functions that use time. Data received from the MetaTrader 5 terminal has UTC time.
 
 TIMEFRAME is an enumeration with possible chart period values
 
@@ -1956,41 +1973,41 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # import the 'pandas' module for displaying data obtained in the tabular form
 import pandas as pd
 pd.set_option('display.max_columns', 500) # number of columns to be displayed
 pd.set_option('display.width', 1500)      # max table width to display
 # import pytz module for working with time zone
 import pytz
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # set time zone to UTC
 timezone = pytz.timezone("Etc/UTC")
 # create 'datetime' object in UTC time zone to avoid the implementation of a local time zone offset
 utc_from = datetime(2020, 1, 10, tzinfo=timezone)
 # get 10 EURUSD H4 bars starting from 01.10.2020 in UTC time zone
 rates = mt5.copy_rates_from("EURUSD", mt5.TIMEFRAME_H4, utc_from, 10)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 # display each element of obtained data in a new line
 print("Display obtained data 'as is'")
 for rate in rates:
     print(rate)
- 
+
 # create DataFrame out of the obtained data
 rates_frame = pd.DataFrame(rates)
 # convert time in seconds into the datetime format
 rates_frame['time']=pd.to_datetime(rates_frame['time'], unit='s')
-                           
+
 # display data
 print("\nDisplay dataframe with data")
-print(rates_frame)  
+print(rates_frame)
 ```
 
 ## Result:
@@ -1998,7 +2015,7 @@ print(rates_frame)
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 Display obtained data 'as is'
 (1578484800, 1.11382, 1.11385, 1.1111, 1.11199, 9354, 1, 0)
 (1578499200, 1.11199, 1.11308, 1.11086, 1.11179, 10641, 1, 0)
@@ -2010,7 +2027,7 @@ Display obtained data 'as is'
 (1578585600, 1.11149, 1.11149, 1.10923, 1.11046, 7468, 1, 0)
 (1578600000, 1.11046, 1.11097, 1.11033, 1.11051, 3450, 1, 0)
 (1578614400, 1.11051, 1.11093, 1.11017, 1.11041, 2448, 1, 0)
- 
+
 Display dataframe with data
                  time     open     high      low    close  tick_volume  spread  real_volume
 0 2020-01-08 12:00:00  1.11382  1.11385  1.11110  1.11199         9354       1            0
@@ -2085,35 +2102,35 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # import the 'pandas' module for displaying data obtained in the tabular form
 import pandas as pd
 pd.set_option('display.max_columns', 500) # number of columns to be displayed
 pd.set_option('display.width', 1500)      # max table width to display
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get 10 GBPUSD D1 bars from the current day
 rates = mt5.copy_rates_from_pos("GBPUSD", mt5.TIMEFRAME_D1, 0, 10)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 # display each element of obtained data in a new line
 print("Display obtained data 'as is'")
 for rate in rates:
     print(rate)
- 
+
 # create DataFrame out of the obtained data
 rates_frame = pd.DataFrame(rates)
 # convert time in seconds into the datetime format
 rates_frame['time']=pd.to_datetime(rates_frame['time'], unit='s')
- 
+
 # display data
 print("\nDisplay dataframe with data")
-print(rates_frame) 
+print(rates_frame)
 ```
 
 ## Result:
@@ -2121,7 +2138,7 @@ print(rates_frame)
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 Display obtained data 'as is'
 (1581552000, 1.29568, 1.30692, 1.29441, 1.30412, 68228, 0, 0)
 (1581638400, 1.30385, 1.30631, 1.3001, 1.30471, 56498, 0, 0)
@@ -2133,7 +2150,7 @@ Display obtained data 'as is'
 (1582502400, 1.29426, 1.29547, 1.28865, 1.29283, 66933, 0, 0)
 (1582588800, 1.2929, 1.30178, 1.29142, 1.30037, 80121, 0, 0)
 (1582675200, 1.30036, 1.30078, 1.29136, 1.29374, 49286, 0, 0)
- 
+
 Display dataframe with data
         time     open     high      low    close  tick_volume  spread  real_volume
 0 2020-02-13  1.29568  1.30692  1.29441  1.30412        68228       0            0
@@ -2208,19 +2225,19 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # import the 'pandas' module for displaying data obtained in the tabular form
 import pandas as pd
 pd.set_option('display.max_columns', 500) # number of columns to be displayed
 pd.set_option('display.width', 1500)      # max table width to display
 # import pytz module for working with time zone
 import pytz
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # set time zone to UTC
 timezone = pytz.timezone("Etc/UTC")
 # create 'datetime' objects in UTC time zone to avoid the implementation of a local time zone offset
@@ -2228,10 +2245,10 @@ utc_from = datetime(2020, 1, 10, tzinfo=timezone)
 utc_to = datetime(2020, 1, 11, hour = 13, tzinfo=timezone)
 # get bars from USDJPY M5 within the interval of 2020.01.10 00:00 - 2020.01.11 13:00 in UTC time zone
 rates = mt5.copy_rates_range("USDJPY", mt5.TIMEFRAME_M5, utc_from, utc_to)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
- 
+
 # display each element of obtained data in a new line
 print("Display obtained data 'as is'")
 counter=0
@@ -2239,12 +2256,12 @@ for rate in rates:
     counter+=1
     if counter<=10:
         print(rate)
- 
+
 # create DataFrame out of the obtained data
 rates_frame = pd.DataFrame(rates)
 # convert time in seconds into the 'datetime' format
 rates_frame['time']=pd.to_datetime(rates_frame['time'], unit='s')
- 
+
 # display data
 print("\nDisplay dataframe with data")
 print(rates_frame.head(10))
@@ -2255,7 +2272,7 @@ print(rates_frame.head(10))
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 Display obtained data 'as is'
 (1578614400, 109.513, 109.527, 109.505, 109.521, 43, 2, 0)
 (1578614700, 109.521, 109.549, 109.518, 109.543, 215, 8, 0)
@@ -2267,7 +2284,7 @@ Display obtained data 'as is'
 (1578616500, 109.51, 109.51, 109.491, 109.496, 44, 8, 0)
 (1578616800, 109.496, 109.509, 109.487, 109.5, 85, 5, 0)
 (1578617100, 109.5, 109.504, 109.487, 109.489, 82, 7, 0)
- 
+
 Display dataframe with data
                  time     open     high      low    close  tick_volume  spread  real_volume
 0 2020-01-10 00:00:00  109.513  109.527  109.505  109.521           43       2            0
@@ -2361,19 +2378,19 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # import the 'pandas' module for displaying data obtained in the tabular form
 import pandas as pd
 pd.set_option('display.max_columns', 500) # number of columns to be displayed
 pd.set_option('display.width', 1500)      # max table width to display
 # import pytz module for working with time zone
 import pytz
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # set time zone to UTC
 timezone = pytz.timezone("Etc/UTC")
 # create 'datetime' object in UTC time zone to avoid the implementation of a local time zone offset
@@ -2381,10 +2398,10 @@ utc_from = datetime(2020, 1, 10, tzinfo=timezone)
 # request 100 000 EURUSD ticks starting from 10.01.2019 in UTC time zone
 ticks = mt5.copy_ticks_from("EURUSD", utc_from, 100000, mt5.COPY_TICKS_ALL)
 print("Ticks received:",len(ticks))
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
- 
+
 # display data on each tick on a new line
 print("Display obtained ticks 'as is'")
 count = 0
@@ -2393,15 +2410,15 @@ for tick in ticks:
     print(tick)
     if count >= 10:
         break
- 
+
 # create DataFrame out of the obtained data
 ticks_frame = pd.DataFrame(ticks)
 # convert time in seconds into the datetime format
 ticks_frame['time']=pd.to_datetime(ticks_frame['time'], unit='s')
- 
+
 # display data
 print("\nDisplay dataframe with ticks")
-print(ticks_frame.head(10))  
+print(ticks_frame.head(10))
 ```
 
 ## Result:
@@ -2409,7 +2426,7 @@ print(ticks_frame.head(10))
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 Ticks received: 100000
 Display obtained ticks 'as is'
 (1578614400, 1.11051, 1.11069, 0., 0, 1578614400987, 134, 0.)
@@ -2422,7 +2439,7 @@ Display obtained ticks 'as is'
 (1578614419, 1.11039, 1.11051, 0., 0, 1578614419519, 134, 0.)
 (1578614456, 1.11037, 1.11065, 0., 0, 1578614456011, 134, 0.)
 (1578614456, 1.11039, 1.11051, 0., 0, 1578614456015, 134, 0.)
- 
+
 Display dataframe with ticks
                  time      bid      ask  last  volume       time_msc  flags  volume_real
 0 2020-01-10 00:00:00  1.11051  1.11069   0.0       0  1578614400987    134          0.0
@@ -2497,19 +2514,19 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # import the 'pandas' module for displaying data obtained in the tabular form
 import pandas as pd
 pd.set_option('display.max_columns', 500) # number of columns to be displayed
 pd.set_option('display.width', 1500)      # max table width to display
 # import pytz module for working with time zone
 import pytz
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # set time zone to UTC
 timezone = pytz.timezone("Etc/UTC")
 # create 'datetime' objects in UTC time zone to avoid the implementation of a local time zone offset
@@ -2518,10 +2535,10 @@ utc_to = datetime(2020, 1, 11, tzinfo=timezone)
 # request AUDUSD ticks within 11.01.2020 - 11.01.2020
 ticks = mt5.copy_ticks_range("AUDUSD", utc_from, utc_to, mt5.COPY_TICKS_ALL)
 print("Ticks received:",len(ticks))
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
- 
+
 # display data on each tick on a new line
 print("Display obtained ticks 'as is'")
 count = 0
@@ -2530,15 +2547,15 @@ for tick in ticks:
     print(tick)
     if count >= 10:
         break
- 
+
 # create DataFrame out of the obtained data
 ticks_frame = pd.DataFrame(ticks)
 # convert time in seconds into the datetime format
 ticks_frame['time']=pd.to_datetime(ticks_frame['time'], unit='s')
- 
+
 # display data
 print("\nDisplay dataframe with ticks")
-print(ticks_frame.head(10)) 
+print(ticks_frame.head(10))
 ```
 
 ## Result:
@@ -2546,7 +2563,7 @@ print(ticks_frame.head(10))
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 Ticks received: 37008
 Display obtained ticks 'as is'
 (1578614400, 0.68577, 0.68594, 0., 0, 1578614400820, 134, 0.)
@@ -2559,7 +2576,7 @@ Display obtained ticks 'as is'
 (1578614450, 0.68576, 0.68595, 0., 0, 1578614450408, 4, 0.)
 (1578614450, 0.68576, 0.68594, 0., 0, 1578614450519, 4, 0.)
 (1578614456, 0.68575, 0.68594, 0., 0, 1578614456363, 130, 0.)
- 
+
 Display dataframe with ticks
                  time      bid      ask  last  volume       time_msc  flags  volume_real
 0 2020-01-10 00:00:00  0.68577  0.68594   0.0       0  1578614400820    134          0.0
@@ -2606,19 +2623,19 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # check the presence of active orders
 orders=mt5.orders_total()
 if orders>0:
     print("Total orders=",orders)
 else:
     print("Orders not found")
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -2707,7 +2724,7 @@ print()
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # display data on active orders on GBPUSD
 orders=mt5.orders_get(symbol="GBPUSD")
 if orders is None:
@@ -2718,7 +2735,7 @@ else:
     for order in orders:
         print(order)
 print()
- 
+
 # get the list of orders on symbols whose names contain "*GBP*"
 gbp_orders=mt5.orders_get(group="*GBP*")
 if gbp_orders is None:
@@ -2730,7 +2747,7 @@ else:
     df.drop(['time_done', 'time_done_msc', 'position_id', 'position_by_id', 'reason', 'volume_initial', 'price_stoplimit'], axis=1, inplace=True)
     df['time_setup'] = pd.to_datetime(df['time_setup'], unit='s')
     print(df)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -2740,17 +2757,17 @@ mt5.shutdown()
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 Total orders on GBPUSD: 2
 TradeOrder(ticket=554733548, time_setup=1585153667, time_setup_msc=1585153667718, time_done=0, time_done_msc=0, time_expiration=0, type=3, type_time=0, ...
 TradeOrder(ticket=554733621, time_setup=1585153671, time_setup_msc=1585153671419, time_done=0, time_done_msc=0, time_expiration=0, type=2, type_time=0, ...
- 
+
 orders_get(group="*GBP*")=4
       ticket          time_setup  time_setup_msc  time_expiration  type  type_time  type_filling  state  magic  volume_current  price_open   sl   tp  price_current  symbol comment external_id
-0  554733548 2020-03-25 16:27:47   1585153667718                0     3          0             2      1      0             0.2     1.25379  0.0  0.0        1.16803  GBPUSD                    
-1  554733621 2020-03-25 16:27:51   1585153671419                0     2          0             2      1      0             0.2     1.14370  0.0  0.0        1.16815  GBPUSD                    
-2  554746664 2020-03-25 16:38:14   1585154294401                0     3          0             2      1      0             0.2     0.93851  0.0  0.0        0.92428  EURGBP                    
-3  554746710 2020-03-25 16:38:17   1585154297022                0     2          0             2      1      0             0.2     0.90527  0.0  0.0        0.92449  EURGBP    
+0  554733548 2020-03-25 16:27:47   1585153667718                0     3          0             2      1      0             0.2     1.25379  0.0  0.0        1.16803  GBPUSD
+1  554733621 2020-03-25 16:27:51   1585153671419                0     2          0             2      1      0             0.2     1.14370  0.0  0.0        1.16815  GBPUSD
+2  554746664 2020-03-25 16:38:14   1585154294401                0     3          0             2      1      0             0.2     0.93851  0.0  0.0        0.92428  EURGBP
+3  554746710 2020-03-25 16:38:17   1585154297022                0     2          0             2      1      0             0.2     0.90527  0.0  0.0        0.92449  EURGBP
 ```
 
 ## See also
@@ -2822,16 +2839,16 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get account currency
 account_currency=mt5.account_info().currency
 print("Account сurrency:",account_currency)
- 
+
 # arrange the symbol list
 symbols=("EURUSD","GBPUSD","USDJPY", "USDCHF","EURJPY","GBPJPY")
 print("Symbols to check margin:", symbols)
@@ -2853,7 +2870,7 @@ for symbol in symbols:
         print("   {} buy {} lot margin: {} {}".format(symbol,lot,margin,account_currency));
     else:
         print("order_calc_margin failed: , error code =", mt5.last_error())
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -2863,9 +2880,9 @@ mt5.shutdown()
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 Account сurrency: USD
- 
+
 Symbols to check margin: ('EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'EURJPY', 'GBPJPY')
    EURUSD buy 0.1 lot margin: 109.91 USD
    GBPUSD buy 0.1 lot margin: 122.73 USD
@@ -2937,16 +2954,16 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get account currency
 account_currency=mt5.account_info().currency
 print("Account сurrency:",account_currency)
- 
+
 # arrange the symbol list
 symbols = ("EURUSD","GBPUSD","USDJPY")
 print("Symbols to check margin:", symbols)
@@ -2978,7 +2995,7 @@ for symbol in symbols:
     else:
         print("order_calc_profit(ORDER_TYPE_SELL) failed, error code =",mt5.last_error())
     print()
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -2988,15 +3005,15 @@ mt5.shutdown()
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 Account сurrency: USD
 Symbols to check margin: ('EURUSD', 'GBPUSD', 'USDJPY')
    buy EURUSD 1.0 lot: profit on 300 points => 300.0 USD
    sell EURUSD 1.0 lot: profit on 300 points => 300.0 USD
- 
+
    buy GBPUSD 1.0 lot: profit on 300 points => 300.0 USD
    sell GBPUSD 1.0 lot: profit on 300 points => 300.0 USD
- 
+
    buy USDJPY 1.0 lot: profit on 300 points => 276.54 USD
    sell USDJPY 1.0 lot: profit on 300 points => 278.09 USD
 ```
@@ -3069,16 +3086,16 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get account currency
 account_currency=mt5.account_info().currency
 print("Account сurrency:",account_currency)
- 
+
 # prepare the request structure
 symbol="USDJPY"
 symbol_info = mt5.symbol_info(symbol)
@@ -3086,7 +3103,7 @@ if symbol_info is None:
     print(symbol, "not found, can not call order_check()")
     mt5.shutdown()
     quit()
- 
+
 # if the symbol is unavailable in MarketWatch, add it
 if not symbol_info.visible:
     print(symbol, "is not visible, trying to switch on")
@@ -3094,7 +3111,7 @@ if not symbol_info.visible:
         print("symbol_select({}}) failed, exit",symbol)
         mt5.shutdown()
         quit()
- 
+
 # prepare the request
 point=mt5.symbol_info(symbol).point
 request = {
@@ -3111,7 +3128,7 @@ request = {
     "type_time": mt5.ORDER_TIME_GTC,
     "type_filling": mt5.ORDER_FILLING_RETURN,
 }
- 
+
 # perform the check and display the result 'as is'
 result = mt5.order_check(request)
 print(result);
@@ -3124,7 +3141,7 @@ for field in result_dict.keys():
         traderequest_dict=result_dict[field]._asdict()
         for tradereq_filed in traderequest_dict:
             print("       traderequest: {}={}".format(tradereq_filed,traderequest_dict[tradereq_filed]))
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -3134,7 +3151,7 @@ mt5.shutdown()
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 Account сurrency: USD
    retcode=0
    balance=101300.53
@@ -3226,16 +3243,16 @@ A trading request passes several verification stages on the trade server. First,
 ```python
 import time
 import MetaTrader5 as mt5
- 
+
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ", mt5.__author__)
 print("MetaTrader5 package version: ", mt5.__version__)
- 
+
 # establish connection to the MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # prepare the buy request structure
 symbol = "USDJPY"
 symbol_info = mt5.symbol_info(symbol)
@@ -3243,7 +3260,7 @@ if symbol_info is None:
     print(symbol, "not found, can not call order_check()")
     mt5.shutdown()
     quit()
- 
+
 # if the symbol is unavailable in MarketWatch, add it
 if not symbol_info.visible:
     print(symbol, "is not visible, trying to switch on")
@@ -3251,7 +3268,7 @@ if not symbol_info.visible:
         print("symbol_select({}}) failed, exit",symbol)
         mt5.shutdown()
         quit()
- 
+
 lot = 0.1
 point = mt5.symbol_info(symbol).point
 price = mt5.symbol_info_tick(symbol).ask
@@ -3270,7 +3287,7 @@ request = {
     "type_time": mt5.ORDER_TIME_GTC,
     "type_filling": mt5.ORDER_FILLING_RETURN,
 }
- 
+
 # send a trading request
 result = mt5.order_send(request)
 # check the execution result
@@ -3289,7 +3306,7 @@ if result.retcode != mt5.TRADE_RETCODE_DONE:
     print("shutdown() and quit")
     mt5.shutdown()
     quit()
- 
+
 print("2. order_send done, ", result)
 print("   opened position with POSITION_TICKET={}".format(result.order))
 print("   sleep 2 seconds before closing position #{}".format(result.order))
@@ -3329,7 +3346,7 @@ else:
             traderequest_dict=result_dict[field]._asdict()
             for tradereq_filed in traderequest_dict:
                 print("       traderequest: {}={}".format(tradereq_filed,traderequest_dict[tradereq_filed]))
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -3407,19 +3424,19 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # check the presence of open positions
 positions_total=mt5.positions_total()
 if positions_total>0:
     print("Total positions=",positions_total)
 else:
     print("Positions not found")
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -3508,7 +3525,7 @@ print()
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get open positions on USDCHF
 positions=mt5.positions_get(symbol="USDCHF")
 if positions==None:
@@ -3518,7 +3535,7 @@ elif len(positions)>0:
     # display all open positions
     for position in positions:
         print(position)
- 
+
 # get the list of positions on symbols whose names contain "*USD*"
 usd_positions=mt5.positions_get(group="*USD*")
 if usd_positions==None:
@@ -3530,7 +3547,7 @@ elif len(usd_positions)>0:
     df['time'] = pd.to_datetime(df['time'], unit='s')
     df.drop(['time_update', 'time_msc', 'time_update_msc', 'external_id'], axis=1, inplace=True)
     print(df)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -3540,14 +3557,14 @@ mt5.shutdown()
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 positions_get(group="*USD*")=5
       ticket                time  type  magic  identifier  reason  volume  price_open       sl       tp  price_current  swap  profit  symbol comment
-0  548297723 2020-03-18 15:00:55     1      0   548297723       3    0.01     1.09301  1.11490  1.06236        1.10104 -0.10   -8.03  EURUSD        
-1  548655158 2020-03-18 20:31:26     0      0   548655158       3    0.01     1.08676  1.06107  1.12446        1.10099 -0.08   14.23  EURUSD        
-2  548663803 2020-03-18 20:40:04     0      0   548663803       3    0.01     1.08640  1.06351  1.11833        1.10099 -0.08   14.59  EURUSD        
-3  548847168 2020-03-19 01:10:05     0      0   548847168       3    0.01     1.09545  1.05524  1.15122        1.10099 -0.06    5.54  EURUSD        
-4  548847194 2020-03-19 01:10:07     0      0   548847194       3    0.02     1.09536  1.04478  1.16587        1.10099 -0.08   11.26  EURUSD   
+0  548297723 2020-03-18 15:00:55     1      0   548297723       3    0.01     1.09301  1.11490  1.06236        1.10104 -0.10   -8.03  EURUSD
+1  548655158 2020-03-18 20:31:26     0      0   548655158       3    0.01     1.08676  1.06107  1.12446        1.10099 -0.08   14.23  EURUSD
+2  548663803 2020-03-18 20:40:04     0      0   548663803       3    0.01     1.08640  1.06351  1.11833        1.10099 -0.08   14.59  EURUSD
+3  548847168 2020-03-19 01:10:05     0      0   548847168       3    0.01     1.09545  1.05524  1.15122        1.10099 -0.06    5.54  EURUSD
+4  548847194 2020-03-19 01:10:07     0      0   548847194       3    0.02     1.09536  1.04478  1.16587        1.10099 -0.08   11.26  EURUSD
 ```
 
 ## See also
@@ -3598,12 +3615,12 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get the number of orders in history
 from_date=datetime(2020,1,1)
 to_date=datetime.now()
@@ -3612,7 +3629,7 @@ if history_orders>0:
     print("Total history orders=",history_orders)
 else:
     print("Orders not found in history")
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -3704,7 +3721,7 @@ print()
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get the number of orders in history
 from_date=datetime(2020,1,1)
 to_date=datetime.now()
@@ -3714,7 +3731,7 @@ if history_orders==None:
 elif len(history_orders)>0:
     print("history_orders_get({}, {}, group=\"*GBP*\")={}".format(from_date,to_date,len(history_orders)))
 print()
- 
+
 # display all historical orders by a position ticket
 position_id=530218319
 position_history_orders=mt5.history_orders_get(position=position_id)
@@ -3724,7 +3741,7 @@ if position_history_orders==None:
 elif len(position_history_orders)>0:
     print("Total history orders on position #{}: {}".format(position_id,len(position_history_orders)))
     # display all historical orders having a specified position ticket
-    for position_order in position_history_orders:        
+    for position_order in position_history_orders:
         print(position_order)
     print()
     # display these orders as a table using pandas.DataFrame
@@ -3733,7 +3750,7 @@ elif len(position_history_orders)>0:
     df['time_setup'] = pd.to_datetime(df['time_setup'], unit='s')
     df['time_done'] = pd.to_datetime(df['time_done'], unit='s')
     print(df)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -3743,16 +3760,16 @@ mt5.shutdown()
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 history_orders_get(2020-01-01 00:00:00, 2020-03-25 17:17:32.058795, group="*GBP*")=14
- 
+
 Total history orders on position #530218319: 2
 TradeOrder(ticket=530218319, time_setup=1582282114, time_setup_msc=1582282114681, time_done=1582303777, time_done_msc=1582303777582, time_expiration=0, ...
 TradeOrder(ticket=535548147, time_setup=1583176242, time_setup_msc=1583176242265, time_done=1583176242, time_done_msc=1583176242265, time_expiration=0, ...
- 
+
       ticket          time_setup  time_setup_msc           time_done  time_done_msc  type  type_filling  magic  position_id  volume_initial  price_open  price_current  symbol comment external_id
-0  530218319 2020-02-21 10:48:34   1582282114681 2020-02-21 16:49:37  1582303777582     2             2      0    530218319            0.01     0.97898        0.97863  USDCHF                    
-1  535548147 2020-03-02 19:10:42   1583176242265 2020-03-02 19:10:42  1583176242265     1             0      0    530218319            0.01     0.95758        0.95758  USDCHF   
+0  530218319 2020-02-21 10:48:34   1582282114681 2020-02-21 16:49:37  1582303777582     2             2      0    530218319            0.01     0.97898        0.97863  USDCHF
+1  535548147 2020-03-02 19:10:42   1583176242265 2020-03-02 19:10:42  1583176242265     1             0      0    530218319            0.01     0.95758        0.95758  USDCHF
 ```
 
 ## See also
@@ -3803,12 +3820,12 @@ import MetaTrader5 as mt5
 # display data on the MetaTrader 5 package
 print("MetaTrader5 package author: ",mt5.__author__)
 print("MetaTrader5 package version: ",mt5.__version__)
- 
+
 # establish connection to MetaTrader 5 terminal
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get the number of deals in history
 from_date=datetime(2020,1,1)
 to_date=datetime.now()
@@ -3817,7 +3834,7 @@ if deals>0:
     print("Total deals=",deals)
 else:
     print("Deals not found in history")
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -3913,7 +3930,7 @@ print()
 if not mt5.initialize():
     print("initialize() failed, error code =",mt5.last_error())
     quit()
- 
+
 # get the number of deals in history
 from_date=datetime(2020,1,1)
 to_date=datetime.now()
@@ -3923,7 +3940,7 @@ if deals==None:
     print("No deals with group=\"*USD*\", error code={}".format(mt5.last_error()))
 elif len(deals)> 0:
     print("history_deals_get({}, {}, group=\"*GBP*\")={}".format(from_date,to_date,len(deals)))
- 
+
 # get deals for symbols whose names contain neither "EUR" nor "GBP"
 deals = mt5.history_deals_get(from_date, to_date, group="*,!*EUR*,!*GBP*")
 if deals == None:
@@ -3939,7 +3956,7 @@ elif len(deals) > 0:
     df['time'] = pd.to_datetime(df['time'], unit='s')
     print(df)
 print("")
- 
+
 # get all deals related to the position #530218319
 position_id=530218319
 position_deals = mt5.history_deals_get(position=position_id)
@@ -3952,7 +3969,7 @@ elif len(position_deals) > 0:
     df=pd.DataFrame(list(position_deals),columns=position_deals[0]._asdict().keys())
     df['time'] = pd.to_datetime(df['time'], unit='s')
     print(df)
- 
+
 # shut down connection to the MetaTrader 5 terminal
 mt5.shutdown()
 ```
@@ -3962,9 +3979,9 @@ mt5.shutdown()
 ```
 MetaTrader5 package author:  MetaQuotes Software Corp.
 MetaTrader5 package version:  5.0.29
- 
+
 history_deals_get(from_date, to_date, group="*GBP*") = 14
- 
+
 history_deals_get(from_date, to_date, group="*,!*EUR*,!*GBP*") = 7
    TradeDeal(ticket=506966741, order=0, time=1582202125, time_msc=1582202125419, type=2, entry=0, magic=0, position_id=0, reason=0, volume=0.0, pri ...
    TradeDeal(ticket=507962919, order=530218319, time=1582303777, time_msc=1582303777582, type=0, entry=0, magic=0, position_id=530218319, reason=0, ...
@@ -3973,20 +3990,20 @@ history_deals_get(from_date, to_date, group="*,!*EUR*,!*GBP*") = 7
    TradeDeal(ticket=516943915, order=539349802, time=1583510025, time_msc=1583510025054, type=0, entry=0, magic=0, position_id=539349802, reason=0, ...
    TradeDeal(ticket=517139682, order=539557870, time=1583520201, time_msc=1583520201227, type=0, entry=1, magic=0, position_id=539349382, reason=0, ...
    TradeDeal(ticket=517139716, order=539557909, time=1583520202, time_msc=1583520202971, type=1, entry=1, magic=0, position_id=539349802, reason=0, ...
- 
+
       ticket      order                time       time_msc  type  entry  magic  position_id  reason  volume    price  commission  swap     profit  fee  symbol comment external_id
-0  506966741          0 2020-02-20 12:35:25  1582202125419     2      0      0            0       0    0.00  0.00000         0.0   0.0  100000.00  0.0                            
-1  507962919  530218319 2020-02-21 16:49:37  1582303777582     0      0      0    530218319       0    0.01  0.97898         0.0   0.0       0.00  0.0  USDCHF                    
-2  513149059  535548147 2020-03-02 19:10:42  1583176242265     1      1      0    530218319       0    0.01  0.95758         0.0   0.0     -22.35  0.0  USDCHF                    
-3  516943494  539349382 2020-03-06 15:53:23  1583510003895     1      0      0    539349382       0    0.10  0.93475         0.0   0.0       0.00  0.0  USDCHF                    
-4  516943915  539349802 2020-03-06 15:53:45  1583510025054     0      0      0    539349802       0    0.10  0.66336         0.0   0.0       0.00  0.0  AUDUSD                    
-5  517139682  539557870 2020-03-06 18:43:21  1583520201227     0      1      0    539349382       0    0.10  0.93751         0.0   0.0     -29.44  0.0  USDCHF                    
-6  517139716  539557909 2020-03-06 18:43:22  1583520202971     1      1      0    539349802       0    0.10  0.66327         0.0   0.0      -0.90  0.0  AUDUSD                    
- 
+0  506966741          0 2020-02-20 12:35:25  1582202125419     2      0      0            0       0    0.00  0.00000         0.0   0.0  100000.00  0.0
+1  507962919  530218319 2020-02-21 16:49:37  1582303777582     0      0      0    530218319       0    0.01  0.97898         0.0   0.0       0.00  0.0  USDCHF
+2  513149059  535548147 2020-03-02 19:10:42  1583176242265     1      1      0    530218319       0    0.01  0.95758         0.0   0.0     -22.35  0.0  USDCHF
+3  516943494  539349382 2020-03-06 15:53:23  1583510003895     1      0      0    539349382       0    0.10  0.93475         0.0   0.0       0.00  0.0  USDCHF
+4  516943915  539349802 2020-03-06 15:53:45  1583510025054     0      0      0    539349802       0    0.10  0.66336         0.0   0.0       0.00  0.0  AUDUSD
+5  517139682  539557870 2020-03-06 18:43:21  1583520201227     0      1      0    539349382       0    0.10  0.93751         0.0   0.0     -29.44  0.0  USDCHF
+6  517139716  539557909 2020-03-06 18:43:22  1583520202971     1      1      0    539349802       0    0.10  0.66327         0.0   0.0      -0.90  0.0  AUDUSD
+
 Deals with position id #530218319: 2
       ticket      order                time       time_msc  type  entry  magic  position_id  reason  volume    price  commission  swap  profit  fee  symbol comment external_id
-0  507962919  530218319 2020-02-21 16:49:37  1582303777582     0      0      0    530218319       0    0.01  0.97898         0.0   0.0    0.00  0.0  USDCHF                    
-1  513149059  535548147 2020-03-02 19:10:42  1583176242265     1      1      0    530218319       0    0.01  0.95758         0.0   0.0  -22.35  0.0  USDCHF   
+0  507962919  530218319 2020-02-21 16:49:37  1582303777582     0      0      0    530218319       0    0.01  0.97898         0.0   0.0    0.00  0.0  USDCHF
+1  513149059  535548147 2020-03-02 19:10:42  1583176242265     1      1      0    530218319       0    0.01  0.95758         0.0   0.0  -22.35  0.0  USDCHF
 ```
 
 ## See also
@@ -3998,7 +4015,19 @@ Deals with position id #530218319: 2
         return response
 
     def eval(self,command:str):
+        """Evaluate a command on the MetaTrader 5 terminal.
+
+        Args:
+            command (str): The command to evaluate on the MetaTrader 5 terminal.
+
+        Returns:
+        """
         return self.__conn.eval(command)
-    
+
     def execute(self,command:str):
+        """_summary_
+
+        Args:
+            command (str): _description_
+        """
         self.__conn.execute(command)
