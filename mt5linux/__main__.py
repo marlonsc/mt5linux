@@ -204,16 +204,23 @@ def main():
     #
     os.makedirs(server_dir, exist_ok=True)
     __generate_server_classic(os.path.join(server_dir,server_code))
+    # Logging temporário para depuração
+    print('DEBUG: wine_cmd:', wine_cmd)
+    print('DEBUG: win_python_path:', win_python_path)
+    print('DEBUG: server_dir:', server_dir)
+    print('DEBUG: server_code:', server_code)
+    print('DEBUG: host:', host)
+    print('DEBUG: port:', port)
+    print('DEBUG: comando:', [wine_cmd, win_python_path, os.path.join(server_dir,server_code), '--host', host, '-p', str(port)])
     Popen([
             wine_cmd,
-            os.path.join(win_python_path),
+            win_python_path,
             os.path.join(server_dir,server_code),
             '--host',
             host,
             '-p',
             str(port),
-        ],shell=True,
-    ).wait()
+        ]).wait()
 
 
 if __name__ == '__main__':
