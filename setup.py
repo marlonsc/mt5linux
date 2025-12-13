@@ -1,17 +1,24 @@
+"""
+MetaTrader5 for linux users
+Author: Lucas Prett Campagna
+License: MIT
+URL: https://github.com/lucas-campagna/mt5linux
+"""
+
 from setuptools import find_packages, setup
 
 setup(
-    name='mt5linux',
-    packages=find_packages(include=['mt5linux']),
-    version='0.2.1',
-    description='MetaTrader5 for linux users',
-    long_description=open('README.md','r').read(),
-    long_description_content_type='text/markdown',
-    author='Lucas Prett Campagna',
-    license='MIT',
-    url = 'https://github.com/lucas-campagna/mt5linux',
-    install_requires=open('requirements.txt','r').read().split('\n'),
+    name="mt5linux",
+    packages=find_packages(include=["mt5linux"]),
+    version="0.2.1",
+    description="MetaTrader5 for linux users",
+    long_description=open("README.md", "r", encoding="utf-8").read(),
+    long_description_content_type="text/markdown",
+    author="Lucas Prett Campagna",
+    license="MIT",
+    url="https://github.com/lucas-campagna/mt5linux",
+    install_requires=open("requirements.txt", "r", encoding="utf-8").read().split("\n"),
     setup_requires=[],
     tests_require=[],
-    test_suite='tests',
+    test_suite="tests",
 )

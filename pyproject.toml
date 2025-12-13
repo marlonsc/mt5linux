@@ -1,0 +1,35 @@
+[build-system]
+    build-backend = "poetry.core.masonry.api"
+    requires = ["poetry-core"]
+
+[tool.poetry]
+    name = "mt5linux"
+    version = "0.2.1"
+    description = "MetaTrader5 for linux users"
+    authors = ["Lucas Prett Campagna"]
+    license = "MIT"
+    readme = "README.md"
+    homepage = "https://github.com/lucas-campagna/mt5linux"
+    repository = "https://github.com/lucas-campagna/mt5linux"
+    packages = [{ include = "mt5linux" }]
+
+    [tool.poetry.dependencies]
+        python = "^3.13"
+        numpy = "^2.0.0"
+        plumbum = "^1.8.0"
+        pyparsing = "^3.0.0"
+        rpyc = "^5.2.0"
+
+    [tool.poetry.group.dev.dependencies]
+        pytest = "^8.0.0"
+        ruff = "^0.11.0"
+        mypy = "^1.15.0"
+
+[tool.ruff]
+    line-length = 88
+    target-version = "py313"
+
+[tool.mypy]
+    python_version = "3.13"
+    strict = false
+    ignore_missing_imports = true

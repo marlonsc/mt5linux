@@ -1,0 +1,4 @@
+numpy==2.2.5
+plumbum
+pyparsing
+rpyc==5.2.3
