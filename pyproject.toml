@@ -1,35 +1,81 @@
 [build-system]
-    build-backend = "poetry.core.masonry.api"
-    requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core"]
 
 [tool.poetry]
-    name = "mt5linux"
-    version = "0.2.1"
-    description = "MetaTrader5 for linux users"
-    authors = ["Lucas Prett Campagna"]
-    license = "MIT"
-    readme = "README.md"
-    homepage = "https://github.com/lucas-campagna/mt5linux"
-    repository = "https://github.com/lucas-campagna/mt5linux"
-    packages = [{ include = "mt5linux" }]
+name = "mt5linux"
+version = "0.2.0"
+description = "MetaTrader5 bridge para Linux via rpyc"
+authors = ["Lucas Prett Campagna"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/lucas-campagna/mt5linux"
+repository = "https://github.com/lucas-campagna/mt5linux"
+packages = [{ include = "mt5linux" }]
 
-    [tool.poetry.dependencies]
-        python = "^3.11"
-        numpy = ">=2.0.0"
-        plumbum = ">=1.8.0"
-        pyparsing = ">=3.0.0"
-        rpyc = ">=5.2.0"
+[tool.poetry.dependencies]
+python = "^3.11"
+numpy = ">=2.0.0"
+rpyc = ">=5.2.0"
 
-    [tool.poetry.group.dev.dependencies]
-        pytest = "^9.0.0"
-        ruff = "^0.11.0"
-        mypy = "^1.15.0"
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.0"
+pytest-cov = "^6.0.0"
+ruff = "^0.11.0"
+mypy = "^1.15.0"
 
 [tool.ruff]
-    line-length = 88
-    target-version = "py311"
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D",       # pydocstyle - docstrings opcionais
+    "COM812",  # missing-trailing-comma (conflicts with formatter)
+    "ISC001",  # single-line-implicit-string-concatenation (conflicts with formatter)
+    "ANN401",  # Any type disallowed - necessário para bridge transparente
+    "TC003",   # typing imports - permitir no TYPE_CHECKING
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",    # assert ok em testes
+    "S104",    # binding to all interfaces ok em testes
+    "S603",    # subprocess call ok em testes (docker)
+    "S607",    # partial path ok em testes (docker)
+    "S110",    # try-except-pass ok em testes
+    "SLF001",  # private member access ok em testes
+    "PLR2004", # magic values ok em testes
+    "ANN",     # annotations opcionais em testes
+    "FBT001",  # boolean positional ok em fixtures
+    "FBT003",  # boolean positional ok em testes
+    "ARG001",  # unused args ok em fixtures (dependency injection)
+    "ARG002",  # unused method args ok em fixtures
+    "PLW0603", # global statement ok em test config
+    "BLE001",  # blind exception ok em test helpers
+    "TRY300",  # try-return pattern ok em test helpers
+    "UP037",   # quoted annotations ok for forward refs
+]
 
 [tool.mypy]
-    python_version = "3.11"
-    strict = false
-    ignore_missing_imports = true
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["mt5linux"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

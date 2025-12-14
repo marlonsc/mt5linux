@@ -48,3 +48,9 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Environment files (contain secrets)
+.env
+.env.local
+.env.*.local
+!.env.example

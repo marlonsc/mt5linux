@@ -1,7 +1,7 @@
 # mt5linux Makefile
-# Poetry-based build with all groups and extras
+# Poetry-based build with strict quality gates
 
-.PHONY: setup lint format test check help
+.PHONY: setup lint format type test coverage check validate clean help
 
 # Use workspace venv poetry
 VENV_BIN ?= $(shell dirname $(shell which python 2>/dev/null || echo "../../.venv/bin/python"))
@@ -14,14 +14,30 @@ setup: ## Install with Poetry (all groups, all extras)
 	$(POETRY) lock --quiet 2>/dev/null || $(POETRY) lock
 	$(POETRY) install --all-groups --all-extras
 
-lint: ## Run linting
-	$(POETRY) run ruff check .
+lint: ## Run ruff linting
+	$(POETRY) run ruff check mt5linux/ tests/
+	$(POETRY) run ruff format --check mt5linux/ tests/
 
-format: ## Format code
-	$(POETRY) run ruff format .
+format: ## Format code with ruff
+	$(POETRY) run ruff format mt5linux/ tests/
+	$(POETRY) run ruff check --fix mt5linux/ tests/
 
-test: ## Run tests
-	$(POETRY) run pytest -v
+type: ## Type checking (mypy --strict)
+	$(POETRY) run mypy mt5linux/ tests/ --strict
 
-check: lint ## Quick check
+test: ## Run tests (auto-starts docker container)
+	$(POETRY) run pytest tests/ -v --tb=short
+
+coverage: ## Run tests with 100% coverage requirement
+	$(POETRY) run pytest tests/ -v --cov=mt5linux --cov-report=term-missing --cov-fail-under=100
+
+check: lint type ## Quick check (lint + type)
 	@echo "✅ Check passed"
+
+validate: lint type coverage ## Full validation (lint + type + coverage 100%)
+	@echo "✅ Validation passed"
+
+clean: ## Remove cache directories
+	rm -rf .pytest_cache .mypy_cache .ruff_cache __pycache__ .coverage
+	rm -rf mt5linux/__pycache__ tests/__pycache__
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

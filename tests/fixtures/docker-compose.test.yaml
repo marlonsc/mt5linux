@@ -1,0 +1,78 @@
+# docker-compose.test.yaml - Container ISOLADO para testes UNITÁRIOS do mt5linux
+#
+# NÃO afeta o container mt5 de produção (porta 8001)
+# NÃO conflita com testes de neptor (porta 28812) ou mt5docker
+# Usa portas e volumes completamente separados
+#
+# Localização: tests/fixtures/docker-compose.test.yaml
+# Caminhos são relativos a este arquivo
+#
+# Uso:
+#   cd mt5linux
+#   docker compose -f tests/fixtures/docker-compose.test.yaml up -d
+#   pytest tests/ -v
+#
+# Ou pytest auto-inicia via conftest.py
+
+services:
+  mt5-unit:
+    build:
+      context: ../../../mt5docker
+      dockerfile: Dockerfile
+    image: mt5docker:unit
+    container_name: mt5linux-unit
+    ports:
+      - "33000:3000"    # VNC isolado (não conflita com 3000/23000)
+      - "38812:8001"    # RPyC isolado (não conflita com 8001/28812!)
+      - "38002:8002"    # Health isolado (não conflita com 8002/28002)
+    volumes:
+      # Volumes ISOLADOS (não compartilha com produção ou neptor)
+      - mt5linux_unit_config:/config:uid=911,gid=911
+      - mt5linux_unit_downloads:/downloads:uid=911,gid=911
+      - mt5linux_unit_cache:/cache:uid=911,gid=911
+      # Mount código LOCAL do mt5linux como pacote Python
+      # ../../mt5linux -> /opt/mt5linux-pkg/mt5linux (para import mt5linux funcionar)
+      - ../../mt5linux:/opt/mt5linux-pkg/mt5linux:ro
+    env_file:
+      - ../../.env
+    environment:
+      # Usar código local via PYTHONPATH (diretório PAI do pacote)
+      - PYTHONPATH=/opt/mt5linux-pkg
+      # MT5 credentials from .env (mapped to container env vars)
+      - MT5_LOGIN=${MT5_TEST_LOGIN}
+      - MT5_PASSWORD=${MT5_TEST_PASSWORD}
+      - MT5_SERVER=${MT5_TEST_SERVER:-MetaQuotes-Demo}
+      # Container settings
+      - ENABLE_WIN_DOTNET=1
+      - ENABLE_DATA_SYNC=0
+      - TZ=UTC
+      # RPyC settings
+      - RPYC_RESILIENT=1
+      - RPYC_HEALTH_PORT=8002
+      - RPYC_MAX_RESTARTS=5
+      - RPYC_MAX_CONNECTIONS=5
+    restart: "no"
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo >/dev/tcp/localhost/8001"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+volumes:
+  mt5linux_unit_config:
+    name: mt5linux_unit_config
+    labels:
+      description: "MT5 unit test configuration (isolated from neptor)"
+  mt5linux_unit_downloads:
+    name: mt5linux_unit_downloads
+    labels:
+      description: "MT5 unit test downloads (isolated from neptor)"
+  mt5linux_unit_cache:
+    name: mt5linux_unit_cache
+    labels:
+      description: "MT5 unit test cache (isolated from neptor)"
