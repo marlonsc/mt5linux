@@ -17,11 +17,105 @@ The library supports the following features:
 
 # pylint: disable=line-too-long
 # pylint: disable=too-many-lines
+from __future__ import annotations
+
+import time
+from typing import Any
+
 import rpyc
 
+from mt5linux import constants
+from mt5linux.constants import (
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    DEFAULT_RETRY_ATTEMPTS,
+    DEFAULT_RETRY_DELAY,
+    DEFAULT_TIMEOUT,
+)
+from mt5linux.exceptions import (
+    MT5AuthenticationError,
+    MT5ConnectionError,
+    MT5DataError,
+    MT5Error,
+    MT5InsufficientFundsError,
+    MT5OrderRejectedError,
+    MT5ServerUnavailableError,
+    MT5SymbolNotFoundError,
+    MT5TimeoutError,
+    MT5TradeError,
+    raise_for_error,
+)
+from mt5linux.types import (
+    AccountInfo,
+    DealInfo,
+    ErrorTuple,
+    OrderInfo,
+    PositionInfo,
+    SymbolInfo,
+    TerminalInfo,
+    Tick,
+    TradeRequest,
+    TradeResult,
+    VersionTuple,
+)
 
-class MetaTrader5(object):
-    """MetaTrader5"""
+__all__ = [
+    "MetaTrader5",
+    # Exceptions
+    "MT5Error",
+    "MT5ConnectionError",
+    "MT5TimeoutError",
+    "MT5ServerUnavailableError",
+    "MT5AuthenticationError",
+    "MT5TradeError",
+    "MT5OrderRejectedError",
+    "MT5InsufficientFundsError",
+    "MT5DataError",
+    "MT5SymbolNotFoundError",
+    "raise_for_error",
+    # Types
+    "AccountInfo",
+    "DealInfo",
+    "ErrorTuple",
+    "OrderInfo",
+    "PositionInfo",
+    "SymbolInfo",
+    "TerminalInfo",
+    "Tick",
+    "TradeRequest",
+    "TradeResult",
+    "VersionTuple",
+]
+
+
+class MetaTrader5:
+    """
+    MetaTrader5 remote client via rpyc.
+
+    This class provides a Python interface to MetaTrader 5 terminal running
+    in a Windows environment (typically via Wine or Docker).
+
+    Features:
+        - Automatic retry on connection failure
+        - Context manager support (with statement)
+        - Configurable timeout
+        - Health check method
+
+    Example:
+        ```python
+        # Basic usage
+        mt5 = MetaTrader5(host="localhost", port=8001)
+        mt5.initialize(login=12345, password="pass", server="Demo")
+        print(mt5.account_info())
+        mt5.shutdown()
+
+        # Context manager usage
+        with MetaTrader5(host="localhost", port=8001) as mt5:
+            mt5.initialize(login=12345, password="pass", server="Demo")
+            print(mt5.account_info())
+        # shutdown called automatically
+        ```
+    """
 
     # Constants
     ACCOUNT_MARGIN_MODE_RETAIL_NETTING = 0
@@ -371,22 +465,144 @@ class MetaTrader5(object):
     # The order is active until 23:59:59 of the specified day. If this time appears to be out of a trading session, the expiration is processed at the nearest trading time.
     ORDER_TIME_SPECIFIED_DAY = 3
 
-    def __init__(self, host="localhost", port=18812):
-        """
-        host: str
-            default = localhost
-        port: int
-            default = 18812
-        """
-        self.__conn = rpyc.classic.connect(host, port)
-        self.__conn._config["sync_request_timeout"] = 300  # 5 min
-        self.__conn.execute("import MetaTrader5 as mt5")
-        self.__conn.execute("import datetime")
+    # Default connection settings
+    DEFAULT_HOST = "localhost"
+    DEFAULT_PORT = 18812
+    DEFAULT_TIMEOUT = 300  # 5 minutes
+    DEFAULT_RETRY_ATTEMPTS = 3
+    DEFAULT_RETRY_DELAY = 1.0  # seconds
 
-    def __del__(self):
-        pass
+    def __init__(
+        self,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
+        timeout: int = DEFAULT_TIMEOUT,
+        retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
+        retry_delay: float = DEFAULT_RETRY_DELAY,
+    ) -> None:
+        """
+        Initialize MetaTrader5 client with connection to rpyc server.
 
-    def initialize(self, *args, **kwargs):
+        Args:
+            host: Server hostname or IP address (default: localhost)
+            port: Server port (default: 18812)
+            timeout: Request timeout in seconds (default: 300)
+            retry_attempts: Number of connection retry attempts (default: 3)
+            retry_delay: Initial delay between retries in seconds (default: 1.0)
+
+        Raises:
+            ConnectionError: If connection fails after all retry attempts
+        """
+        self._host = host
+        self._port = port
+        self._timeout = timeout
+        self._retry_attempts = retry_attempts
+        self._retry_delay = retry_delay
+        self._initialized = False
+        self.__conn: Any = None
+
+        self._connect()
+
+    def _connect(self) -> None:
+        """
+        Establish connection to rpyc server with retry logic.
+
+        Uses exponential backoff for retries.
+        """
+        last_error: Exception | None = None
+        delay = self._retry_delay
+
+        for attempt in range(1, self._retry_attempts + 1):
+            try:
+                self.__conn = rpyc.classic.connect(self._host, self._port)
+                self.__conn._config["sync_request_timeout"] = self._timeout
+                self.__conn.execute("import MetaTrader5 as mt5")
+                self.__conn.execute("import datetime")
+                return  # Success
+            except Exception as e:
+                last_error = e
+                if attempt < self._retry_attempts:
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+
+        # All retries failed
+        raise MT5ConnectionError(
+            message=f"Failed to connect after {self._retry_attempts} attempts: {last_error}",
+            host=self._host,
+            port=self._port,
+        ) from last_error
+
+    def __del__(self) -> None:
+        """Cleanup connection on object destruction."""
+        self.close()
+
+    def __enter__(self) -> "MetaTrader5":
+        """Context manager entry."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Context manager exit - ensures cleanup."""
+        try:
+            self.shutdown()
+        except Exception:
+            pass
+        self.close()
+
+    def close(self) -> None:
+        """Close the rpyc connection."""
+        if self.__conn is not None:
+            try:
+                self.__conn.close()
+            except Exception:
+                pass
+            self.__conn = None
+
+    def reconnect(self) -> bool:
+        """
+        Reconnect to the rpyc server.
+
+        Returns:
+            True if reconnection successful, False otherwise
+        """
+        self.close()
+        try:
+            self._connect()
+            return True
+        except MT5ConnectionError:
+            return False
+
+    def is_connected(self) -> bool:
+        """
+        Check if connection to rpyc server is alive.
+
+        Returns:
+            True if connected and responsive, False otherwise
+        """
+        if self.__conn is None:
+            return False
+        try:
+            # Try a simple operation to verify connection
+            self.__conn.ping()
+            return True
+        except Exception:
+            return False
+
+    @property
+    def connection_info(self) -> dict[str, Any]:
+        """Get connection information."""
+        return {
+            "host": self._host,
+            "port": self._port,
+            "timeout": self._timeout,
+            "connected": self.is_connected(),
+        }
+
+    def initialize(self, *args: Any, **kwargs: Any) -> bool:
         r"""
         # initialize
 
@@ -482,7 +698,7 @@ class MetaTrader5(object):
         code = f"mt5.initialize(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def login(self, *args, **kwargs):
+    def login(self, *args: Any, **kwargs: Any) -> bool:
         r"""
         # login
 
@@ -609,7 +825,7 @@ class MetaTrader5(object):
         code = f"mt5.login(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def shutdown(self, *args, **kwargs):
+    def shutdown(self, *args: Any, **kwargs: Any) -> bool:
         r"""
         # shutdown
 
@@ -654,7 +870,7 @@ class MetaTrader5(object):
         code = f"mt5.shutdown(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def version(self, *args, **kwargs):
+    def version(self, *args: Any, **kwargs: Any) -> VersionTuple | None:
         r"""
         # version
 
@@ -749,7 +965,7 @@ class MetaTrader5(object):
         code = f"mt5.version(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def last_error(self, *args, **kwargs):
+    def last_error(self, *args: Any, **kwargs: Any) -> ErrorTuple:
         r"""
         # last_error
 
@@ -809,7 +1025,7 @@ class MetaTrader5(object):
         code = f"mt5.last_error(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def account_info(self, *args, **kwargs):
+    def account_info(self, *args: Any, **kwargs: Any) -> Any:
         r"""
         # account_info
 
@@ -943,7 +1159,7 @@ class MetaTrader5(object):
         code = f"mt5.account_info(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def terminal_info(self, *args, **kwargs):
+    def terminal_info(self, *args: Any, **kwargs: Any) -> Any:
         r"""
         # terminal_info
 
@@ -1063,7 +1279,7 @@ class MetaTrader5(object):
         code = f"mt5.terminal_info(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def symbols_total(self, *args, **kwargs):
+    def symbols_total(self, *args: Any, **kwargs: Any) -> int:
         r"""
         # symbols_total
 
@@ -1114,7 +1330,7 @@ class MetaTrader5(object):
         code = f"mt5.symbols_total(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def symbols_get(self, *args, **kwargs):
+    def symbols_get(self, *args: Any, **kwargs: Any) -> tuple[Any, ...] | None:
         r"""
         # symbols_get
 
@@ -1232,7 +1448,7 @@ class MetaTrader5(object):
         code = f"mt5.symbols_get(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def symbol_info(self, *args, **kwargs):
+    def symbol_info(self, *args: Any, **kwargs: Any) -> Any:
         r"""
         # symbol_info
 
@@ -1407,7 +1623,7 @@ class MetaTrader5(object):
         code = f"mt5.symbol_info(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def symbol_info_tick(self, *args, **kwargs):
+    def symbol_info_tick(self, *args: Any, **kwargs: Any) -> Any:
         r"""
         # symbol_info_tick
 
@@ -1488,7 +1704,7 @@ class MetaTrader5(object):
         code = f"mt5.symbol_info_tick(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def symbol_select(self, *args, **kwargs):
+    def symbol_select(self, *args: Any, **kwargs: Any) -> bool:
         r"""
         # symbol_select
 
@@ -2598,7 +2814,7 @@ class MetaTrader5(object):
         code = f'mt5.copy_ticks_range("{symbol}", {repr(date_from.astimezone())}, {repr(date_to.astimezone())}, {flags})'
         return rpyc.utils.classic.obtain(self.__conn.eval(code))
 
-    def orders_total(self, *args, **kwargs):
+    def orders_total(self, *args: Any, **kwargs: Any) -> int:
         r"""
         # orders_total
 
@@ -2649,7 +2865,7 @@ class MetaTrader5(object):
         code = f"mt5.orders_total(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def orders_get(self, *args, **kwargs):
+    def orders_get(self, *args: Any, **kwargs: Any) -> tuple[Any, ...] | None:
         r"""
         # orders_get
 
@@ -2779,7 +2995,7 @@ class MetaTrader5(object):
         code = f"mt5.orders_get(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def order_calc_margin(self, *args, **kwargs):
+    def order_calc_margin(self, *args: Any, **kwargs: Any) -> float | None:
         r"""
         # order_calc_margin
 
@@ -2901,7 +3117,7 @@ class MetaTrader5(object):
         code = f"mt5.order_calc_margin(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def order_calc_profit(self, *args, **kwargs):
+    def order_calc_profit(self, *args: Any, **kwargs: Any) -> float | None:
         r"""
         # order_calc_profit
 
@@ -3025,7 +3241,7 @@ class MetaTrader5(object):
         code = f"mt5.order_calc_profit(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def order_check(self, *args, **kwargs):
+    def order_check(self, *args: Any, **kwargs: Any) -> Any:
         r"""
         # order_check
 
@@ -3190,7 +3406,7 @@ class MetaTrader5(object):
         code = f"mt5.order_check(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def order_send(self, request):
+    def order_send(self, request: dict[str, Any]) -> Any:
         r"""
         # order_send
 
@@ -3399,7 +3615,7 @@ class MetaTrader5(object):
         code = f"mt5.order_send({request})"
         return self.__conn.eval(code)
 
-    def positions_total(self, *args, **kwargs):
+    def positions_total(self, *args: Any, **kwargs: Any) -> int:
         r"""
         # positions_total
 
@@ -3450,7 +3666,7 @@ class MetaTrader5(object):
         code = f"mt5.positions_total(*{args},**{kwargs})"
         return self.__conn.eval(code)
 
-    def positions_get(self, *args, **kwargs):
+    def positions_get(self, *args: Any, **kwargs: Any) -> tuple[Any, ...] | None:
         r"""
         # positions_get
 
