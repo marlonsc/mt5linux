@@ -2,7 +2,6 @@
 Resilient RPyC server for mt5linux with supervisor, health checks, and auto-recovery.
 
 This module provides a robust server implementation using:
-- Pydantic 2 for configuration and state management
 - Circuit breaker pattern for failure protection
 - Rate limiting with token bucket algorithm
 - Process supervision with auto-restart
@@ -26,12 +25,13 @@ import sys
 import threading
 import time
 from datetime import datetime
-from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from subprocess import PIPE, Popen
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
-from pydantic import BaseModel, Field, computed_field
+from mt5linux.enums import CircuitState
+from mt5linux.exceptions import CircuitBreakerOpenError
+from mt5linux.models import ServerConfig, ServerState
 
 # Configure logging
 logging.basicConfig(
@@ -43,150 +43,69 @@ logger = logging.getLogger("mt5linux.resilient_server")
 
 
 # =============================================================================
-# Enums
+# RPyC Server Template
 # =============================================================================
 
-
-class CircuitState(str, Enum):
-    """Circuit breaker states."""
-
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
-
-
-# =============================================================================
-# Pydantic Models (Configuration & State)
-# =============================================================================
+RPYC_SERVER_CODE = '''#!/usr/bin/env python
+"""RPyC classic server for mt5linux."""
+import rpyc
+from plumbum import cli
+from rpyc.utils.server import ThreadedServer
+from rpyc.utils.classic import DEFAULT_SERVER_PORT
+from rpyc.lib import setup_logger
+from rpyc.core import SlaveService
 
 
-class ServerConfig(BaseModel):
-    """Immutable server configuration using Pydantic 2."""
+class ClassicServer(cli.Application):
+    mode = cli.SwitchAttr(
+        ["-m", "--mode"],
+        cli.Set("threaded", "forking"),
+        default="threaded",
+        help="The serving mode",
+    )
+    port = cli.SwitchAttr(
+        ["-p", "--port"],
+        cli.Range(0, 65535),
+        default=DEFAULT_SERVER_PORT,
+        help="The TCP listener port",
+    )
+    host = cli.SwitchAttr(
+        ["--host"],
+        str,
+        default="127.0.0.1",
+        help="The host to bind to",
+    )
+    quiet = cli.Flag(
+        ["-q", "--quiet"],
+        help="Quiet mode",
+    )
+    logfile = cli.SwitchAttr(
+        "--logfile",
+        str,
+        default=None,
+        help="Log file path",
+    )
 
-    model_config = {"frozen": True, "extra": "forbid"}
-
-    host: str = "0.0.0.0"
-    port: int = Field(default=18812, ge=1, le=65535)
-    wine_cmd: str = "wine"
-    python_path: str = "python.exe"
-    server_dir: str = "/tmp/mt5linux"
-
-    # Resilience
-    max_restart_attempts: int = Field(default=10, ge=1)
-    restart_cooldown: float = Field(default=5.0, gt=0)
-    restart_backoff_multiplier: float = Field(default=2.0, ge=1)
-    max_restart_delay: float = Field(default=300.0, gt=0)
-
-    # Health check
-    health_check_port: int = Field(default=8002, ge=1, le=65535)
-    health_check_interval: float = Field(default=15.0, gt=0)
-
-    # Watchdog
-    watchdog_timeout: float = Field(default=60.0, gt=0)
-    connection_timeout: float = Field(default=300.0, gt=0)
-
-    # Limits
-    max_connections: int = Field(default=10, ge=1)
-
-    # Circuit breaker
-    circuit_failure_threshold: int = Field(default=5, ge=1)
-    circuit_recovery_timeout: float = Field(default=30.0, gt=0)
-    circuit_half_open_max_calls: int = Field(default=3, ge=1)
-
-    # Rate limiting
-    rate_limit_requests: int = Field(default=100, ge=1)
-    rate_limit_window: float = Field(default=60.0, gt=0)
-
-
-class Metrics(BaseModel):
-    """Server metrics with Pydantic 2 serialization."""
-
-    model_config = {"extra": "forbid"}
-
-    requests_total: int = 0
-    requests_success: int = 0
-    requests_failed: int = 0
-    connections_total: int = 0
-    connections_active: int = 0
-    connections_rejected: int = 0
-    restarts_total: int = 0
-    uptime_seconds: float = 0.0
-    last_request_time: datetime | None = None
-    circuit_trips: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert metrics to structured dictionary."""
-        return {
-            "requests": {
-                "total": self.requests_total,
-                "success": self.requests_success,
-                "failed": self.requests_failed,
-            },
-            "connections": {
-                "total": self.connections_total,
-                "active": self.connections_active,
-                "rejected": self.connections_rejected,
-            },
-            "restarts_total": self.restarts_total,
-            "uptime_seconds": self.uptime_seconds,
-            "last_request_time": (
-                self.last_request_time.isoformat() if self.last_request_time else None
-            ),
-            "circuit_trips": self.circuit_trips,
-        }
+    def main(self):
+        setup_logger(self.quiet, self.logfile)
+        t = ThreadedServer(
+            SlaveService,
+            hostname=self.host,
+            port=self.port,
+            reuse_addr=True,
+        )
+        t.start()
 
 
-class ServerState(BaseModel):
-    """Mutable server state with Pydantic 2."""
-
-    model_config = {"extra": "forbid", "validate_assignment": True}
-
-    status: str = "stopped"
-    start_time: datetime | None = None
-    restart_count: int = 0
-    last_restart_time: datetime | None = None
-    last_health_check: datetime | None = None
-    active_connections: int = Field(default=0, ge=0)
-    total_connections: int = Field(default=0, ge=0)
-    errors: list[dict[str, Any]] = Field(default_factory=list)
-    wine_process_pid: int | None = None
-    metrics: Metrics = Field(default_factory=Metrics)
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def is_running(self) -> bool:
-        """Check if server is in running state."""
-        return self.status == "running"
+if __name__ == "__main__":
+    ClassicServer.run()
+'''
 
 
-# =============================================================================
-# Protocols (Interfaces for DIP/SRP)
-# =============================================================================
-
-
-class Startable(Protocol):
-    """Protocol for components that can be started/stopped."""
-
-    def start(self) -> None: ...
-    def stop(self) -> None: ...
-
-
-class HealthProvider(Protocol):
-    """Protocol for health check providers."""
-
-    def is_healthy(self) -> bool: ...
-    def get_health_status(self) -> dict[str, Any]: ...
-
-
-# =============================================================================
-# Exceptions
-# =============================================================================
-
-
-class CircuitBreakerOpenError(Exception):
-    """Raised when circuit breaker is open."""
-
-    pass
+def _write_server_script(path: str) -> None:
+    """Write the RPyC server script to the specified path."""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(RPYC_SERVER_CODE)
 
 
 # =============================================================================
@@ -196,10 +115,10 @@ class CircuitBreakerOpenError(Exception):
 
 class CircuitBreaker:
     """
-    Circuit breaker pattern implementation.
+    Circuit breaker pattern for failure protection.
 
     Prevents cascade failures by stopping requests when the system is failing.
-    Uses state transitions: CLOSED -> OPEN -> HALF_OPEN -> CLOSED.
+    State transitions: CLOSED -> OPEN -> HALF_OPEN -> CLOSED.
     """
 
     __slots__ = (
@@ -210,7 +129,6 @@ class CircuitBreaker:
         "_failure_count",
         "_success_count",
         "_last_failure_time",
-        "_half_open_calls",
         "_lock",
     )
 
@@ -228,16 +146,15 @@ class CircuitBreaker:
         self._failure_count = 0
         self._success_count = 0
         self._last_failure_time: float | None = None
-        self._half_open_calls = 0
         self._lock = threading.Lock()
 
     @property
     def state(self) -> CircuitState:
-        """Get current circuit state, transitioning to HALF_OPEN if ready."""
+        """Get current state, transitioning to HALF_OPEN if ready."""
         with self._lock:
             if self._state == CircuitState.OPEN and self._should_attempt_reset():
                 self._state = CircuitState.HALF_OPEN
-                self._half_open_calls = 0
+                self._success_count = 0
             return self._state
 
     def _should_attempt_reset(self) -> bool:
@@ -290,11 +207,10 @@ class CircuitBreaker:
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._success_count = 0
-        self._half_open_calls = 0
         logger.info("Circuit breaker reset")
 
     def get_status(self) -> dict[str, Any]:
-        """Get circuit breaker status."""
+        """Get circuit breaker status for monitoring."""
         with self._lock:
             return {
                 "state": self._state.value,
@@ -311,10 +227,10 @@ class CircuitBreaker:
 
 class RateLimiter:
     """
-    Token bucket rate limiter.
+    Token bucket rate limiter for request throttling.
 
-    Limits the rate of requests to prevent overload.
-    Tokens replenish continuously at a rate of max_requests/window_seconds.
+    Limits request rate to prevent overload. Tokens replenish continuously
+    at a rate of max_requests/window_seconds.
     """
 
     __slots__ = ("max_requests", "window_seconds", "_tokens", "_last_update", "_lock")
@@ -345,7 +261,7 @@ class RateLimiter:
             return False
 
     def get_status(self) -> dict[str, Any]:
-        """Get rate limiter status."""
+        """Get rate limiter status for monitoring."""
         with self._lock:
             return {
                 "available_tokens": int(self._tokens),
@@ -361,7 +277,7 @@ class RateLimiter:
 
 class ProcessSupervisor:
     """
-    Supervises the RPyC server process with auto-restart capability.
+    Supervises RPyC server process with auto-restart capability.
 
     Implements:
     - Exponential backoff on failures
@@ -429,6 +345,7 @@ class ProcessSupervisor:
                     self.state.status = "failed"
                     break
             else:
+                # Reset delay when running stable
                 if self.state.status == "running":
                     self._restart_delay = self.config.restart_cooldown
 
@@ -469,7 +386,7 @@ class ProcessSupervisor:
 
         os.makedirs(self.config.server_dir, exist_ok=True)
         server_script = os.path.join(self.config.server_dir, "rpyc_server.py")
-        self._generate_server_code(server_script)
+        _write_server_script(server_script)
 
         cmd = [
             self.config.wine_cmd,
@@ -505,13 +422,6 @@ class ProcessSupervisor:
             self._record_error(str(e))
             raise
 
-    def _reset_restart_count_if_stable(self) -> None:
-        """Reset restart count if process has been stable."""
-        if self.state.status == "running" and self.is_running():
-            logger.info("Process stable for 30s, resetting restart count")
-            self.state.restart_count = 0
-            self._restart_delay = self.config.restart_cooldown
-
     def _kill_process(self) -> None:
         """Kill the managed process."""
         if self.process is not None:
@@ -529,71 +439,14 @@ class ProcessSupervisor:
                 self.state.wine_process_pid = None
 
     def _record_error(self, message: str) -> None:
-        """Record an error in the state (keeps last 10)."""
-        self.state.errors.append({
-            "time": datetime.now().isoformat(),
-            "message": message,
-        })
-        self.state.errors = self.state.errors[-10:]
-
-    def _generate_server_code(self, path: str) -> None:
-        """Generate the RPyC server code."""
-        code = '''#!/usr/bin/env python
-"""RPyC classic server for mt5linux."""
-import rpyc
-from plumbum import cli
-from rpyc.utils.server import ThreadedServer
-from rpyc.utils.classic import DEFAULT_SERVER_PORT
-from rpyc.lib import setup_logger
-from rpyc.core import SlaveService
-
-
-class ClassicServer(cli.Application):
-    mode = cli.SwitchAttr(
-        ["-m", "--mode"],
-        cli.Set("threaded", "forking"),
-        default="threaded",
-        help="The serving mode",
-    )
-    port = cli.SwitchAttr(
-        ["-p", "--port"],
-        cli.Range(0, 65535),
-        default=DEFAULT_SERVER_PORT,
-        help="The TCP listener port",
-    )
-    host = cli.SwitchAttr(
-        ["--host"],
-        str,
-        default="127.0.0.1",
-        help="The host to bind to",
-    )
-    quiet = cli.Flag(
-        ["-q", "--quiet"],
-        help="Quiet mode",
-    )
-    logfile = cli.SwitchAttr(
-        "--logfile",
-        str,
-        default=None,
-        help="Log file path",
-    )
-
-    def main(self):
-        setup_logger(self.quiet, self.logfile)
-        t = ThreadedServer(
-            SlaveService,
-            hostname=self.host,
-            port=self.port,
-            reuse_addr=True,
+        """Record an error in state (keeps last 10)."""
+        self.state.errors.append(
+            {
+                "time": datetime.now().isoformat(),
+                "message": message,
+            }
         )
-        t.start()
-
-
-if __name__ == "__main__":
-    ClassicServer.run()
-'''
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(code)
+        self.state.errors = self.state.errors[-10:]
 
 
 # =============================================================================
@@ -605,7 +458,8 @@ class HealthChecker:
     """
     Health check functionality for the server.
 
-    Implements HealthProvider protocol for status reporting.
+    Periodically checks server health by testing port connectivity
+    and provides status reporting.
     """
 
     def __init__(self, config: ServerConfig, state: ServerState) -> None:
@@ -747,23 +601,27 @@ class ConnectionWatchdog:
         """Register a new connection."""
         with self._lock:
             self._connections[conn_id] = time.time()
-            self.state.active_connections = len(self._connections)
+            self._update_metrics()
             self.state.total_connections += 1
             self.state.metrics.connections_total += 1
-            self.state.metrics.connections_active = len(self._connections)
 
     def unregister_connection(self, conn_id: int) -> None:
         """Unregister a connection."""
         with self._lock:
             self._connections.pop(conn_id, None)
-            self.state.active_connections = len(self._connections)
-            self.state.metrics.connections_active = len(self._connections)
+            self._update_metrics()
 
     def update_connection(self, conn_id: int) -> None:
         """Update last activity time for a connection."""
         with self._lock:
             if conn_id in self._connections:
                 self._connections[conn_id] = time.time()
+
+    def _update_metrics(self) -> None:
+        """Update connection metrics in state."""
+        active = len(self._connections)
+        self.state.active_connections = active
+        self.state.metrics.connections_active = active
 
     def _watchdog_loop(self) -> None:
         """Periodically check for stale connections."""
@@ -784,8 +642,7 @@ class ConnectionWatchdog:
                 logger.warning(f"Cleaning up stale connection {cid}")
                 self._connections.pop(cid, None)
             if stale:
-                self.state.active_connections = len(self._connections)
-                self.state.metrics.connections_active = len(self._connections)
+                self._update_metrics()
 
 
 # =============================================================================
@@ -794,7 +651,7 @@ class ConnectionWatchdog:
 
 
 class HealthHTTPHandler(BaseHTTPRequestHandler):
-    """HTTP handler for health check endpoints."""
+    """HTTP handler for health check endpoints with DRY response helpers."""
 
     health_checker: HealthChecker | None = None
     rate_limiter: RateLimiter | None = None
@@ -802,30 +659,42 @@ class HealthHTTPHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress default HTTP logging."""
-        pass
+
+    def _send_json(self, data: dict[str, Any], status: int = 200) -> None:
+        """DRY helper: Send JSON response."""
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(data, indent=2).encode())
+
+    def _send_text(self, text: str, status: int = 200) -> None:
+        """DRY helper: Send plain text response."""
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(text.encode())
 
     def do_GET(self) -> None:
-        """Handle GET requests to health endpoints."""
+        """Handle GET requests using pattern matching."""
         if self.rate_limiter and not self.rate_limiter.acquire():
             self.send_error(429, "Too Many Requests")
             return
 
-        handlers = {
-            "/": self._send_health_response,
-            "/health": self._send_health_response,
-            "/ready": self._send_ready_response,
-            "/live": self._send_live_response,
-            "/metrics": self._send_metrics_response,
-            "/circuit": self._send_circuit_response,
-        }
+        match self.path:
+            case "/" | "/health":
+                self._handle_health()
+            case "/ready":
+                self._handle_ready()
+            case "/live":
+                self._handle_live()
+            case "/metrics":
+                self._handle_metrics()
+            case "/circuit":
+                self._handle_circuit()
+            case _:
+                self.send_error(404)
 
-        handler = handlers.get(self.path)
-        if handler:
-            handler()
-        else:
-            self.send_error(404)
-
-    def _send_health_response(self) -> None:
+    def _handle_health(self) -> None:
         """Send full health status."""
         if self.health_checker:
             status = self.health_checker.get_health_status()
@@ -834,47 +703,30 @@ class HealthHTTPHandler(BaseHTTPRequestHandler):
             status = {"error": "Health checker not initialized"}
             is_healthy = False
 
-        self.send_response(200 if is_healthy else 503)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(status, indent=2).encode())
+        self._send_json(status, 200 if is_healthy else 503)
 
-    def _send_ready_response(self) -> None:
+    def _handle_ready(self) -> None:
         """Send readiness status (Kubernetes readiness probe)."""
         is_ready = self.health_checker.is_healthy() if self.health_checker else False
+        self._send_text("ready" if is_ready else "not ready", 200 if is_ready else 503)
 
-        self.send_response(200 if is_ready else 503)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"ready" if is_ready else b"not ready")
-
-    def _send_live_response(self) -> None:
+    def _handle_live(self) -> None:
         """Send liveness status (Kubernetes liveness probe)."""
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"alive")
+        self._send_text("alive", 200)
 
-    def _send_metrics_response(self) -> None:
-        """Send Prometheus-compatible metrics."""
-        if self.health_checker:
-            metrics = self.health_checker.state.metrics.to_dict()
-        else:
-            metrics = {}
+    def _handle_metrics(self) -> None:
+        """Send metrics as JSON."""
+        metrics = (
+            self.health_checker.state.metrics.to_dict()
+            if self.health_checker
+            else {}
+        )
+        self._send_json(metrics)
 
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(metrics, indent=2).encode())
-
-    def _send_circuit_response(self) -> None:
+    def _handle_circuit(self) -> None:
         """Send circuit breaker status."""
         status = self.circuit_breaker.get_status() if self.circuit_breaker else {}
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(status, indent=2).encode())
+        self._send_json(status)
 
 
 class HealthHTTPServer:
@@ -912,7 +764,9 @@ class HealthHTTPServer:
                 daemon=True,
             )
             self._server_thread.start()
-            logger.info(f"Health HTTP server started on port {self.config.health_check_port}")
+            logger.info(
+                f"Health HTTP server started on port {self.config.health_check_port}"
+            )
         except OSError as e:
             logger.error(f"Failed to start health HTTP server: {e}")
 

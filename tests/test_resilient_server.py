@@ -24,22 +24,23 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from mt5linux.enums import CircuitState
+from mt5linux.exceptions import CircuitBreakerOpenError
+from mt5linux.models import ServerConfig, ServerMetrics, ServerState
 from mt5linux.resilient_server import (
     CircuitBreaker,
-    CircuitBreakerOpenError,
-    CircuitState,
     ConnectionWatchdog,
     HealthChecker,
     HealthHTTPHandler,
     HealthHTTPServer,
-    Metrics,
     ProcessSupervisor,
     RateLimiter,
     ResilientRPyCServer,
-    ServerConfig,
-    ServerState,
     parse_args,
 )
+
+# Alias for backward compatibility in tests
+Metrics = ServerMetrics
 
 
 # =============================================================================
@@ -430,14 +431,12 @@ class TestProcessSupervisor:
         assert state.errors[0]["message"] == "Error 5"
         assert state.errors[-1]["message"] == "Error 14"
 
-    def test_generate_server_code(self, tmp_path: Any) -> None:
-        """Test _generate_server_code creates valid Python file."""
-        config = ServerConfig()
-        state = ServerState()
-        supervisor = ProcessSupervisor(config, state)
+    def test_write_server_script(self, tmp_path: Any) -> None:
+        """Test _write_server_script creates valid Python file."""
+        from mt5linux.resilient_server import _write_server_script
 
         code_path = tmp_path / "server.py"
-        supervisor._generate_server_code(str(code_path))
+        _write_server_script(str(code_path))
 
         assert code_path.exists()
         content = code_path.read_text()
@@ -454,9 +453,7 @@ class TestProcessSupervisor:
         supervisor._kill_process()
 
     @patch("mt5linux.resilient_server.Popen")
-    def test_start_process_success(
-        self, mock_popen: Mock, tmp_path: Any
-    ) -> None:
+    def test_start_process_success(self, mock_popen: Mock, tmp_path: Any) -> None:
         """Test _start_process succeeds."""
         config = ServerConfig(server_dir=str(tmp_path))
         state = ServerState()
@@ -474,9 +471,7 @@ class TestProcessSupervisor:
         assert state.start_time is not None
 
     @patch("mt5linux.resilient_server.Popen")
-    def test_start_process_failure(
-        self, mock_popen: Mock, tmp_path: Any
-    ) -> None:
+    def test_start_process_failure(self, mock_popen: Mock, tmp_path: Any) -> None:
         """Test _start_process handles failure."""
         config = ServerConfig(server_dir=str(tmp_path))
         state = ServerState()
@@ -1215,7 +1210,9 @@ class TestEdgeCases:
         state = ServerState()
 
         for i in range(20):
-            state.errors.append({"time": datetime.now().isoformat(), "message": f"Error {i}"})
+            state.errors.append(
+                {"time": datetime.now().isoformat(), "message": f"Error {i}"}
+            )
 
         checker = HealthChecker(config, state)
         status = checker.get_health_status()
@@ -1528,40 +1525,7 @@ class TestKillProcess:
         assert supervisor.process is None
 
 
-# =============================================================================
-# Reset Restart Count Tests
-# =============================================================================
-
-
-class TestResetRestartCount:
-    """Tests for _reset_restart_count_if_stable method."""
-
-    def test_reset_when_stable(self) -> None:
-        """Test restart count resets when process is stable."""
-        config = ServerConfig()
-        state = ServerState(status="running", restart_count=5)
-        supervisor = ProcessSupervisor(config, state)
-
-        # Mock process as running
-        mock_process = MagicMock()
-        mock_process.poll.return_value = None  # Still running
-        supervisor.process = mock_process
-
-        supervisor._reset_restart_count_if_stable()
-
-        assert state.restart_count == 0
-        assert supervisor._restart_delay == config.restart_cooldown
-
-    def test_no_reset_when_not_running(self) -> None:
-        """Test no reset when process is not running."""
-        config = ServerConfig()
-        state = ServerState(status="stopped", restart_count=5)
-        supervisor = ProcessSupervisor(config, state)
-
-        supervisor._reset_restart_count_if_stable()
-
-        # Count should remain unchanged
-        assert state.restart_count == 5
+# Note: TestResetRestartCount removed - _reset_restart_count_if_stable was dead code
 
 
 # =============================================================================

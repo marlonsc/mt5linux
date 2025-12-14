@@ -248,6 +248,21 @@ class MT5SymbolNotFoundError(MT5DataError):
         super().__init__(message, details=details, **kwargs)
 
 
+# =============================================================================
+# RESILIENT SERVER EXCEPTIONS
+# =============================================================================
+
+
+class CircuitBreakerOpenError(Exception):
+    """
+    Raised when circuit breaker is open and rejecting calls.
+
+    Used by the resilient_server module to indicate that the circuit
+    breaker pattern has detected too many failures and is protecting
+    the system from cascade failures.
+    """
+
+
 # Mapping of MT5 error codes to exception classes
 ERROR_CODE_MAPPING: dict[int, type[MT5Error]] = {
     # Connection errors
