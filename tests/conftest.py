@@ -45,9 +45,25 @@ TEST_HEALTH_PORT = int(os.environ.get("MT5_TEST_HEALTH_PORT", "38002"))
 TEST_TIMEOUT = 180  # Timeout for startup (first build takes longer)
 
 # Test credentials from environment (see .env.example)
+# Only MT5_TEST_PASSWORD is required - others have sensible defaults
 TEST_MT5_LOGIN = int(os.environ.get("MT5_TEST_LOGIN", "0"))
 TEST_MT5_PASSWORD = os.environ.get("MT5_TEST_PASSWORD", "")
 TEST_MT5_SERVER = os.environ.get("MT5_TEST_SERVER", "MetaQuotes-Demo")
+
+
+def _mt5_credentials_configured() -> bool:
+    """Check if MT5 credentials are configured in .env."""
+    return bool(TEST_MT5_PASSWORD)
+
+
+# Skip message for tests requiring MT5 credentials
+_SKIP_NO_CREDENTIALS = (
+    "SKIP: MT5_TEST_PASSWORD not configured.\n"
+    "To run MT5 integration tests:\n"
+    "  1. cp .env.example .env\n"
+    "  2. Edit .env and set MT5_TEST_PASSWORD (and optionally MT5_TEST_LOGIN)\n"
+    "  3. Run pytest again"
+)
 
 
 # =============================================================================
@@ -195,19 +211,19 @@ def wait_for_rpyc_service(
 
 
 def start_test_container() -> None:
-    """Inicia container de teste ISOLADO usando docker-compose.test.yaml."""
-    # Se container já está rodando e respondendo, usa ele
+    """Start ISOLATED test container using docker-compose.test.yaml."""
+    # If container is already running and responding, use it
     if is_container_running(TEST_CONTAINER_NAME):
         if wait_for_port("localhost", TEST_RPYC_PORT, timeout=10):
             return
-        # Container rodando mas porta não responde - reinicia
+        # Container running but port not responding - restart
         subprocess.run(
             ["docker", "rm", "-f", TEST_CONTAINER_NAME],
             capture_output=True,
             check=False,
         )
 
-    # Remove container existente se houver
+    # Remove existing container if any
     if is_container_exists(TEST_CONTAINER_NAME):
         subprocess.run(
             ["docker", "rm", "-f", TEST_CONTAINER_NAME],
@@ -215,18 +231,18 @@ def start_test_container() -> None:
             check=False,
         )
 
-    # Localiza docker-compose.test.yaml em tests/fixtures/
+    # Locate docker-compose.test.yaml in tests/fixtures/
     fixtures_dir = Path(__file__).resolve().parent / "fixtures"
     compose_file = fixtures_dir / "docker-compose.test.yaml"
 
     if not compose_file.exists():
         pytest.skip(
-            f"docker-compose.test.yaml não encontrado em {fixtures_dir}. "
-            "Crie o arquivo ou inicie o container manualmente."
+            f"docker-compose.test.yaml not found in {fixtures_dir}. "
+            "Create the file or start the container manually."
         )
 
-    # Inicia container isolado via docker compose
-    # cwd deve ser o diretório do mt5linux para o build context funcionar
+    # Start isolated container via docker compose
+    # cwd must be mt5linux directory for build context to work
     mt5linux_dir = Path(__file__).resolve().parent.parent
     result = subprocess.run(
         ["docker", "compose", "-f", str(compose_file), "up", "-d"],
@@ -238,13 +254,13 @@ def start_test_container() -> None:
 
     if result.returncode != 0:
         pytest.skip(
-            f"Falha ao iniciar container de teste: {result.stderr}. "
-            "Verifique se ../mt5docker existe e docker está disponível."
+            f"Failed to start test container: {result.stderr}. "
+            "Check if ../mt5docker exists and docker is available."
         )
 
-    # Aguarda servidor rpyc estar pronto
+    # Wait for rpyc server to be ready
     if not wait_for_port("localhost", TEST_RPYC_PORT):
-        # Obtém logs para debug
+        # Get logs for debug
         logs = subprocess.run(
             ["docker", "logs", TEST_CONTAINER_NAME, "--tail", "100"],
             capture_output=True,
@@ -252,37 +268,38 @@ def start_test_container() -> None:
             check=False,
         )
         pytest.skip(
-            f"Container {TEST_CONTAINER_NAME} não iniciou em {TEST_TIMEOUT}s. "
+            f"Container {TEST_CONTAINER_NAME} did not start in {TEST_TIMEOUT}s. "
             f"Logs: {logs.stdout[-500:] if logs.stdout else logs.stderr[-500:]}"
         )
 
 
 @pytest.fixture(scope="session", autouse=True)
 def docker_container() -> None:
-    """Garante container de teste ISOLADO rodando.
+    """Ensure ISOLATED test container is running.
 
-    Este fixture é session-scoped e autouse=True, então executa
-    automaticamente no início da sessão de testes.
+    This fixture is session-scoped and autouse=True, so it runs
+    automatically at the start of the test session.
 
-    O container permanece ativo após os testes para reutilização.
-    Para parar: docker compose -f docker-compose.test.yaml down
+    The container remains active after tests for reuse.
+    To stop: docker compose -f tests/fixtures/docker-compose.test.yaml down
     """
     start_test_container()
 
 
 @pytest.fixture
 def mt5() -> Generator[MetaTrader5, None, None]:
-    """Fixture com MetaTrader5 conectado e inicializado.
+    """Fixture with connected and initialized MetaTrader5.
 
-    Conecta ao container de teste isolado na porta 38812.
-    Faz login com credenciais do .env (veja .env.example).
+    Connects to isolated test container on port 38812.
+    Logs in with credentials from .env (see .env.example).
+
+    Requires MT5_TEST_PASSWORD configured in .env.
+    MT5_TEST_LOGIN is optional (uses demo account if not specified).
+
+    Tests using this fixture will be SKIPPED if credentials are not configured.
     """
-    # Validate credentials are configured
-    if TEST_MT5_LOGIN == 0 or not TEST_MT5_PASSWORD:
-        pytest.skip(
-            "MT5 credentials not configured. "
-            "Copy .env.example to .env and set MT5_TEST_LOGIN and MT5_TEST_PASSWORD"
-        )
+    if not _mt5_credentials_configured():
+        pytest.skip(_SKIP_NO_CREDENTIALS)
 
     from mt5linux import MetaTrader5
 
@@ -297,7 +314,7 @@ def mt5() -> Generator[MetaTrader5, None, None]:
     if not result:
         error = client.last_error()
         client.close()
-        pytest.skip(f"Não foi possível inicializar MT5: {error}")
+        pytest.skip(f"Could not initialize MT5: {error}")
 
     yield client
 
@@ -308,9 +325,10 @@ def mt5() -> Generator[MetaTrader5, None, None]:
 
 @pytest.fixture
 def mt5_raw() -> Generator[MetaTrader5, None, None]:
-    """Fixture com MetaTrader5 conectado (sem initialize).
+    """Fixture with connected MetaTrader5 (without initialize).
 
-    Útil para testar conexão e lifecycle sem fazer login.
+    Useful for testing connection and lifecycle without login.
+    Does NOT require MT5 credentials.
     """
     from mt5linux import MetaTrader5
 
