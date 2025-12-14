@@ -1,18 +1,18 @@
-# docker-compose.test.yaml - Container ISOLADO para testes UNITÁRIOS do mt5linux
+# docker-compose.test.yaml - ISOLATED container for UNIT tests of mt5linux
 #
-# NÃO afeta o container mt5 de produção (porta 8001)
-# NÃO conflita com testes de neptor (porta 28812) ou mt5docker
-# Usa portas e volumes completamente separados
+# DOES NOT affect production mt5 container (port 8001)
+# DOES NOT conflict with neptor tests (port 28812) or mt5docker
+# Uses completely separate ports and volumes
 #
-# Localização: tests/fixtures/docker-compose.test.yaml
-# Caminhos são relativos a este arquivo
+# Location: tests/fixtures/docker-compose.test.yaml
+# Paths are relative to this file
 #
-# Uso:
+# Usage:
 #   cd mt5linux
 #   docker compose -f tests/fixtures/docker-compose.test.yaml up -d
 #   pytest tests/ -v
 #
-# Ou pytest auto-inicia via conftest.py
+# Or pytest auto-starts via conftest.py
 
 services:
   mt5-unit:
@@ -22,21 +22,21 @@ services:
     image: mt5docker:unit
     container_name: mt5linux-unit
     ports:
-      - "33000:3000"    # VNC isolado (não conflita com 3000/23000)
-      - "38812:8001"    # RPyC isolado (não conflita com 8001/28812!)
-      - "38002:8002"    # Health isolado (não conflita com 8002/28002)
+      - "33000:3000"    # VNC isolated (no conflict with 3000/23000)
+      - "38812:8001"    # RPyC isolated (no conflict with 8001/28812!)
+      - "38002:8002"    # Health isolated (no conflict with 8002/28002)
     volumes:
-      # Volumes ISOLADOS (não compartilha com produção ou neptor)
+      # ISOLATED volumes (not shared with production or neptor)
       - mt5linux_unit_config:/config:uid=911,gid=911
       - mt5linux_unit_downloads:/downloads:uid=911,gid=911
       - mt5linux_unit_cache:/cache:uid=911,gid=911
-      # Mount código LOCAL do mt5linux como pacote Python
-      # ../../mt5linux -> /opt/mt5linux-pkg/mt5linux (para import mt5linux funcionar)
+      # Mount LOCAL mt5linux code as Python package
+      # ../../mt5linux -> /opt/mt5linux-pkg/mt5linux (for import mt5linux to work)
       - ../../mt5linux:/opt/mt5linux-pkg/mt5linux:ro
     env_file:
       - ../../.env
     environment:
-      # Usar código local via PYTHONPATH (diretório PAI do pacote)
+      # Use local code via PYTHONPATH (parent directory of package)
       - PYTHONPATH=/opt/mt5linux-pkg
       # MT5 credentials from .env (mapped to container env vars)
       - MT5_LOGIN=${MT5_TEST_LOGIN}
@@ -67,12 +67,12 @@ volumes:
   mt5linux_unit_config:
     name: mt5linux_unit_config
     labels:
-      description: "MT5 unit test configuration (isolated from neptor)"
+      description: "MT5 unit test configuration (isolated)"
   mt5linux_unit_downloads:
     name: mt5linux_unit_downloads
     labels:
-      description: "MT5 unit test downloads (isolated from neptor)"
+      description: "MT5 unit test downloads (isolated)"
   mt5linux_unit_cache:
     name: mt5linux_unit_cache
     labels:
-      description: "MT5 unit test cache (isolated from neptor)"
+      description: "MT5 unit test cache (isolated)"

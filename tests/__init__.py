@@ -1,1 +1,1 @@
-"""Testes do mt5linux."""
+"""Tests for mt5linux."""

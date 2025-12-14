@@ -1,7 +1,7 @@
-"""RPyC server para mt5linux.
+"""RPyC server for mt5linux.
 
-Servidor rpyc clássico que expõe o módulo MetaTrader5.
-Roda em Windows/Wine com MetaTrader5 instalado.
+Classic rpyc server that exposes the MetaTrader5 module.
+Runs on Windows/Wine with MetaTrader5 installed.
 
 Usage:
     python -m mt5linux.server --host 0.0.0.0 --port 18812
@@ -12,10 +12,11 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from argparse import Namespace
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from argparse import Namespace
+from rpyc.core import SlaveService
+from rpyc.utils.server import ThreadedServer
 
 DEFAULT_HOST = "0.0.0.0"  # noqa: S104
 DEFAULT_PORT = 18812
@@ -55,12 +56,6 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
         host: Host to bind to.
         port: Port to listen on.
     """
-    try:
-        from rpyc.core import SlaveService
-        from rpyc.utils.server import ThreadedServer
-    except ImportError:
-        logger.exception("rpyc not installed")
-        sys.exit(1)
 
     logger.info("Starting RPyC server on %s:%d", host, port)
 
