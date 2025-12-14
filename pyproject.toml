@@ -4,7 +4,7 @@ requires = ["poetry-core"]
 
 [tool.poetry]
 name = "mt5linux"
-version = "0.2.0"
+version = "0.2.1"
 description = "MetaTrader5 bridge para Linux via rpyc"
 authors = ["Lucas Prett Campagna"]
 license = "MIT"
@@ -16,7 +16,7 @@ packages = [{ include = "mt5linux" }]
 [tool.poetry.dependencies]
 python = "^3.11"
 numpy = ">=2.0.0"
-rpyc = ">=5.2.0"
+rpyc = ">=5.2.0,<6.0.0" # Protocol compatibility with container
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.0"

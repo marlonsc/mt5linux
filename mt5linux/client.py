@@ -1,4 +1,4 @@
-"""MetaTrader5 client - bridge transparente via rpyc."""
+"""MetaTrader5 client - transparent bridge via rpyc."""
 
 from __future__ import annotations
 
@@ -15,16 +15,16 @@ if TYPE_CHECKING:
 
 
 class MetaTrader5:
-    """Proxy transparente para MetaTrader5 via rpyc.
+    """Transparent proxy for MetaTrader5 via rpyc.
 
-    Todos os atributos e métodos do MT5 são acessados via __getattr__,
-    delegando para o módulo MetaTrader5 real no servidor Windows/Docker.
+    All MT5 attributes and methods are accessed via __getattr__,
+    delegating to the real MetaTrader5 module on Windows/Docker server.
 
     Example:
         >>> with MetaTrader5(host="localhost", port=18812) as mt5:
         ...     mt5.initialize(login=12345, password="pass", server="Demo")
         ...     account = mt5.account_info()
-        ...     print(mt5.ORDER_TYPE_BUY)  # Constante do MT5 real
+        ...     print(mt5.ORDER_TYPE_BUY)  # Real MT5 constant
     """
 
     _conn: rpyc.Connection | None
@@ -36,19 +36,19 @@ class MetaTrader5:
         port: int = 18812,
         timeout: int = 300,
     ) -> None:
-        """Conecta ao servidor rpyc.
+        """Connect to rpyc server.
 
         Args:
-            host: Endereço do servidor rpyc.
-            port: Porta do servidor rpyc.
-            timeout: Timeout em segundos para operações.
+            host: rpyc server address.
+            port: rpyc server port.
+            timeout: Timeout in seconds for operations.
         """
         self._conn = rpyc.classic.connect(host, port)
         self._conn._config["sync_request_timeout"] = timeout  # noqa: SLF001
         self._mt5 = self._conn.modules.MetaTrader5
 
     def __getattr__(self, name: str) -> Any:
-        """Proxy transparente para qualquer atributo do MT5."""
+        """Transparent proxy for any MT5 attribute."""
         return getattr(self._mt5, name)
 
     def __enter__(self) -> Self:
@@ -67,36 +67,36 @@ class MetaTrader5:
         self.close()
 
     def close(self) -> None:
-        """Fecha conexão rpyc."""
+        """Close rpyc connection."""
         if self._conn is not None:
             with contextlib.suppress(Exception):
                 self._conn.close()
             self._conn = None
 
-    # Métodos que precisam trazer numpy arrays localmente via obtain()
-    # Sem isso, retornaria netref (referência remota) ao invés do array real
+    # Methods that need to fetch numpy arrays locally via obtain()
+    # Without this, would return netref (remote reference) instead of real array
 
     def copy_rates_from(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copia rates a partir de uma data. Traz array localmente."""
+        """Copy rates from a date. Fetches array locally."""
         result = self._mt5.copy_rates_from(*args, **kwargs)
         return obtain(result) if result is not None else None
 
     def copy_rates_from_pos(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copia rates a partir de uma posição. Traz array localmente."""
+        """Copy rates from a position. Fetches array locally."""
         result = self._mt5.copy_rates_from_pos(*args, **kwargs)
         return obtain(result) if result is not None else None
 
     def copy_rates_range(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copia rates em um range de datas. Traz array localmente."""
+        """Copy rates in a date range. Fetches array locally."""
         result = self._mt5.copy_rates_range(*args, **kwargs)
         return obtain(result) if result is not None else None
 
     def copy_ticks_from(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copia ticks a partir de uma data. Traz array localmente."""
+        """Copy ticks from a date. Fetches array locally."""
         result = self._mt5.copy_ticks_from(*args, **kwargs)
         return obtain(result) if result is not None else None
 
     def copy_ticks_range(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copia ticks em um range de datas. Traz array localmente."""
+        """Copy ticks in a date range. Fetches array locally."""
         result = self._mt5.copy_ticks_range(*args, **kwargs)
         return obtain(result) if result is not None else None
