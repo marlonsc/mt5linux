@@ -14,11 +14,11 @@
     packages = [{ include = "mt5linux" }]
 
     [tool.poetry.dependencies]
-        python = "^3.13"
-        numpy = "^2.1.0"
-        plumbum = "^1.8.0"
-        pyparsing = "^3.0.0"
-        rpyc = "^5.2.0"
+        python = "^3.11"
+        numpy = ">=2.0.0"
+        plumbum = ">=1.8.0"
+        pyparsing = ">=3.0.0"
+        rpyc = ">=5.2.0"
 
     [tool.poetry.group.dev.dependencies]
         pytest = "^9.0.0"
@@ -27,9 +27,9 @@
 
 [tool.ruff]
     line-length = 88
-    target-version = "py313"
+    target-version = "py311"
 
 [tool.mypy]
-    python_version = "3.13"
+    python_version = "3.11"
     strict = false
     ignore_missing_imports = true
