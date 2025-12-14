@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from argparse import Namespace
-from typing import TYPE_CHECKING
 
 from rpyc.core import SlaveService
 from rpyc.utils.server import ThreadedServer

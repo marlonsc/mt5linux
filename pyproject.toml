@@ -32,17 +32,18 @@ target-version = "py311"
 select = ["ALL"]
 ignore = [
     "D",       # pydocstyle - docstrings opcionais
+    "C901",    # too complex (conflicts with formatter)
     "COM812",  # missing-trailing-comma (conflicts with formatter)
     "ISC001",  # single-line-implicit-string-concatenation (conflicts with formatter)
     "ANN401",  # Any type disallowed - necessário para bridge transparente
     "TC003",   # typing imports - permitir no TYPE_CHECKING
+    "S603",    # subprocess call ok in wine server side
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
     "S101",    # assert ok em testes
     "S104",    # binding to all interfaces ok em testes
-    "S603",    # subprocess call ok em testes (docker)
     "S607",    # partial path ok em testes (docker)
     "S110",    # try-except-pass ok em testes
     "SLF001",  # private member access ok em testes

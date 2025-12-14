@@ -45,7 +45,7 @@ Follow the steps:
    ```python
    # import the package
    from mt5linux import MetaTrader5
-   # connecto to the server
+   # connect to the server
    mt5 = MetaTrader5(
        # host = 'localhost' (default)
        # port = 18812       (default)
