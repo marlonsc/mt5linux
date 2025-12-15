@@ -115,14 +115,22 @@ class TestParseArgs:
 
     def test_full_wine_config(self) -> None:
         """Test full Wine mode configuration."""
-        config = parse_args([
-            "--host", "0.0.0.0",
-            "-p", "8001",
-            "--wine", "wine64",
-            "--python", "python.exe",
-            "--max-restarts", "15",
-            "--server-dir", "/tmp/mt5test",  # noqa: S108
-        ])
+        config = parse_args(
+            [
+                "--host",
+                "0.0.0.0",
+                "-p",
+                "8001",
+                "--wine",
+                "wine64",
+                "--python",
+                "python.exe",
+                "--max-restarts",
+                "15",
+                "--server-dir",
+                "/tmp/mt5test",  # noqa: S108
+            ]
+        )
         assert config.host == "0.0.0.0"
         assert config.port == 8001
         assert config.mode == ServerMode.WINE

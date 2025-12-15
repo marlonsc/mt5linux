@@ -37,7 +37,7 @@ class TestOrderCheck:
         result = mt5.order_check(buy_order_request)
         if result is None:
             pytest.skip("order_check returned None (not supported on this account)")
-        assert result.retcode in (mt5.TRADE_RETCODE_DONE, 0)
+        assert result.retcode in {mt5.TRADE_RETCODE_DONE, 0}
         assert result.balance > 0
         assert result.equity > 0
 
@@ -142,8 +142,7 @@ class TestOrderSend:
                 pytest.skip(f"Market closed: {result.comment}")
             else:
                 pytest.fail(
-                    f"Order failed: retcode={result.retcode}, "
-                    f"comment={result.comment}"
+                    f"Order failed: retcode={result.retcode}, comment={result.comment}"
                 )
 
         # Verify order details
@@ -181,8 +180,7 @@ class TestOrderSend:
                 pytest.skip(f"Market closed: {result.comment}")
             else:
                 pytest.fail(
-                    f"Order failed: retcode={result.retcode}, "
-                    f"comment={result.comment}"
+                    f"Order failed: retcode={result.retcode}, comment={result.comment}"
                 )
 
     @pytest.mark.trading

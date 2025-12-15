@@ -153,6 +153,8 @@ class TestCombinedCoverage:
                     assert name in rates.dtype.names
             else:
                 pytest.fail("rates object does not have named fields in dtype")
+
+
 # =============================================================================
 
 

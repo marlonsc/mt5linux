@@ -90,11 +90,11 @@ def _convert_legacy_wine_args(argv: list[str], python_exe: str) -> list[str]:
         if arg == python_exe:
             i += 1
             continue
-        if arg in ("-p", "--port") and i + 1 < len(argv):
+        if arg in {"-p", "--port"} and i + 1 < len(argv):
             new_argv.extend(["-p", argv[i + 1]])
             i += 2
             continue
-        if arg in ("-w", "--wine") and i + 1 < len(argv):
+        if arg in {"-w", "--wine"} and i + 1 < len(argv):
             new_argv[1] = argv[i + 1]  # Override wine command
             i += 2
             continue
@@ -102,7 +102,7 @@ def _convert_legacy_wine_args(argv: list[str], python_exe: str) -> list[str]:
             new_argv.extend(["--host", argv[i + 1]])
             i += 2
             continue
-        if arg in ("-s", "--server-dir") and i + 1 < len(argv):
+        if arg in {"-s", "--server-dir"} and i + 1 < len(argv):
             new_argv.extend(["--server-dir", argv[i + 1]])
             i += 2
             continue

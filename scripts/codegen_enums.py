@@ -21,6 +21,7 @@ Options:
 from __future__ import annotations
 
 import ast
+import operator
 import re
 import socket
 import sys
@@ -126,7 +127,7 @@ def group_constants(constants: dict[str, int]) -> dict[str, dict[str, int]]:
         for prefix, class_name in PREFIX_TO_CLASS.items():
             if name.startswith(prefix):
                 # Remove prefix to get enum member name
-                member_name = name[len(prefix):]
+                member_name = name[len(prefix) :]
                 groups[class_name][member_name] = value
                 matched = True
                 break
@@ -167,8 +168,7 @@ def generate_enum_code(
         for class_name in sorted(groups.keys())
         if not class_name.startswith("_")
     )
-    lines.append("]")
-    lines.append("")
+    lines.extend(("]", ""))
 
     # Generate enum classes
     for class_name in sorted(groups.keys()):
@@ -176,12 +176,16 @@ def generate_enum_code(
             continue
 
         members = groups[class_name]
-        lines.append("")
-        lines.append(f"class {class_name}(IntEnum):")
-        lines.append(f'    """MT5 {class_name} constants."""')
-        lines.append("")
+        lines.extend(
+            (
+                "",
+                f"class {class_name}(IntEnum):",
+                f'    """MT5 {class_name} constants."""',
+                "",
+            )
+        )
 
-        for member_name, value in sorted(members.items(), key=lambda x: x[1]):
+        for member_name, value in sorted(members.items(), key=operator.itemgetter(1)):
             # Ensure valid Python identifier
             safe_name = re.sub(r"[^A-Za-z0-9_]", "_", member_name)
             if safe_name[0].isdigit():

@@ -211,7 +211,7 @@ class Server:
     def _calculate_restart_delay(self) -> float:
         """Calculate delay before next restart using exponential backoff."""
         delay = self.config.restart_delay_base * (
-            self.config.restart_delay_multiplier ** self._restart_count
+            self.config.restart_delay_multiplier**self._restart_count
         )
         return min(delay, self.config.restart_delay_max)
 
@@ -429,7 +429,6 @@ class Server:
             True if server responds to health check.
         """
         try:
-
             host = self.config.host if self.config.host != "0.0.0.0" else "localhost"  # noqa: S104
             conn = rpyc.classic.connect(host, self.config.port)
             conn.close()
@@ -476,7 +475,8 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
         help="Host to bind to",
     )
     parser.add_argument(
-        "-p", "--port",
+        "-p",
+        "--port",
         type=int,
         default=18812,
         help="Port to listen on",
@@ -484,7 +484,8 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
 
     # Mode selection
     parser.add_argument(
-        "--wine", "-w",
+        "--wine",
+        "-w",
         dest="wine_cmd",
         metavar="CMD",
         help="Wine command (enables Wine mode)",

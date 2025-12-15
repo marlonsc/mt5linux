@@ -63,6 +63,34 @@ Follow the steps:
 
 On step 2 you can provide the port, host, executable, etc... just type `python -m mt5linux --help`.
 
+## Error Handling
+
+The library uses **fail-fast** error handling - errors are raised immediately rather than returning silent `None` values.
+
+### Connection Errors
+
+Trading operations (`order_send`, `order_check`) raise `ConnectionError` if called without an active connection:
+
+```python
+from mt5linux import MetaTrader5
+
+mt5 = MetaTrader5(host="localhost", port=18812)
+
+try:
+    result = mt5.order_send(request)
+except ConnectionError as e:
+    print(f"Not connected: {e}")
+```
+
+### Logging
+
+The client logs cleanup operations at DEBUG level. Enable logging to see diagnostic information:
+
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+
 ## Running Tests
 
 ### Prerequisites
@@ -78,10 +106,11 @@ On step 2 you can provide the port, host, executable, etc... just type `python -
    ```
 
    Edit `.env` with your demo account details:
-   ```
-   MT5_TEST_LOGIN=your_login_here
-   MT5_TEST_PASSWORD=your_password_here
-   MT5_TEST_SERVER=MetaQuotes-Demo
+
+   ```bash
+   MT5_LOGIN=your_login_here
+   MT5_PASSWORD=your_password_here
+   MT5_SERVER=MetaQuotes-Demo
    ```
 
    > **Note**: The `.env` file is gitignored and will not be committed.

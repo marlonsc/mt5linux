@@ -84,7 +84,7 @@ class TestMetaTrader5AccountInfo:
         assert account is not None
         assert account.login > 0
         assert account.balance >= 0
-        assert account.currency in ("USD", "EUR", "GBP")
+        assert account.currency in {"USD", "EUR", "GBP"}
 
     def test_terminal_info(self, mt5: MetaTrader5) -> None:
         """Test terminal_info returns valid data."""
