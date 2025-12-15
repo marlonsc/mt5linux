@@ -80,9 +80,9 @@ TEST_CONTAINER_NAME = os.getenv("MT5_CONTAINER_NAME", "mt5linux-unit")
 # MT5 credentials for integration tests (MUST come from .env, no defaults)
 MT5_LOGIN = int(os.getenv("MT5_LOGIN", "0"))
 MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
-MT5_SERVER = os.getenv("MT5_SERVER")
+MT5_SERVER: str | None = os.getenv("MT5_SERVER")
 
-MT5_CONFIG: dict[str, str | int] = {
+MT5_CONFIG: dict[str, str | int | None] = {
     "host": TEST_RPYC_HOST,
     "port": TEST_RPYC_PORT,
     "login": MT5_LOGIN,
@@ -167,10 +167,10 @@ def ensure_docker_and_codegen() -> Generator[None]:
 
     # Start fresh test container with parametrized environment
     logger.info("Starting test Docker container with configuration...")
-    logger.info(f"  Container: {TEST_CONTAINER_NAME}")
-    logger.info(f"  RPyC Port: {TEST_RPYC_PORT}")
-    logger.info(f"  VNC Port: {TEST_VNC_PORT}")
-    logger.info(f"  Server: {MT5_SERVER}")
+    logger.info("Container: %s", TEST_CONTAINER_NAME)
+    logger.info("RPyC Port: %s", TEST_RPYC_PORT)
+    logger.info("VNC Port: %s", TEST_VNC_PORT)
+    logger.info("Server: %s", MT5_SERVER)
 
     try:
         # Set environment for docker compose
@@ -182,7 +182,7 @@ def ensure_docker_and_codegen() -> Generator[None]:
             "MT5_VNC_PORT": str(TEST_VNC_PORT),
             "MT5_LOGIN": str(MT5_LOGIN),
             "MT5_PASSWORD": MT5_PASSWORD,
-            "MT5_SERVER": MT5_SERVER,
+            "MT5_SERVER": MT5_SERVER or "",
             "ENV_FILE": env_file,
         })
 
@@ -254,7 +254,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.fixture
-def mt5_config() -> dict[str, str | int]:
+def mt5_config() -> dict[str, str | int | None]:
     """Return MT5 test configuration."""
     return MT5_CONFIG.copy()
 
