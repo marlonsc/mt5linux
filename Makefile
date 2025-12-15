@@ -25,8 +25,8 @@ format: ## Format code with ruff
 type: ## Type checking (mypy --strict)
 	$(POETRY) run mypy mt5linux/ tests/ --strict
 
-test: ## Run tests (auto-starts docker container)
-	$(POETRY) run pytest tests/ -v --tb=short
+test: ## Run tests (auto-starts docker container if available, skips appropriately)
+	SKIP_DOCKER=$(SKIP_DOCKER) $(POETRY) run pytest tests/ -v --tb=short
 
 coverage: ## Run tests with 100% coverage requirement
 	$(POETRY) run pytest tests/ -v --cov=mt5linux --cov-report=term-missing --cov-fail-under=100

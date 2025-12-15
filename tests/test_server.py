@@ -10,6 +10,8 @@ from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
 from mt5linux.__main__ import main
 from mt5linux.server import (
     Server,

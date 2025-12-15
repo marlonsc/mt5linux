@@ -59,12 +59,6 @@ services:
       - SYS_PTRACE
     security_opt:
       - seccomp:unconfined
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo >/dev/tcp/localhost/8001"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
 
 volumes:
   mt5linux_unit_config:

@@ -1370,7 +1370,9 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
         "--max-restarts", type=int, default=10, help="Maximum restart attempts"
     )
     parser.add_argument(
-        "--server-dir", default="/tmp/mt5linux", help="Server script directory"  # noqa: S108
+        "--server-dir",
+        default=Path("~/.mt5linux").expanduser(),
+        help="Server script directory",
     )
     parser.add_argument(
         "--no-thread-pool", action="store_true", help="Disable ThreadPoolServer"
