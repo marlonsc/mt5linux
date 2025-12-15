@@ -506,3 +506,12 @@ async def async_mt5(
 
     with contextlib.suppress(Exception):
         await async_mt5_raw.shutdown()
+
+
+# Export symbols for type checking
+__all__ = [
+    "TEST_RPYC_HOST",
+    "TEST_RPYC_PORT",
+    "TEST_CONTAINER_NAME",
+    "MT5_CONFIG",
+]

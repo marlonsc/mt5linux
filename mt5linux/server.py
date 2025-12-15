@@ -97,7 +97,7 @@ def is_mt5_available() -> bool:
         bool: True if MetaTrader5 can be imported, False otherwise.
     """
     try:
-        import MetaTrader5  # pyright: ignore[reportUnusedImport, reportMissingImports]
+        import MetaTrader5  # pyright: ignore[reportUnusedImport, reportMissingImports]  # noqa: PLC0415
 
     except ImportError:
         return False
@@ -453,7 +453,7 @@ class MT5Service(rpyc.Service):
         with MT5Service._mt5_lock:
             if MT5Service._mt5_module is None:
                 try:
-                    import MetaTrader5 as MT5  # pyright: ignore[reportMissingImports]
+                    import MetaTrader5 as MT5  # pyright: ignore[reportMissingImports]  # noqa: PLC0415
 
                     MT5Service._mt5_module = MT5
                     log.info("mt5_module_loaded")

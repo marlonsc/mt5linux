@@ -36,6 +36,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import rpyc
+from rpyc.core.service import VoidService
 
 # Mapping of MT5 constant prefixes to enum class names
 PREFIX_TO_CLASS: dict[str, str] = {
@@ -85,7 +86,7 @@ def is_rpyc_available(host: str = "localhost", port: int = 38812) -> bool:
 def extract_from_rpyc(host: str = "localhost", port: int = 38812) -> dict[str, int]:
     """Extract constants from MT5 via rpyc 6.x native API."""
     # rpyc 6.x native API - connect to SlaveService
-    conn = rpyc.connect(host, port, service=rpyc.core.service.VoidService)
+    conn = rpyc.connect(host, port, service=VoidService)
     mt5 = conn.root.getmodule("MetaTrader5")
 
     constants: dict[str, int] = {}
