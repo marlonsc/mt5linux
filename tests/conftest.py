@@ -40,16 +40,16 @@ if _env_file.exists():
 # ISOLATED TEST CONFIGURATION - DOES NOT AFFECT PRODUCTION OR NEPTOR!
 # =============================================================================
 TEST_CONTAINER_NAME = "mt5linux-unit"
-TEST_RPYC_PORT = int(os.environ.get("MT5_TEST_RPYC_PORT", "38812"))
-TEST_VNC_PORT = int(os.environ.get("MT5_TEST_VNC_PORT", "33000"))
-TEST_HEALTH_PORT = int(os.environ.get("MT5_TEST_HEALTH_PORT", "38002"))
+TEST_RPYC_PORT = int(os.environ.get("MT5_RPYC_PORT", "38812"))
+TEST_VNC_PORT = int(os.environ.get("MT5_VNC_PORT", "33000"))
+TEST_HEALTH_PORT = int(os.environ.get("MT5_HEALTH_PORT", "38002"))
 TEST_TIMEOUT = 180  # Timeout for startup (first build takes longer)
 
 # Test credentials from environment (see .env.example)
-# Only MT5_TEST_PASSWORD is required - others have sensible defaults
-TEST_MT5_LOGIN = int(os.environ.get("MT5_TEST_LOGIN", "0"))
-TEST_MT5_PASSWORD = os.environ.get("MT5_TEST_PASSWORD", "")
-TEST_MT5_SERVER = os.environ.get("MT5_TEST_SERVER", "MetaQuotes-Demo")
+# Supports both MT5_* and MT5_* variable names
+TEST_MT5_LOGIN = int(os.environ.get("MT5_LOGIN") or "0")
+TEST_MT5_PASSWORD = os.environ.get("MT5_PASSWORD") or ""
+TEST_MT5_SERVER = os.environ.get("MT5_SERVER") or "MetaQuotes-Demo"
 
 
 def _mt5_credentials_configured() -> bool:
@@ -59,10 +59,10 @@ def _mt5_credentials_configured() -> bool:
 
 # Skip message for tests requiring MT5 credentials
 _SKIP_NO_CREDENTIALS = (
-    "SKIP: MT5_TEST_PASSWORD not configured.\n"
+    "SKIP: MT5_PASSWORD not configured.\n"
     "To run MT5 integration tests:\n"
     "  1. cp .env.example .env\n"
-    "  2. Edit .env and set MT5_TEST_PASSWORD (and optionally MT5_TEST_LOGIN)\n"
+    "  2. Edit .env and set MT5_PASSWORD (and optionally MT5_LOGIN)\n"
     "  3. Run pytest again"
 )
 
@@ -294,8 +294,8 @@ def mt5() -> Generator[MetaTrader5, None, None]:
     Connects to isolated test container on port 38812.
     Logs in with credentials from .env (see .env.example).
 
-    Requires MT5_TEST_PASSWORD configured in .env.
-    MT5_TEST_LOGIN is optional (uses demo account if not specified).
+    Requires MT5_PASSWORD configured in .env.
+    MT5_LOGIN is optional (uses demo account if not specified).
 
     Tests using this fixture will be SKIPPED if credentials are not configured.
     """
