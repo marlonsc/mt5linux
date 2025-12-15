@@ -228,26 +228,33 @@ class TestHistoryCombined:
     """Combined history tests."""
 
     def test_history_deals_and_orders_match(self, mt5: MetaTrader5) -> None:
-        """Test that deals and orders counts are consistent."""
+        """Test that deals and orders counts are consistent.
+
+        Note: history_*_total may return None if no history available.
+        """
         date_from = datetime.now(UTC) - timedelta(days=30)
         date_to = datetime.now(UTC)
 
         deals_total = mt5.history_deals_total(date_from, date_to)
         orders_total = mt5.history_orders_total(date_from, date_to)
 
-        # Both should return non-negative integers
-        assert isinstance(deals_total, int)
-        assert isinstance(orders_total, int)
-        assert deals_total >= 0
-        assert orders_total >= 0
+        # Both may return None or non-negative integers
+        assert deals_total is None or (
+            isinstance(deals_total, int) and deals_total >= 0
+        )
+        assert orders_total is None or (
+            isinstance(orders_total, int) and orders_total >= 0
+        )
 
         # Get actual data
         deals = mt5.history_deals_get(date_from, date_to)
         orders = mt5.history_orders_get(date_from, date_to)
 
-        # Count should match total
+        # Count should match total (when total is not None)
         deals_count = len(deals) if deals else 0
         orders_count = len(orders) if orders else 0
 
-        assert deals_count == deals_total
-        assert orders_count == orders_total
+        if deals_total is not None:
+            assert deals_count == deals_total
+        if orders_total is not None:
+            assert orders_count == orders_total

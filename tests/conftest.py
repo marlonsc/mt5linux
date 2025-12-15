@@ -23,13 +23,13 @@ import time
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 from dotenv import load_dotenv
+from rpyc.utils.classic import connect
 
-if TYPE_CHECKING:
-    from mt5linux import MetaTrader5
+from mt5linux import MetaTrader5
 
 # Load .env file from project root
 _env_file = Path(__file__).resolve().parent.parent / ".env"
@@ -179,8 +179,6 @@ def is_rpyc_service_ready(host: str, port: int) -> bool:
     Performs real RPyC classic handshake to verify service is operational.
     """
     try:
-        from rpyc.utils.classic import connect
-
         conn = connect(host, port)
         conn._config["sync_request_timeout"] = 5
         # Verify modules are accessible (proves MT5 bridge is working)
@@ -302,8 +300,6 @@ def mt5() -> Generator[MetaTrader5, None, None]:
     if not _mt5_credentials_configured():
         pytest.skip(_SKIP_NO_CREDENTIALS)
 
-    from mt5linux import MetaTrader5
-
     client = MetaTrader5(host="localhost", port=TEST_RPYC_PORT)
 
     result = client.initialize(
@@ -331,7 +327,6 @@ def mt5_raw() -> Generator[MetaTrader5, None, None]:
     Useful for testing connection and lifecycle without login.
     Does NOT require MT5 credentials.
     """
-    from mt5linux import MetaTrader5
 
     client = MetaTrader5(host="localhost", port=TEST_RPYC_PORT)
     yield client

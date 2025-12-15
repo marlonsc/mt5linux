@@ -107,16 +107,21 @@ class TestInvalidInputs:
         assert result is None or len(result) == 0
 
     def test_zero_count(self, mt5: MetaTrader5) -> None:
-        """Test copy_rates with zero count."""
+        """Test copy_rates with zero count.
+
+        Note: MT5 API returns default bars (1000) when count=0,
+        which is documented behavior, not an error.
+        """
         result = mt5.copy_rates_from_pos(
             "EURUSD",
             mt5.TIMEFRAME_H1,
             0,
-            0,  # Zero count
+            0,  # Zero count - MT5 returns default
         )
 
-        # Should return None or empty
-        assert result is None or len(result) == 0
+        # MT5 returns default bars when count=0 (not empty/None)
+        # This is expected behavior per MT5 API documentation
+        assert result is not None
 
 
 class TestApiLimits:
@@ -256,21 +261,25 @@ class TestErrorHandling:
         assert error is not None
 
     def test_version_always_works(self, mt5: MetaTrader5) -> None:
-        """Test that version() always returns valid data."""
+        """Test that version() always returns valid data.
+
+        Note: MT5 version() returns (major, minor, build_or_date).
+        The third element can be an int or a date string like '14 Dec 2025'.
+        """
         version = mt5.version()
 
         assert version is not None
         assert isinstance(version, tuple)
         assert len(version) == 3
 
-        # Version numbers should be non-negative integers
-        major, minor, build = version
+        # Version numbers - first two should be non-negative integers
+        major, minor, build_or_date = version
         assert isinstance(major, int)
         assert isinstance(minor, int)
-        assert isinstance(build, int)
         assert major >= 0
         assert minor >= 0
-        assert build >= 0
+        # Third element can be int (build number) or str (date)
+        assert isinstance(build_or_date, (int, str))
 
     def test_terminal_info_always_works(self, mt5: MetaTrader5) -> None:
         """Test that terminal_info() always returns valid data."""

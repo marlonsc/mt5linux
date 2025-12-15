@@ -17,6 +17,7 @@ packages = [{ include = "mt5linux" }]
 python = "^3.11"
 numpy = ">=2.0.0"
 rpyc = ">=5.2.0,<6.0.0"
+structlog = "^25.5.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.0"
