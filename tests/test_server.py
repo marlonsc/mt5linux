@@ -57,9 +57,9 @@ class TestServerConfig:
 
     def test_server_dir_conversion(self) -> None:
         """Test server_dir string to Path conversion."""
-        config = ServerConfig(server_dir="/tmp/test")
+        config = ServerConfig(server_dir=Path("/tmp/test"))  # noqa: S108
         assert isinstance(config.server_dir, Path)
-        assert config.server_dir == Path("/tmp/test")
+        assert config.server_dir == Path("/tmp/test")  # noqa: S108
 
 
 class TestParseArgs:
@@ -128,7 +128,7 @@ class TestParseArgs:
                 "--max-restarts",
                 "15",
                 "--server-dir",
-                "/tmp/mt5test",
+                "/tmp/mt5test",  # noqa: S108
             ]
         )
         assert config.host == "0.0.0.0"
@@ -137,7 +137,7 @@ class TestParseArgs:
         assert config.wine_cmd == "wine64"
         assert config.python_exe == "python.exe"
         assert config.max_restarts == 15
-        assert config.server_dir == Path("/tmp/mt5test")
+        assert config.server_dir == Path("/tmp/mt5test")  # noqa: S108
 
 
 class TestServer:

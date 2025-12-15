@@ -96,9 +96,7 @@ def ensure_docker_and_codegen() -> Generator[None]:
             check=False,
         )
         if result.returncode != 0:
-            pytest.fail(
-                f"codegen_enums.py failed:\n{result.stdout}\n{result.stderr}"
-            )
+            pytest.fail(f"codegen_enums.py failed:\n{result.stdout}\n{result.stderr}")
     except subprocess.TimeoutExpired:
         pytest.fail("Timeout running codegen_enums.py")
 
@@ -256,7 +254,8 @@ def cleanup_test_positions(mt5: MetaTrader5) -> Generator[None]:
     try:
         all_positions = mt5.positions_get()
         positions = [
-            pos for pos in (all_positions or [])
+            pos
+            for pos in (all_positions or [])
             if getattr(pos, "magic", None) == 123456
         ]
         if positions:

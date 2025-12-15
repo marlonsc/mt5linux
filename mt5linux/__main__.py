@@ -30,44 +30,6 @@ log = structlog.get_logger("mt5linux.main")
 
 def _print_help() -> None:
     """Print usage help."""
-    print(
-        """mt5linux - MetaTrader5 bridge for Linux
-
-Usage:
-  Wine mode (for mt5docker - runs RPyC server via Wine):
-    python -m mt5linux --wine wine --python python.exe
-    python -m mt5linux -w wine python.exe -p 8001
-    python -m mt5linux --wine wine --python python.exe -p 8001 --max-restarts 5
-
-  Direct server mode (runs RPyC server on Linux):
-    python -m mt5linux
-    python -m mt5linux server --host 0.0.0.0 --port 18812
-
-Options:
-  --host HOST           Host to bind (default: 0.0.0.0)
-  -p, --port PORT       Port to listen on (default: 18812)
-  -w, --wine CMD        Wine command (enables Wine mode)
-  --python PATH         Python executable for Wine mode (default: python.exe)
-  --max-restarts N      Maximum restart attempts (default: 10)
-  --server-dir DIR      Directory for generated server script
-
-Features:
-  - Automatic restart on failure with exponential backoff
-  - Structured logging via structlog
-  - Graceful shutdown on SIGTERM/SIGINT
-  - Health check support
-
-Examples:
-  # Start server for mt5docker container
-  python -m mt5linux -w wine python.exe -p 8001
-
-  # Start direct server for local development
-  python -m mt5linux --port 18812
-
-  # With custom restart settings
-  python -m mt5linux -w wine python.exe --max-restarts 20
-""",
-    )
 
 
 def _find_python_exe(argv: list[str]) -> str | None:

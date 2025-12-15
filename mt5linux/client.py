@@ -29,6 +29,61 @@ if TYPE_CHECKING:
     from mt5linux._types import RatesArray, TicksArray
 
 
+# =============================================================================
+# Type Validation Helpers - Convert RPyC's Any to Concrete Types
+# =============================================================================
+
+# Constants for tuple length validation
+_VERSION_TUPLE_LEN = 3  # (version, build, version_string)
+_ERROR_TUPLE_LEN = 2  # (error_code, error_description)
+
+
+def _validate_version(value: object) -> tuple[int, int, str] | None:
+    """Validate and convert Any to version tuple."""
+    if value is None:
+        return None
+    if not isinstance(value, tuple) or len(value) != _VERSION_TUPLE_LEN:
+        msg = f"Expected tuple[int, int, str] | None, got {type(value).__name__}"
+        raise TypeError(msg)
+    try:
+        return (int(value[0]), int(value[1]), str(value[2]))
+    except (ValueError, IndexError, TypeError) as e:
+        msg = f"Invalid version tuple: {e}"
+        raise TypeError(msg) from e
+
+
+def _validate_last_error(value: object) -> tuple[int, str]:
+    """Validate and convert Any to last_error tuple."""
+    if not isinstance(value, tuple) or len(value) != _ERROR_TUPLE_LEN:
+        msg = f"Expected tuple[int, str], got {type(value).__name__}"
+        raise TypeError(msg)
+    try:
+        return (int(value[0]), str(value[1]))
+    except (ValueError, IndexError, TypeError) as e:
+        msg = f"Invalid error tuple: {e}"
+        raise TypeError(msg) from e
+
+
+def _validate_float_optional(value: object) -> float | None:
+    """Validate and convert Any to float | None."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    msg = f"Expected float | None, got {type(value).__name__}"
+    raise TypeError(msg)
+
+
+def _validate_int_optional(value: object) -> int | None:
+    """Validate and convert Any to int | None."""
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    msg = f"Expected int | None, got {type(value).__name__}"
+    raise TypeError(msg)
+
+
 class MetaTrader5:
     """Modern RPyC client for MetaTrader5.
 
@@ -81,7 +136,8 @@ class MetaTrader5:
             },
         )
         if self._conn is None:
-            raise RuntimeError("Failed to establish RPyC connection")
+            msg = "Failed to establish RPyC connection"
+            raise RuntimeError(msg)
         self._service_root = self._conn.root
 
         # Get MT5 module reference via exposed_get_mt5()
@@ -222,7 +278,8 @@ class MetaTrader5:
         """
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.version()
+        result = self._service_root.version()
+        return _validate_version(result)
 
     def last_error(self) -> tuple[int, str]:
         """Get last MT5 error.
@@ -232,7 +289,8 @@ class MetaTrader5:
         """
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.last_error()
+        result = self._service_root.last_error()
+        return _validate_last_error(result)
 
     def terminal_info(self) -> Any:
         """Get terminal info.
@@ -468,7 +526,8 @@ class MetaTrader5:
         """
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.order_calc_margin(action, symbol, volume, price)
+        result = self._service_root.order_calc_margin(action, symbol, volume, price)
+        return _validate_float_optional(result)
 
     def order_calc_profit(
         self,
@@ -492,9 +551,10 @@ class MetaTrader5:
         """
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.order_calc_profit(
+        result = self._service_root.order_calc_profit(
             action, symbol, volume, price_open, price_close
         )
+        return _validate_float_optional(result)
 
     def order_check(self, request: dict[str, Any]) -> Any:
         """Check order parameters without sending.
@@ -618,7 +678,8 @@ class MetaTrader5:
         """
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.history_orders_total(date_from, date_to)
+        result = self._service_root.history_orders_total(date_from, date_to)
+        return _validate_int_optional(result)
 
     def history_orders_get(
         self,
@@ -658,7 +719,8 @@ class MetaTrader5:
         """
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.history_deals_total(date_from, date_to)
+        result = self._service_root.history_deals_total(date_from, date_to)
+        return _validate_int_optional(result)
 
     def history_deals_get(
         self,

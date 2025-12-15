@@ -89,11 +89,12 @@ def detect_environment() -> Environment:
 def is_mt5_available() -> bool:
     """Check if MetaTrader5 module is importable."""
     try:
-        import MetaTrader5  # noqa: F401, PLC0415  # pyright: ignore[reportMissingImports]
+        import MetaTrader5  # noqa: F401
 
-        return True
     except ImportError:
         return False
+    else:
+        return True
 
 
 class MT5NotAvailableError(Exception):
@@ -161,9 +162,7 @@ class CircuitBreaker:
         with self._lock:
             self._failure_count += 1
             self._last_failure_time = time.time()
-            if self._state == CircuitState.HALF_OPEN:
-                self._state = CircuitState.OPEN
-            elif (
+            if self._state == CircuitState.HALF_OPEN or (
                 self._state == CircuitState.CLOSED
                 and self._failure_count >= self.config.failure_threshold
             ):
@@ -185,13 +184,14 @@ class CircuitBreaker:
                 raise CircuitBreakerOpenError(msg)
             try:
                 result = func(*args, **kwargs)
-                self._record_success()
-                return result
             except self.config.excluded_exceptions:
                 raise
             except Exception:
                 self._record_failure()
                 raise
+            else:
+                self._record_success()
+                return result
 
         return wrapper
 
@@ -210,6 +210,7 @@ def exponential_backoff_with_jitter(
     """Calculate delay with exponential backoff and jitter."""
     delay = base_delay * (multiplier**attempt)
     delay = min(delay, max_delay)
+    # S311: random is fine for jitter - not cryptographic
     jitter = delay * jitter_factor * (2 * random.random() - 1)  # noqa: S311
     return max(0.0, delay + jitter)
 
@@ -324,6 +325,91 @@ _mt5_circuit_breaker = CircuitBreaker(CircuitBreakerConfig(failure_threshold=5))
 
 
 # =============================================================================
+# Type Validation Helpers - Convert RPyC's Any to Concrete Types
+# =============================================================================
+
+# Constants for tuple length validation
+_VERSION_TUPLE_LEN = 3  # (version, build, version_string)
+_ERROR_TUPLE_LEN = 2  # (error_code, error_description)
+
+
+def _validate_bool(value: object) -> bool:
+    """Validate and convert Any to bool.
+
+    RPyC returns Any from remote calls. This validates the actual type
+    and converts to bool, ensuring type safety without type: ignore.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    msg = f"Expected bool, got {type(value).__name__}"
+    raise TypeError(msg)
+
+
+def _validate_int(value: object) -> int:
+    """Validate and convert Any to int."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    msg = f"Expected int, got {type(value).__name__}"
+    raise TypeError(msg)
+
+
+def _validate_int_optional(value: object) -> int | None:
+    """Validate and convert Any to int | None."""
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    msg = f"Expected int | None, got {type(value).__name__}"
+    raise TypeError(msg)
+
+
+def _validate_float_optional(value: object) -> float | None:
+    """Validate and convert Any to float | None."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    msg = f"Expected float | None, got {type(value).__name__}"
+    raise TypeError(msg)
+
+
+def _validate_version(value: object) -> tuple[int, int, str] | None:
+    """Validate and convert Any to version tuple."""
+    if value is None:
+        return None
+    if not isinstance(value, tuple) or len(value) != _VERSION_TUPLE_LEN:
+        msg = f"Expected tuple[int, int, str] | None, got {type(value).__name__}"
+        raise TypeError(msg)
+    try:
+        return (int(value[0]), int(value[1]), str(value[2]))
+    except (ValueError, IndexError, TypeError) as e:
+        msg = f"Invalid version tuple: {e}"
+        raise TypeError(msg) from e
+
+
+def _validate_last_error(value: object) -> tuple[int, str]:
+    """Validate and convert Any to last_error tuple."""
+    if not isinstance(value, tuple) or len(value) != _ERROR_TUPLE_LEN:
+        msg = f"Expected tuple[int, str], got {type(value).__name__}"
+        raise TypeError(msg)
+    try:
+        return (int(value[0]), str(value[1]))
+    except (ValueError, IndexError, TypeError) as e:
+        msg = f"Invalid error tuple: {e}"
+        raise TypeError(msg) from e
+
+
+def _validate_dict(value: object) -> dict[str, object]:
+    """Validate and convert Any to dict."""
+    if isinstance(value, dict):
+        return value
+    msg = f"Expected dict, got {type(value).__name__}"
+    raise TypeError(msg)
+
+
+# =============================================================================
 # MT5Service - Modern RPyC Service (NO STUBS)
 # =============================================================================
 
@@ -333,8 +419,12 @@ class MT5Service(rpyc.Service):
 
     Replaces deprecated SlaveService with explicit method exposure.
     NO STUBS - fails if MT5 module is unavailable.
+
+    rpyc.Service has no type stubs in rpyc library. This is unavoidable
+    and doesn't affect our implementation's type safety.
     """
 
+    # Module is dynamically imported - use Any since it's a third-party module
     _mt5_module: Any = None
     _mt5_lock = threading.RLock()
     _rate_limiter = TokenBucketRateLimiter(rate=100, capacity=200)
@@ -346,9 +436,9 @@ class MT5Service(rpyc.Service):
         with MT5Service._mt5_lock:
             if MT5Service._mt5_module is None:
                 try:
-                    import MetaTrader5 as MT5  # noqa: N814, PLC0415  # pyright: ignore[reportMissingImports]
+                    import MetaTrader5 as mt5  # noqa: N813
 
-                    MT5Service._mt5_module = MT5
+                    MT5Service._mt5_module = mt5
                     log.info("mt5_module_loaded")
                 except ImportError as e:
                     log.exception("mt5_module_not_available", error=str(e))
@@ -369,11 +459,12 @@ class MT5Service(rpyc.Service):
             with MT5Service._mt5_lock:
                 try:
                     result = func(*args, **kwargs)
-                    _health_monitor.record_request(success=True)
-                    return result
                 except Exception as e:
                     _health_monitor.record_error(str(e))
                     raise
+                else:
+                    _health_monitor.record_request(success=True)
+                    return result
 
         return _call()
 
@@ -384,7 +475,8 @@ class MT5Service(rpyc.Service):
     def exposed_get_mt5(self) -> Any:
         """Return MT5 module reference."""
         if MT5Service._mt5_module is None:
-            raise MT5NotAvailableError("MT5 module not loaded")
+            msg = "MT5 module not loaded"
+            raise MT5NotAvailableError(msg)
         return MT5Service._mt5_module
 
     def exposed_health_check(self) -> dict[str, Any]:
@@ -421,27 +513,36 @@ class MT5Service(rpyc.Service):
         timeout: int | None = None,
         portable: bool = False,
     ) -> bool:
-        return self._call_mt5(
+        result = self._call_mt5(
             MT5Service._mt5_module.initialize,
-            path, login, password, server, timeout, portable,
+            path,
+            login,
+            password,
+            server,
+            timeout,
+            portable,
         )
+        return _validate_bool(result)
 
     def exposed_login(
         self, login: int, password: str, server: str, timeout: int = 60000
     ) -> bool:
-        return self._call_mt5(
+        result = self._call_mt5(
             MT5Service._mt5_module.login, login, password, server, timeout
         )
+        return _validate_bool(result)
 
     def exposed_shutdown(self) -> None:
-        return self._call_mt5(MT5Service._mt5_module.shutdown)
+        self._call_mt5(MT5Service._mt5_module.shutdown)
 
     def exposed_version(self) -> tuple[int, int, str] | None:
-        return self._call_mt5(MT5Service._mt5_module.version)
+        result = self._call_mt5(MT5Service._mt5_module.version)
+        return _validate_version(result)
 
     def exposed_last_error(self) -> tuple[int, str]:
         with MT5Service._mt5_lock:
-            return MT5Service._mt5_module.last_error()
+            result = MT5Service._mt5_module.last_error()
+            return _validate_last_error(result)
 
     def exposed_terminal_info(self) -> Any:
         return self._call_mt5(MT5Service._mt5_module.terminal_info)
@@ -454,7 +555,8 @@ class MT5Service(rpyc.Service):
     # =========================================================================
 
     def exposed_symbols_total(self) -> int:
-        return self._call_mt5(MT5Service._mt5_module.symbols_total)
+        result = self._call_mt5(MT5Service._mt5_module.symbols_total)
+        return _validate_int(result)
 
     def exposed_symbols_get(self, group: str | None = None) -> Any:
         if group:
@@ -468,7 +570,8 @@ class MT5Service(rpyc.Service):
         return self._call_mt5(MT5Service._mt5_module.symbol_info_tick, symbol)
 
     def exposed_symbol_select(self, symbol: str, enable: bool = True) -> bool:
-        return self._call_mt5(MT5Service._mt5_module.symbol_select, symbol, enable)
+        result = self._call_mt5(MT5Service._mt5_module.symbol_select, symbol, enable)
+        return _validate_bool(result)
 
     # =========================================================================
     # Market Data Operations
@@ -486,7 +589,10 @@ class MT5Service(rpyc.Service):
     ) -> Any:
         return self._call_mt5(
             MT5Service._mt5_module.copy_rates_from_pos,
-            symbol, timeframe, start_pos, count,
+            symbol,
+            timeframe,
+            start_pos,
+            count,
         )
 
     def exposed_copy_rates_range(
@@ -494,7 +600,10 @@ class MT5Service(rpyc.Service):
     ) -> Any:
         return self._call_mt5(
             MT5Service._mt5_module.copy_rates_range,
-            symbol, timeframe, date_from, date_to,
+            symbol,
+            timeframe,
+            date_from,
+            date_to,
         )
 
     def exposed_copy_ticks_from(
@@ -518,9 +627,10 @@ class MT5Service(rpyc.Service):
     def exposed_order_calc_margin(
         self, action: int, symbol: str, volume: float, price: float
     ) -> float | None:
-        return self._call_mt5(
+        result = self._call_mt5(
             MT5Service._mt5_module.order_calc_margin, action, symbol, volume, price
         )
+        return _validate_float_optional(result)
 
     def exposed_order_calc_profit(
         self,
@@ -530,10 +640,15 @@ class MT5Service(rpyc.Service):
         price_open: float,
         price_close: float,
     ) -> float | None:
-        return self._call_mt5(
+        result = self._call_mt5(
             MT5Service._mt5_module.order_calc_profit,
-            action, symbol, volume, price_open, price_close,
+            action,
+            symbol,
+            volume,
+            price_open,
+            price_close,
         )
+        return _validate_float_optional(result)
 
     def exposed_order_check(self, request: dict[str, Any]) -> Any:
         return self._call_mt5(MT5Service._mt5_module.order_check, request)
@@ -546,7 +661,8 @@ class MT5Service(rpyc.Service):
     # =========================================================================
 
     def exposed_positions_total(self) -> int:
-        return self._call_mt5(MT5Service._mt5_module.positions_total)
+        result = self._call_mt5(MT5Service._mt5_module.positions_total)
+        return _validate_int(result)
 
     def exposed_positions_get(
         self,
@@ -570,7 +686,8 @@ class MT5Service(rpyc.Service):
     # =========================================================================
 
     def exposed_orders_total(self) -> int:
-        return self._call_mt5(MT5Service._mt5_module.orders_total)
+        result = self._call_mt5(MT5Service._mt5_module.orders_total)
+        return _validate_int(result)
 
     def exposed_orders_get(
         self,
@@ -594,9 +711,10 @@ class MT5Service(rpyc.Service):
     # =========================================================================
 
     def exposed_history_orders_total(self, date_from: Any, date_to: Any) -> int | None:
-        return self._call_mt5(
+        result = self._call_mt5(
             MT5Service._mt5_module.history_orders_total, date_from, date_to
         )
+        return _validate_int_optional(result)
 
     def exposed_history_orders_get(
         self,
@@ -622,9 +740,10 @@ class MT5Service(rpyc.Service):
         return self._call_mt5(MT5Service._mt5_module.history_orders_get)
 
     def exposed_history_deals_total(self, date_from: Any, date_to: Any) -> int | None:
-        return self._call_mt5(
+        result = self._call_mt5(
             MT5Service._mt5_module.history_deals_total, date_from, date_to
         )
+        return _validate_int_optional(result)
 
     def exposed_history_deals_get(
         self,
@@ -677,13 +796,14 @@ class ServerState(Enum):
 class ServerConfig:
     """Server configuration."""
 
-    host: str = "0.0.0.0"  # noqa: S104
+    host: str = "0.0.0.0"  # noqa: S104 - Intentional binding to all interfaces
     port: int = 18812
     mode: ServerMode = ServerMode.DIRECT
 
     # Wine mode settings
     wine_cmd: str = "wine"
     python_exe: str = "python.exe"
+    # S108: /tmp is intentional for server scripts (cross-platform temp location)
     server_dir: Path = field(default_factory=lambda: Path("/tmp/mt5linux"))  # noqa: S108
 
     # Threading settings
@@ -827,7 +947,9 @@ class MT5Service(rpyc.Service):
             action, symbol, volume, price
         )
 
-    def exposed_order_calc_profit(self, action, symbol, volume, price_open, price_close):
+    def exposed_order_calc_profit(
+        self, action, symbol, volume, price_open, price_close
+    ):
         return MT5Service._mt5_module.order_calc_profit(
             action, symbol, volume, price_open, price_close
         )
@@ -983,7 +1105,9 @@ class Server:
     def _set_state(self, state: ServerState) -> None:
         old_state = self._state
         self._state = state
-        self._log.debug("state_changed", old_state=old_state.value, new_state=state.value)
+        self._log.debug(
+            "state_changed", old_state=old_state.value, new_state=state.value
+        )
 
     def _calculate_restart_delay(self) -> float:
         return exponential_backoff_with_jitter(
@@ -1056,7 +1180,7 @@ class Server:
             mt5_available=is_mt5_available(),
         )
 
-        server_class: type[ThreadedServer] | type[ThreadPoolServer]
+        server_class: type[ThreadedServer | ThreadPoolServer]
         kwargs: dict[str, Any] = {
             "service": MT5Service,
             "hostname": self.config.host,
@@ -1109,7 +1233,9 @@ class Server:
 
                 self._restart_count += 1
                 if self._restart_count > self.config.max_restarts:
-                    self._log.error("max_restarts_exceeded", max_restarts=self.config.max_restarts)
+                    self._log.error(
+                        "max_restarts_exceeded", max_restarts=self.config.max_restarts
+                    )
                     self._set_state(ServerState.FAILED)
                     break
 
@@ -1126,7 +1252,7 @@ class Server:
                 if self._shutdown_event.wait(delay):
                     break
 
-            except Exception:
+            except Exception:  # noqa: BLE001 - Server resilience requires broad catch
                 self._log.exception("server_error")
                 self._restart_count += 1
 
@@ -1190,14 +1316,16 @@ class Server:
     def check_health(self) -> bool:
         """Check if server is healthy using modern rpyc.connect()."""
         try:
+            # S104: Comparing against 0.0.0.0 to substitute with localhost
             host = "localhost" if self.config.host == "0.0.0.0" else self.config.host  # noqa: S104
             conn = rpyc.connect(
                 host, self.config.port, config={"sync_request_timeout": 5}
             )
             status = conn.root.health_check()
             conn.close()
-            return status.get("healthy", False)
-        except Exception:
+            healthy_value = status.get("healthy", False)
+            return _validate_bool(healthy_value)
+        except Exception:  # noqa: BLE001 - Catch all for health check resilience
             return False
 
     @contextmanager
@@ -1220,19 +1348,37 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
+    # S104: Default binding to all interfaces is intentional for server
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")  # noqa: S104
-    parser.add_argument("-p", "--port", type=int, default=18812, help="Port to listen on")
     parser.add_argument(
-        "--wine", "-w", dest="wine_cmd", metavar="CMD", help="Wine command (enables Wine mode)"
+        "-p", "--port", type=int, default=18812, help="Port to listen on"
     )
     parser.add_argument(
-        "--python", dest="python_exe", default="python.exe", help="Python executable (Wine mode)"
+        "--wine",
+        "-w",
+        dest="wine_cmd",
+        metavar="CMD",
+        help="Wine command (enables Wine mode)",
     )
-    parser.add_argument("--max-restarts", type=int, default=10, help="Maximum restart attempts")
-    parser.add_argument("--server-dir", default="/tmp/mt5linux", help="Server script directory")  # noqa: S108
-    parser.add_argument("--no-thread-pool", action="store_true", help="Disable ThreadPoolServer")
+    parser.add_argument(
+        "--python",
+        dest="python_exe",
+        default="python.exe",
+        help="Python executable (Wine mode)",
+    )
+    parser.add_argument(
+        "--max-restarts", type=int, default=10, help="Maximum restart attempts"
+    )
+    parser.add_argument(
+        "--server-dir", default="/tmp/mt5linux", help="Server script directory"  # noqa: S108
+    )
+    parser.add_argument(
+        "--no-thread-pool", action="store_true", help="Disable ThreadPoolServer"
+    )
     parser.add_argument("--threads", type=int, default=10, help="Worker threads")
-    parser.add_argument("--timeout", type=int, default=300, help="Request timeout (seconds)")
+    parser.add_argument(
+        "--timeout", type=int, default=300, help="Request timeout (seconds)"
+    )
 
     args = parser.parse_args(argv)
 
@@ -1253,7 +1399,7 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
 
 
 def run_server(
-    host: str = "0.0.0.0",  # noqa: S104
+    host: str = "0.0.0.0",  # noqa: S104 - Intentional binding to all interfaces
     port: int = 18812,
     *,
     wine_cmd: str | None = None,
@@ -1271,10 +1417,18 @@ def run_server(
     Server(config).run(blocking=True)
 
 
+_MIN_POSITIONAL_ARGS = 3  # wine python.exe server.py HOST PORT
+_IPV4_DOT_COUNT = 3  # x.x.x.x has 3 dots
+
+
 def main() -> int:
     # Support positional args for Wine mode (mt5docker compatibility)
     # wine python.exe server.py 0.0.0.0 8001
-    if len(sys.argv) >= 3 and sys.argv[1].count(".") == 3:
+    is_positional_mode = (
+        len(sys.argv) >= _MIN_POSITIONAL_ARGS
+        and sys.argv[1].count(".") == _IPV4_DOT_COUNT
+    )
+    if is_positional_mode:
         host = sys.argv[1]
         port = int(sys.argv[2])
         config = ServerConfig(host=host, port=port, mode=ServerMode.DIRECT)
@@ -1299,7 +1453,7 @@ def main() -> int:
         server.stop()
         return 0
     except MT5NotAvailableError as e:
-        log.error("mt5_not_available", error=str(e))
+        log.exception("mt5_not_available", error=str(e))
         return 1
     else:
         return 0 if server.state != ServerState.FAILED else 1

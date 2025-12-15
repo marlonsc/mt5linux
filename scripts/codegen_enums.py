@@ -85,7 +85,7 @@ def is_rpyc_available(host: str = "localhost", port: int = 38812) -> bool:
 def extract_from_rpyc(host: str = "localhost", port: int = 38812) -> dict[str, int]:
     """Extract constants from MT5 via rpyc 6.x native API."""
     # rpyc 6.x native API - connect to SlaveService
-    conn = rpyc.connect(host, port, service=rpyc.SlaveService)  # type: ignore[arg-type]
+    conn = rpyc.connect(host, port, service=rpyc.SlaveService)
     mt5 = conn.root.getmodule("MetaTrader5")
 
     constants: dict[str, int] = {}
@@ -108,8 +108,6 @@ def extract_from_rpyc(host: str = "localhost", port: int = 38812) -> dict[str, i
 
     conn.close()
     return constants
-
-
 
 
 def group_constants(constants: dict[str, int]) -> dict[str, dict[str, int]]:
@@ -279,7 +277,7 @@ def check_git_status(file_path: Path) -> bool:
     return True
 
 
-def generate_enums(
+def generate_enums(  # noqa: PLR0911 - Complex codegen needs multiple return paths
     output_path: Path | None = None,
     check_only: bool = False,
     host: str = "localhost",
@@ -323,7 +321,7 @@ def generate_enums(
     except (ConnectionError, ImportError, RuntimeError) as e:
         print(f"ERROR: Failed to extract constants: {e}", file=sys.stderr)
         return False
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 - Catch-all for unexpected errors in enum extraction
         print(f"ERROR: Unexpected error extracting constants: {e}", file=sys.stderr)
         return False
 

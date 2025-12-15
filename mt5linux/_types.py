@@ -6,11 +6,189 @@ These types are compatible with neptor's Pydantic models.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeAlias, TypedDict
+from collections.abc import Callable
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
+
+
+# =============================================================================
+# MT5 Module Protocol
+# =============================================================================
+
+
+@runtime_checkable
+class MT5ModuleProtocol(Protocol):
+    """Protocol defining the MetaTrader5 module interface.
+
+    This allows type-safe calls to the MT5 module without requiring
+    the actual MetaTrader5 package to be installed.
+    """
+
+    # Terminal operations
+    def initialize(
+        self,
+        path: str | None = ...,
+        login: int | None = ...,
+        password: str | None = ...,
+        server: str | None = ...,
+        timeout: int | None = ...,
+        portable: bool = ...,
+    ) -> bool: ...
+
+    def login(
+        self,
+        login: int,
+        password: str,
+        server: str,
+        timeout: int = ...,
+    ) -> bool: ...
+
+    def shutdown(self) -> None: ...
+
+    def version(self) -> tuple[int, int, str] | None: ...
+
+    def last_error(self) -> tuple[int, str]: ...
+
+    def terminal_info(self) -> Any: ...
+
+    def account_info(self) -> Any: ...
+
+    # Symbol operations
+    def symbols_total(self) -> int: ...
+
+    def symbols_get(self, *, group: str | None = ...) -> tuple[Any, ...] | None: ...
+
+    def symbol_info(self, symbol: str) -> Any: ...
+
+    def symbol_info_tick(self, symbol: str) -> Any: ...
+
+    def symbol_select(self, symbol: str, enable: bool = ...) -> bool: ...
+
+    # Market data operations
+    def copy_rates_from(
+        self,
+        symbol: str,
+        timeframe: int,
+        date_from: datetime,
+        count: int,
+    ) -> Any: ...
+
+    def copy_rates_from_pos(
+        self,
+        symbol: str,
+        timeframe: int,
+        start_pos: int,
+        count: int,
+    ) -> Any: ...
+
+    def copy_rates_range(
+        self,
+        symbol: str,
+        timeframe: int,
+        date_from: datetime,
+        date_to: datetime,
+    ) -> Any: ...
+
+    def copy_ticks_from(
+        self,
+        symbol: str,
+        date_from: datetime,
+        count: int,
+        flags: int,
+    ) -> Any: ...
+
+    def copy_ticks_range(
+        self,
+        symbol: str,
+        date_from: datetime,
+        date_to: datetime,
+        flags: int,
+    ) -> Any: ...
+
+    # Trading operations
+    def order_calc_margin(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price: float,
+    ) -> float | None: ...
+
+    def order_calc_profit(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price_open: float,
+        price_close: float,
+    ) -> float | None: ...
+
+    def order_check(self, request: dict[str, Any]) -> Any: ...
+
+    def order_send(self, request: dict[str, Any]) -> Any: ...
+
+    # Position operations
+    def positions_total(self) -> int: ...
+
+    def positions_get(
+        self,
+        *,
+        symbol: str | None = ...,
+        group: str | None = ...,
+        ticket: int | None = ...,
+    ) -> tuple[Any, ...] | None: ...
+
+    # Order operations
+    def orders_total(self) -> int: ...
+
+    def orders_get(
+        self,
+        *,
+        symbol: str | None = ...,
+        group: str | None = ...,
+        ticket: int | None = ...,
+    ) -> tuple[Any, ...] | None: ...
+
+    # History operations
+    def history_orders_total(
+        self,
+        date_from: datetime,
+        date_to: datetime,
+    ) -> int | None: ...
+
+    def history_orders_get(
+        self,
+        *,
+        date_from: datetime | None = ...,
+        date_to: datetime | None = ...,
+        group: str | None = ...,
+        ticket: int | None = ...,
+        position: int | None = ...,
+    ) -> tuple[Any, ...] | None: ...
+
+    def history_deals_total(
+        self,
+        date_from: datetime,
+        date_to: datetime,
+    ) -> int | None: ...
+
+    def history_deals_get(
+        self,
+        *,
+        date_from: datetime | None = ...,
+        date_to: datetime | None = ...,
+        group: str | None = ...,
+        ticket: int | None = ...,
+        position: int | None = ...,
+    ) -> tuple[Any, ...] | None: ...
+
+
+# Type alias for MT5 functions
+MT5Function: TypeAlias = Callable[..., Any]
 
 # Array types for OHLCV and tick data
 RatesArray: TypeAlias = "NDArray[np.void]"

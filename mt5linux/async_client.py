@@ -99,7 +99,7 @@ class AsyncMetaTrader5:
 
         try:
             await asyncio.to_thread(self._sync_client.shutdown)
-        except Exception:
+        except (OSError, ConnectionError, EOFError):
             log.debug("MT5 shutdown failed during disconnect")
 
         await asyncio.to_thread(self._sync_client.close)
@@ -198,9 +198,7 @@ class AsyncMetaTrader5:
         """Get symbols matching filter."""
         assert self._sync_client is not None
         if group:
-            return await asyncio.to_thread(
-                self._sync_client.symbols_get, group=group
-            )
+            return await asyncio.to_thread(self._sync_client.symbols_get, group=group)
         return await asyncio.to_thread(self._sync_client.symbols_get)
 
     async def symbol_info(self, symbol: str) -> Any:
@@ -216,9 +214,7 @@ class AsyncMetaTrader5:
     async def symbol_select(self, symbol: str, enable: bool = True) -> bool:
         """Select/deselect symbol in Market Watch."""
         assert self._sync_client is not None
-        return await asyncio.to_thread(
-            self._sync_client.symbol_select, symbol, enable
-        )
+        return await asyncio.to_thread(self._sync_client.symbol_select, symbol, enable)
 
     # ========================================
     # Market Data
@@ -384,9 +380,7 @@ class AsyncMetaTrader5:
         if ticket:
             kwargs["ticket"] = ticket
         if kwargs:
-            return await asyncio.to_thread(
-                self._sync_client.positions_get, **kwargs
-            )
+            return await asyncio.to_thread(self._sync_client.positions_get, **kwargs)
         return await asyncio.to_thread(self._sync_client.positions_get)
 
     # ========================================
@@ -414,9 +408,7 @@ class AsyncMetaTrader5:
         if ticket:
             kwargs["ticket"] = ticket
         if kwargs:
-            return await asyncio.to_thread(
-                self._sync_client.orders_get, **kwargs
-            )
+            return await asyncio.to_thread(self._sync_client.orders_get, **kwargs)
         return await asyncio.to_thread(self._sync_client.orders_get)
 
     # ========================================
