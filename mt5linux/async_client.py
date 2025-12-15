@@ -99,7 +99,7 @@ class AsyncMetaTrader5:
 
         try:
             await asyncio.to_thread(self._sync_client.shutdown)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("MT5 shutdown failed during disconnect")
 
         await asyncio.to_thread(self._sync_client.close)

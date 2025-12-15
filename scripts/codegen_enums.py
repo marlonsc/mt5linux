@@ -92,7 +92,7 @@ def extract_from_rpyc(host: str = "localhost", port: int = 38812) -> dict[str, i
                 value = getattr(mt5, name)
                 if isinstance(value, int):
                     constants[name] = value
-            except Exception:  # noqa: BLE001, S110
+            except Exception:
                 pass  # Intentionally ignore attribute errors
 
     conn.close()
@@ -196,7 +196,7 @@ def check_git_status(file_path: Path) -> bool:
     """
     try:
         result = subprocess.run(
-            ["git", "diff", "--quiet", str(file_path)],  # noqa: S607
+            ["git", "diff", "--quiet", str(file_path)],
             capture_output=True,
             cwd=file_path.parent,
             check=False,
@@ -208,7 +208,7 @@ def check_git_status(file_path: Path) -> bool:
 
         # Also check staged changes
         result = subprocess.run(
-            ["git", "diff", "--cached", "--quiet", str(file_path)],  # noqa: S607
+            ["git", "diff", "--cached", "--quiet", str(file_path)],
             capture_output=True,
             cwd=file_path.parent,
             check=False,
@@ -268,7 +268,7 @@ def generate_enums(
         constants = extract_from_rpyc(host, port)
         source = f"mt5docker test container (rpyc:{port})"
         print(f"  Extracted {len(constants)} constants")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"ERROR: Failed to extract constants: {e}", file=sys.stderr)
         return False
 

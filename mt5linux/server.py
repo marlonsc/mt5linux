@@ -78,14 +78,14 @@ class ServerState(Enum):
 class ServerConfig:
     """Server configuration with sensible defaults."""
 
-    host: str = "0.0.0.0"  # noqa: S104
+    host: str = "0.0.0.0"
     port: int = 18812
     mode: ServerMode = ServerMode.DIRECT
 
     # Wine mode settings
     wine_cmd: str = "wine"
     python_exe: str = "python.exe"
-    server_dir: Path = field(default_factory=lambda: Path("/tmp/mt5linux"))  # noqa: S108
+    server_dir: Path = field(default_factory=lambda: Path("/tmp/mt5linux"))
 
     # Resilience settings
     max_restarts: int = 10
@@ -360,7 +360,7 @@ class Server:
                 if self._shutdown_event.wait(delay):
                     break  # Shutdown requested during wait
 
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self._log.exception("server_error")
                 self._restart_count += 1
 
@@ -436,10 +436,10 @@ class Server:
         """
         try:
 
-            host = self.config.host if self.config.host != "0.0.0.0" else "localhost"  # noqa: S104
+            host = self.config.host if self.config.host != "0.0.0.0" else "localhost"
             conn = rpyc.classic.connect(host, self.config.port)
             conn.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
         else:
             return True
@@ -478,7 +478,7 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
     # Connection settings
     parser.add_argument(
         "--host",
-        default="0.0.0.0",  # noqa: S104
+        default="0.0.0.0",
         help="Host to bind to",
     )
     parser.add_argument(
@@ -511,7 +511,7 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
     )
     parser.add_argument(
         "--server-dir",
-        default="/tmp/mt5linux",  # noqa: S108
+        default="/tmp/mt5linux",
         help="Directory for server script (Wine mode)",
     )
 
@@ -532,7 +532,7 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
 
 
 def run_server(
-    host: str = "0.0.0.0",  # noqa: S104
+    host: str = "0.0.0.0",
     port: int = 18812,
     *,
     wine_cmd: str | None = None,

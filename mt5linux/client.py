@@ -69,7 +69,7 @@ class MetaTrader5:
             return
         # rpyc 6.x: rpyc.classic.connect still works
         self._conn = rpyc.classic.connect(self._host, self._port)
-        self._conn._config["sync_request_timeout"] = self._timeout  # noqa: SLF001
+        self._conn._config["sync_request_timeout"] = self._timeout
         self._mt5 = self._conn.modules.MetaTrader5
 
     def __getattr__(self, name: str) -> Any:
@@ -92,7 +92,7 @@ class MetaTrader5:
         """Context manager exit - cleanup."""
         try:
             self.shutdown()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("MT5 shutdown failed during cleanup (connection may be closed)")
         self.close()
 
@@ -101,7 +101,7 @@ class MetaTrader5:
         if self._conn is not None:
             try:
                 self._conn.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.debug("RPyC connection close failed (may already be closed)")
             self._conn = None
             self._mt5 = None

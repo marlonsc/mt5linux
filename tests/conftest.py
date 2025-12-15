@@ -47,7 +47,7 @@ MT5_CONFIG: dict[str, str | int] = {
 
 
 @pytest.fixture(scope="session", autouse=True)
-def ensure_docker_and_codegen() -> Generator[None, None, None]:
+def ensure_docker_and_codegen() -> Generator[None]:
     """Start test Docker container and run codegen before all tests.
 
     This fixture:
@@ -61,7 +61,7 @@ def ensure_docker_and_codegen() -> Generator[None, None, None]:
     print("\n[conftest] Starting test Docker container...")
     try:
         subprocess.run(
-            [  # noqa: S607
+            [
                 "docker",
                 "compose",
                 "-f",
@@ -86,11 +86,12 @@ def ensure_docker_and_codegen() -> Generator[None, None, None]:
     print("[conftest] Running codegen_enums.py...")
     try:
         result = subprocess.run(
-            [sys.executable, str(CODEGEN_SCRIPT), "--check"],  # noqa: S603
+            [sys.executable, str(CODEGEN_SCRIPT), "--check"],
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,
             timeout=60,
+            check=False,
         )
         if result.returncode != 0:
             pytest.fail(
@@ -106,9 +107,10 @@ def ensure_docker_and_codegen() -> Generator[None, None, None]:
     # Teardown: stop container
     print("\n[conftest] Stopping test container...")
     subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "down"],  # noqa: S607, S603
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "down"],
         cwd=PROJECT_ROOT,
         capture_output=True,
+        check=False,
     )
 
 

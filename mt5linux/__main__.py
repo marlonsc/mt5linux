@@ -30,7 +30,7 @@ log = structlog.get_logger("mt5linux.main")
 
 def _print_help() -> None:
     """Print usage help."""
-    print(  # noqa: T201
+    print(
         """mt5linux - MetaTrader5 bridge for Linux
 
 Usage:
