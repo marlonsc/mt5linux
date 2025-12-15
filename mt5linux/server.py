@@ -87,7 +87,15 @@ def detect_environment() -> Environment:
 
 
 def is_mt5_available() -> bool:
-    """Check if MetaTrader5 module is importable."""
+    """Check if MetaTrader5 module is importable.
+
+    MetaTrader5 is only available in Wine environments, not in Linux.
+    This function is used to detect the runtime environment and determine
+    if MT5 API access is available.
+
+    Returns:
+        bool: True if MetaTrader5 can be imported, False otherwise.
+    """
     try:
         import MetaTrader5
 
@@ -430,7 +438,16 @@ class MT5Service(rpyc.Service):
     _rate_limiter = TokenBucketRateLimiter(rate=100, capacity=200)
 
     def on_connect(self, _conn: rpyc.Connection) -> None:
-        """Initialize MT5 module on connection."""
+        """Initialize MT5 module on connection.
+
+        MetaTrader5 module is imported lazily when first client connects
+        to avoid unnecessary initialization in non-Wine environments.
+        Only done once per service instance with thread-safe locking.
+
+        Raises:
+            MT5NotAvailableError: If MetaTrader5 cannot be imported
+                (typically in non-Wine Linux environments).
+        """
         _health_monitor.record_connection()
 
         with MT5Service._mt5_lock:
