@@ -1,42 +1,49 @@
-"""RPyC server for mt5linux.
+"""Modern RPyC server for mt5linux.
 
 Production-grade RPyC server with:
-- Automatic restart on failure with exponential backoff
-- Structured logging via structlog
+- Modern MT5Service (replaces deprecated SlaveService)
+- ThreadPoolServer for concurrent request handling
+- Circuit breaker for fault tolerance
+- Rate limiting (token bucket)
+- Health monitoring
 - Graceful shutdown handling
-- Health check support
-- Wine subprocess management
+- NO STUBS - fails if MT5 unavailable
 
 Compatible with rpyc 6.x.
 
 Usage:
-    # Direct mode (Linux with rpyc):
+    # Direct mode (Linux):
     python -m mt5linux.server --host 0.0.0.0 --port 18812
 
     # Wine mode (for mt5docker):
     python -m mt5linux.server --wine wine --python python.exe -p 8001
+
+    # Also supports positional args for Wine (mt5docker compatibility):
+    wine python.exe server.py 0.0.0.0 8001
 """
 
 from __future__ import annotations
 
 import argparse
+import os
+import random
 import signal
 import subprocess
 import sys
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, auto
+from functools import wraps
 from pathlib import Path
 from types import FrameType
+from typing import Any
 
 import rpyc
 import structlog
-
-# rpyc 6.x: SlaveService is aliased to ClassicService, both work
-from rpyc.core import SlaveService
-from rpyc.utils.server import ThreadedServer
+from rpyc.utils.server import ThreadPoolServer, ThreadedServer
 
 # Configure structlog for clean output
 structlog.configure(
@@ -56,11 +63,604 @@ structlog.configure(
 log = structlog.get_logger("mt5linux.server")
 
 
+# =============================================================================
+# Environment Detection
+# =============================================================================
+
+
+class Environment(Enum):
+    """Runtime environment type."""
+
+    LINUX = auto()
+    WINE = auto()
+
+
+def detect_environment() -> Environment:
+    """Auto-detect runtime environment."""
+    if sys.platform == "win32":
+        # Wine reports as win32
+        wine_indicators = ["WINEPREFIX", "WINELOADER", "WINEDLLPATH"]
+        if any(os.environ.get(var) for var in wine_indicators):
+            return Environment.WINE
+        return Environment.WINE  # Assume Wine in win32 context
+    return Environment.LINUX
+
+
+def is_mt5_available() -> bool:
+    """Check if MetaTrader5 module is importable."""
+    try:
+        import MetaTrader5  # noqa: F401, PLC0415
+
+        return True
+    except ImportError:
+        return False
+
+
+class MT5NotAvailableError(Exception):
+    """Raised when MetaTrader5 module is not available. NO STUBS."""
+
+
+# =============================================================================
+# Resilience Patterns
+# =============================================================================
+
+
+class CircuitState(Enum):
+    """Circuit breaker states."""
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+@dataclass
+class CircuitBreakerConfig:
+    """Circuit breaker configuration."""
+
+    failure_threshold: int = 5
+    success_threshold: int = 2
+    timeout: float = 30.0
+    excluded_exceptions: tuple[type[Exception], ...] = ()
+
+
+class CircuitBreaker:
+    """Circuit breaker for fault tolerance."""
+
+    def __init__(self, config: CircuitBreakerConfig | None = None) -> None:
+        self.config = config or CircuitBreakerConfig()
+        self._state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._success_count = 0
+        self._last_failure_time: float | None = None
+        self._lock = threading.RLock()
+
+    @property
+    def state(self) -> CircuitState:
+        """Current circuit state."""
+        with self._lock:
+            if (
+                self._state == CircuitState.OPEN
+                and self._last_failure_time
+                and time.time() - self._last_failure_time >= self.config.timeout
+            ):
+                self._state = CircuitState.HALF_OPEN
+                self._success_count = 0
+            return self._state
+
+    def _record_success(self) -> None:
+        with self._lock:
+            if self._state == CircuitState.HALF_OPEN:
+                self._success_count += 1
+                if self._success_count >= self.config.success_threshold:
+                    self._state = CircuitState.CLOSED
+                    self._failure_count = 0
+            elif self._state == CircuitState.CLOSED:
+                self._failure_count = 0
+
+    def _record_failure(self) -> None:
+        with self._lock:
+            self._failure_count += 1
+            self._last_failure_time = time.time()
+            if self._state == CircuitState.HALF_OPEN:
+                self._state = CircuitState.OPEN
+            elif (
+                self._state == CircuitState.CLOSED
+                and self._failure_count >= self.config.failure_threshold
+            ):
+                self._state = CircuitState.OPEN
+
+    def reset(self) -> None:
+        """Reset circuit breaker."""
+        with self._lock:
+            self._state = CircuitState.CLOSED
+            self._failure_count = 0
+            self._success_count = 0
+            self._last_failure_time = None
+
+    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if self.state == CircuitState.OPEN:
+                msg = f"Circuit breaker open, call to {func.__name__} blocked"
+                raise CircuitBreakerOpenError(msg)
+            try:
+                result = func(*args, **kwargs)
+                self._record_success()
+                return result
+            except self.config.excluded_exceptions:
+                raise
+            except Exception:
+                self._record_failure()
+                raise
+
+        return wrapper
+
+
+class CircuitBreakerOpenError(Exception):
+    """Raised when circuit breaker is open."""
+
+
+def exponential_backoff_with_jitter(
+    attempt: int,
+    base_delay: float = 1.0,
+    max_delay: float = 60.0,
+    multiplier: float = 2.0,
+    jitter_factor: float = 0.1,
+) -> float:
+    """Calculate delay with exponential backoff and jitter."""
+    delay = base_delay * (multiplier**attempt)
+    delay = min(delay, max_delay)
+    jitter = delay * jitter_factor * (2 * random.random() - 1)  # noqa: S311
+    return max(0.0, delay + jitter)
+
+
+# =============================================================================
+# Rate Limiter
+# =============================================================================
+
+
+class TokenBucketRateLimiter:
+    """Token bucket rate limiter."""
+
+    def __init__(self, rate: float, capacity: float) -> None:
+        self._rate = rate
+        self._capacity = capacity
+        self._tokens = capacity
+        self._last_update = time.monotonic()
+        self._lock = threading.Lock()
+
+    def _refill(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self._last_update
+        self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
+        self._last_update = now
+
+    def acquire(self, tokens: float = 1.0) -> bool:
+        with self._lock:
+            self._refill()
+            if self._tokens >= tokens:
+                self._tokens -= tokens
+                return True
+            return False
+
+
+# =============================================================================
+# Health Monitoring
+# =============================================================================
+
+
+@dataclass
+class HealthStatus:
+    """Server health status."""
+
+    healthy: bool
+    uptime_seconds: float
+    connections_total: int
+    connections_active: int
+    requests_total: int
+    requests_failed: int
+    last_error: str | None = None
+    environment: str = ""
+    mt5_available: bool = False
+    circuit_state: str = "closed"
+
+
+class HealthMonitor:
+    """Health monitoring for the server."""
+
+    def __init__(self) -> None:
+        self._start_time = time.time()
+        self._connections_total = 0
+        self._connections_active = 0
+        self._requests_total = 0
+        self._requests_failed = 0
+        self._last_error: str | None = None
+        self._lock = threading.Lock()
+        self._environment = detect_environment()
+
+    def record_connection(self) -> None:
+        with self._lock:
+            self._connections_total += 1
+            self._connections_active += 1
+
+    def record_disconnection(self) -> None:
+        with self._lock:
+            self._connections_active = max(0, self._connections_active - 1)
+
+    def record_request(self, success: bool = True) -> None:
+        with self._lock:
+            self._requests_total += 1
+            if not success:
+                self._requests_failed += 1
+
+    def record_error(self, error: str) -> None:
+        with self._lock:
+            self._last_error = error
+            self._requests_failed += 1
+
+    def clear_error(self) -> None:
+        with self._lock:
+            self._last_error = None
+
+    def get_status(self, circuit_state: str = "closed") -> HealthStatus:
+        with self._lock:
+            return HealthStatus(
+                healthy=self._last_error is None,
+                uptime_seconds=time.time() - self._start_time,
+                connections_total=self._connections_total,
+                connections_active=self._connections_active,
+                requests_total=self._requests_total,
+                requests_failed=self._requests_failed,
+                last_error=self._last_error,
+                environment=self._environment.name,
+                mt5_available=is_mt5_available(),
+                circuit_state=circuit_state,
+            )
+
+
+# Global instances
+_health_monitor = HealthMonitor()
+_mt5_circuit_breaker = CircuitBreaker(CircuitBreakerConfig(failure_threshold=5))
+
+
+# =============================================================================
+# MT5Service - Modern RPyC Service (NO STUBS)
+# =============================================================================
+
+
+class MT5Service(rpyc.Service):
+    """Modern RPyC service for MetaTrader5 access.
+
+    Replaces deprecated SlaveService with explicit method exposure.
+    NO STUBS - fails if MT5 module is unavailable.
+    """
+
+    _mt5_module: Any = None
+    _mt5_lock = threading.RLock()
+    _rate_limiter = TokenBucketRateLimiter(rate=100, capacity=200)
+
+    def on_connect(self, conn: rpyc.Connection) -> None:
+        """Initialize MT5 module on connection."""
+        _health_monitor.record_connection()
+
+        with MT5Service._mt5_lock:
+            if MT5Service._mt5_module is None:
+                try:
+                    import MetaTrader5 as MT5  # noqa: N814, PLC0415
+
+                    MT5Service._mt5_module = MT5
+                    log.info("mt5_module_loaded")
+                except ImportError as e:
+                    log.error("mt5_module_not_available", error=str(e))
+                    raise MT5NotAvailableError(
+                        "MetaTrader5 module not available. NO STUBS."
+                    ) from e
+
+    def on_disconnect(self, conn: rpyc.Connection) -> None:
+        _health_monitor.record_disconnection()
+        log.debug("client_disconnected")
+
+    def _call_mt5(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Call MT5 function with rate limiting and circuit breaker."""
+        if not MT5Service._rate_limiter.acquire():
+            time.sleep(0.01)  # Brief wait if rate limited
+
+        @_mt5_circuit_breaker
+        def _call() -> Any:
+            with MT5Service._mt5_lock:
+                try:
+                    result = func(*args, **kwargs)
+                    _health_monitor.record_request(success=True)
+                    return result
+                except Exception as e:
+                    _health_monitor.record_error(str(e))
+                    raise
+
+        return _call()
+
+    # =========================================================================
+    # Core Access
+    # =========================================================================
+
+    def exposed_get_mt5(self) -> Any:
+        """Return MT5 module reference."""
+        if MT5Service._mt5_module is None:
+            raise MT5NotAvailableError("MT5 module not loaded")
+        return MT5Service._mt5_module
+
+    def exposed_health_check(self) -> dict[str, Any]:
+        """Get server health status."""
+        status = _health_monitor.get_status(_mt5_circuit_breaker.state.value)
+        return {
+            "healthy": status.healthy,
+            "uptime_seconds": status.uptime_seconds,
+            "connections_total": status.connections_total,
+            "connections_active": status.connections_active,
+            "requests_total": status.requests_total,
+            "requests_failed": status.requests_failed,
+            "last_error": status.last_error,
+            "environment": status.environment,
+            "mt5_available": status.mt5_available,
+            "circuit_state": status.circuit_state,
+        }
+
+    def exposed_reset_circuit_breaker(self) -> bool:
+        _mt5_circuit_breaker.reset()
+        _health_monitor.clear_error()
+        return True
+
+    # =========================================================================
+    # Terminal Operations
+    # =========================================================================
+
+    def exposed_initialize(
+        self,
+        path: str | None = None,
+        login: int | None = None,
+        password: str | None = None,
+        server: str | None = None,
+        timeout: int | None = None,
+        portable: bool = False,
+    ) -> bool:
+        return self._call_mt5(
+            MT5Service._mt5_module.initialize,
+            path, login, password, server, timeout, portable,
+        )
+
+    def exposed_login(
+        self, login: int, password: str, server: str, timeout: int = 60000
+    ) -> bool:
+        return self._call_mt5(
+            MT5Service._mt5_module.login, login, password, server, timeout
+        )
+
+    def exposed_shutdown(self) -> None:
+        return self._call_mt5(MT5Service._mt5_module.shutdown)
+
+    def exposed_version(self) -> tuple[int, int, str] | None:
+        return self._call_mt5(MT5Service._mt5_module.version)
+
+    def exposed_last_error(self) -> tuple[int, str]:
+        with MT5Service._mt5_lock:
+            return MT5Service._mt5_module.last_error()
+
+    def exposed_terminal_info(self) -> Any:
+        return self._call_mt5(MT5Service._mt5_module.terminal_info)
+
+    def exposed_account_info(self) -> Any:
+        return self._call_mt5(MT5Service._mt5_module.account_info)
+
+    # =========================================================================
+    # Symbol Operations
+    # =========================================================================
+
+    def exposed_symbols_total(self) -> int:
+        return self._call_mt5(MT5Service._mt5_module.symbols_total)
+
+    def exposed_symbols_get(self, group: str | None = None) -> Any:
+        if group:
+            return self._call_mt5(MT5Service._mt5_module.symbols_get, group=group)
+        return self._call_mt5(MT5Service._mt5_module.symbols_get)
+
+    def exposed_symbol_info(self, symbol: str) -> Any:
+        return self._call_mt5(MT5Service._mt5_module.symbol_info, symbol)
+
+    def exposed_symbol_info_tick(self, symbol: str) -> Any:
+        return self._call_mt5(MT5Service._mt5_module.symbol_info_tick, symbol)
+
+    def exposed_symbol_select(self, symbol: str, enable: bool = True) -> bool:
+        return self._call_mt5(MT5Service._mt5_module.symbol_select, symbol, enable)
+
+    # =========================================================================
+    # Market Data Operations
+    # =========================================================================
+
+    def exposed_copy_rates_from(
+        self, symbol: str, timeframe: int, date_from: Any, count: int
+    ) -> Any:
+        return self._call_mt5(
+            MT5Service._mt5_module.copy_rates_from, symbol, timeframe, date_from, count
+        )
+
+    def exposed_copy_rates_from_pos(
+        self, symbol: str, timeframe: int, start_pos: int, count: int
+    ) -> Any:
+        return self._call_mt5(
+            MT5Service._mt5_module.copy_rates_from_pos,
+            symbol, timeframe, start_pos, count,
+        )
+
+    def exposed_copy_rates_range(
+        self, symbol: str, timeframe: int, date_from: Any, date_to: Any
+    ) -> Any:
+        return self._call_mt5(
+            MT5Service._mt5_module.copy_rates_range,
+            symbol, timeframe, date_from, date_to,
+        )
+
+    def exposed_copy_ticks_from(
+        self, symbol: str, date_from: Any, count: int, flags: int
+    ) -> Any:
+        return self._call_mt5(
+            MT5Service._mt5_module.copy_ticks_from, symbol, date_from, count, flags
+        )
+
+    def exposed_copy_ticks_range(
+        self, symbol: str, date_from: Any, date_to: Any, flags: int
+    ) -> Any:
+        return self._call_mt5(
+            MT5Service._mt5_module.copy_ticks_range, symbol, date_from, date_to, flags
+        )
+
+    # =========================================================================
+    # Trading Operations
+    # =========================================================================
+
+    def exposed_order_calc_margin(
+        self, action: int, symbol: str, volume: float, price: float
+    ) -> float | None:
+        return self._call_mt5(
+            MT5Service._mt5_module.order_calc_margin, action, symbol, volume, price
+        )
+
+    def exposed_order_calc_profit(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price_open: float,
+        price_close: float,
+    ) -> float | None:
+        return self._call_mt5(
+            MT5Service._mt5_module.order_calc_profit,
+            action, symbol, volume, price_open, price_close,
+        )
+
+    def exposed_order_check(self, request: dict[str, Any]) -> Any:
+        return self._call_mt5(MT5Service._mt5_module.order_check, request)
+
+    def exposed_order_send(self, request: dict[str, Any]) -> Any:
+        return self._call_mt5(MT5Service._mt5_module.order_send, request)
+
+    # =========================================================================
+    # Position Operations
+    # =========================================================================
+
+    def exposed_positions_total(self) -> int:
+        return self._call_mt5(MT5Service._mt5_module.positions_total)
+
+    def exposed_positions_get(
+        self,
+        symbol: str | None = None,
+        group: str | None = None,
+        ticket: int | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {}
+        if symbol:
+            kwargs["symbol"] = symbol
+        if group:
+            kwargs["group"] = group
+        if ticket:
+            kwargs["ticket"] = ticket
+        if kwargs:
+            return self._call_mt5(MT5Service._mt5_module.positions_get, **kwargs)
+        return self._call_mt5(MT5Service._mt5_module.positions_get)
+
+    # =========================================================================
+    # Order Operations
+    # =========================================================================
+
+    def exposed_orders_total(self) -> int:
+        return self._call_mt5(MT5Service._mt5_module.orders_total)
+
+    def exposed_orders_get(
+        self,
+        symbol: str | None = None,
+        group: str | None = None,
+        ticket: int | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {}
+        if symbol:
+            kwargs["symbol"] = symbol
+        if group:
+            kwargs["group"] = group
+        if ticket:
+            kwargs["ticket"] = ticket
+        if kwargs:
+            return self._call_mt5(MT5Service._mt5_module.orders_get, **kwargs)
+        return self._call_mt5(MT5Service._mt5_module.orders_get)
+
+    # =========================================================================
+    # History Operations
+    # =========================================================================
+
+    def exposed_history_orders_total(self, date_from: Any, date_to: Any) -> int | None:
+        return self._call_mt5(
+            MT5Service._mt5_module.history_orders_total, date_from, date_to
+        )
+
+    def exposed_history_orders_get(
+        self,
+        date_from: Any = None,
+        date_to: Any = None,
+        group: str | None = None,
+        ticket: int | None = None,
+        position: int | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {}
+        if date_from:
+            kwargs["date_from"] = date_from
+        if date_to:
+            kwargs["date_to"] = date_to
+        if group:
+            kwargs["group"] = group
+        if ticket:
+            kwargs["ticket"] = ticket
+        if position:
+            kwargs["position"] = position
+        if kwargs:
+            return self._call_mt5(MT5Service._mt5_module.history_orders_get, **kwargs)
+        return self._call_mt5(MT5Service._mt5_module.history_orders_get)
+
+    def exposed_history_deals_total(self, date_from: Any, date_to: Any) -> int | None:
+        return self._call_mt5(
+            MT5Service._mt5_module.history_deals_total, date_from, date_to
+        )
+
+    def exposed_history_deals_get(
+        self,
+        date_from: Any = None,
+        date_to: Any = None,
+        group: str | None = None,
+        ticket: int | None = None,
+        position: int | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {}
+        if date_from:
+            kwargs["date_from"] = date_from
+        if date_to:
+            kwargs["date_to"] = date_to
+        if group:
+            kwargs["group"] = group
+        if ticket:
+            kwargs["ticket"] = ticket
+        if position:
+            kwargs["position"] = position
+        if kwargs:
+            return self._call_mt5(MT5Service._mt5_module.history_deals_get, **kwargs)
+        return self._call_mt5(MT5Service._mt5_module.history_deals_get)
+
+
+# =============================================================================
+# Server Configuration
+# =============================================================================
+
+
 class ServerMode(Enum):
     """Server execution mode."""
 
-    DIRECT = "direct"  # Run RPyC server directly (Linux)
-    WINE = "wine"  # Run via Wine subprocess (Windows Python)
+    DIRECT = "direct"  # Run directly (Linux)
+    WINE = "wine"  # Run via Wine subprocess
 
 
 class ServerState(Enum):
@@ -76,77 +676,265 @@ class ServerState(Enum):
 
 @dataclass
 class ServerConfig:
-    """Server configuration with sensible defaults."""
+    """Server configuration."""
 
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # noqa: S104
     port: int = 18812
     mode: ServerMode = ServerMode.DIRECT
 
     # Wine mode settings
     wine_cmd: str = "wine"
     python_exe: str = "python.exe"
-    server_dir: Path = field(default_factory=lambda: Path("/tmp/mt5linux"))
+    server_dir: Path = field(default_factory=lambda: Path("/tmp/mt5linux"))  # noqa: S108
+
+    # Threading settings
+    use_thread_pool: bool = True
+    thread_pool_size: int = 10
 
     # Resilience settings
     max_restarts: int = 10
-    restart_delay_base: float = 1.0  # Base delay in seconds
-    restart_delay_max: float = 60.0  # Maximum delay
-    restart_delay_multiplier: float = 2.0  # Exponential backoff multiplier
+    restart_delay_base: float = 1.0
+    restart_delay_max: float = 60.0
+    restart_delay_multiplier: float = 2.0
+    jitter_factor: float = 0.1
 
-    # Health check settings
-    health_check_interval: float = 30.0  # Seconds between checks
-    health_check_timeout: float = 5.0  # Timeout for health check
+    # RPyC protocol settings
+    sync_request_timeout: int = 300
+    allow_pickle: bool = True
 
     def __post_init__(self) -> None:
-        """Ensure server_dir is a Path."""
         if isinstance(self.server_dir, str):
             self.server_dir = Path(self.server_dir)
 
+    def get_protocol_config(self) -> dict[str, Any]:
+        return {
+            "allow_public_attrs": True,
+            "allow_pickle": self.allow_pickle,
+            "sync_request_timeout": self.sync_request_timeout,
+        }
 
-# RPyC server script template for Wine mode
-# Uses SlaveService which is aliased to ClassicService in rpyc 6.x
+
+# Modern RPyC server script for Wine mode (uses MT5Service)
 RPYC_SERVER_SCRIPT = '''\
 #!/usr/bin/env python
-"""RPyC server with graceful shutdown support.
+"""Modern RPyC server with MT5Service (NO STUBS).
 
 Generated by mt5linux.server.
 Runs inside Wine with Windows Python + MetaTrader5 module.
-Compatible with rpyc 6.x.
-Features:
-- Signal handling (SIGTERM/SIGINT) for clean shutdown
-- Clean shutdown of ThreadedServer
 """
 import sys
 import signal
-from rpyc.utils.server import ThreadedServer
-from rpyc.core import SlaveService  # SlaveService = ClassicService in rpyc 6.x
+import threading
+import time
+from typing import Any
 
-# Global server reference for signal handler
+import rpyc
+from rpyc.utils.server import ThreadPoolServer
+
+# Global server reference
 _server = None
 
+
+class MT5Service(rpyc.Service):
+    """Modern RPyC service for MT5. NO STUBS."""
+
+    _mt5_module = None
+    _mt5_lock = threading.RLock()
+
+    def on_connect(self, conn):
+        with MT5Service._mt5_lock:
+            if MT5Service._mt5_module is None:
+                import MetaTrader5 as MT5
+                MT5Service._mt5_module = MT5
+                print("[mt5linux] MT5 module loaded")
+
+    def on_disconnect(self, conn):
+        pass
+
+    def exposed_get_mt5(self):
+        return MT5Service._mt5_module
+
+    def exposed_health_check(self):
+        return {"healthy": True, "mt5_available": True}
+
+    def exposed_initialize(self, path=None, login=None, password=None,
+                          server=None, timeout=None, portable=False):
+        return MT5Service._mt5_module.initialize(
+            path, login, password, server, timeout, portable
+        )
+
+    def exposed_login(self, login, password, server, timeout=60000):
+        return MT5Service._mt5_module.login(login, password, server, timeout)
+
+    def exposed_shutdown(self):
+        return MT5Service._mt5_module.shutdown()
+
+    def exposed_version(self):
+        return MT5Service._mt5_module.version()
+
+    def exposed_last_error(self):
+        return MT5Service._mt5_module.last_error()
+
+    def exposed_terminal_info(self):
+        return MT5Service._mt5_module.terminal_info()
+
+    def exposed_account_info(self):
+        return MT5Service._mt5_module.account_info()
+
+    def exposed_symbols_total(self):
+        return MT5Service._mt5_module.symbols_total()
+
+    def exposed_symbols_get(self, group=None):
+        if group:
+            return MT5Service._mt5_module.symbols_get(group=group)
+        return MT5Service._mt5_module.symbols_get()
+
+    def exposed_symbol_info(self, symbol):
+        return MT5Service._mt5_module.symbol_info(symbol)
+
+    def exposed_symbol_info_tick(self, symbol):
+        return MT5Service._mt5_module.symbol_info_tick(symbol)
+
+    def exposed_symbol_select(self, symbol, enable=True):
+        return MT5Service._mt5_module.symbol_select(symbol, enable)
+
+    def exposed_copy_rates_from(self, symbol, timeframe, date_from, count):
+        return MT5Service._mt5_module.copy_rates_from(
+            symbol, timeframe, date_from, count
+        )
+
+    def exposed_copy_rates_from_pos(self, symbol, timeframe, start_pos, count):
+        return MT5Service._mt5_module.copy_rates_from_pos(
+            symbol, timeframe, start_pos, count
+        )
+
+    def exposed_copy_rates_range(self, symbol, timeframe, date_from, date_to):
+        return MT5Service._mt5_module.copy_rates_range(
+            symbol, timeframe, date_from, date_to
+        )
+
+    def exposed_copy_ticks_from(self, symbol, date_from, count, flags):
+        return MT5Service._mt5_module.copy_ticks_from(
+            symbol, date_from, count, flags
+        )
+
+    def exposed_copy_ticks_range(self, symbol, date_from, date_to, flags):
+        return MT5Service._mt5_module.copy_ticks_range(
+            symbol, date_from, date_to, flags
+        )
+
+    def exposed_order_calc_margin(self, action, symbol, volume, price):
+        return MT5Service._mt5_module.order_calc_margin(
+            action, symbol, volume, price
+        )
+
+    def exposed_order_calc_profit(self, action, symbol, volume, price_open, price_close):
+        return MT5Service._mt5_module.order_calc_profit(
+            action, symbol, volume, price_open, price_close
+        )
+
+    def exposed_order_check(self, request):
+        return MT5Service._mt5_module.order_check(request)
+
+    def exposed_order_send(self, request):
+        return MT5Service._mt5_module.order_send(request)
+
+    def exposed_positions_total(self):
+        return MT5Service._mt5_module.positions_total()
+
+    def exposed_positions_get(self, symbol=None, group=None, ticket=None):
+        kwargs = {}
+        if symbol:
+            kwargs["symbol"] = symbol
+        if group:
+            kwargs["group"] = group
+        if ticket:
+            kwargs["ticket"] = ticket
+        if kwargs:
+            return MT5Service._mt5_module.positions_get(**kwargs)
+        return MT5Service._mt5_module.positions_get()
+
+    def exposed_orders_total(self):
+        return MT5Service._mt5_module.orders_total()
+
+    def exposed_orders_get(self, symbol=None, group=None, ticket=None):
+        kwargs = {}
+        if symbol:
+            kwargs["symbol"] = symbol
+        if group:
+            kwargs["group"] = group
+        if ticket:
+            kwargs["ticket"] = ticket
+        if kwargs:
+            return MT5Service._mt5_module.orders_get(**kwargs)
+        return MT5Service._mt5_module.orders_get()
+
+    def exposed_history_orders_total(self, date_from, date_to):
+        return MT5Service._mt5_module.history_orders_total(date_from, date_to)
+
+    def exposed_history_orders_get(self, date_from=None, date_to=None,
+                                   group=None, ticket=None, position=None):
+        kwargs = {}
+        if date_from:
+            kwargs["date_from"] = date_from
+        if date_to:
+            kwargs["date_to"] = date_to
+        if group:
+            kwargs["group"] = group
+        if ticket:
+            kwargs["ticket"] = ticket
+        if position:
+            kwargs["position"] = position
+        if kwargs:
+            return MT5Service._mt5_module.history_orders_get(**kwargs)
+        return MT5Service._mt5_module.history_orders_get()
+
+    def exposed_history_deals_total(self, date_from, date_to):
+        return MT5Service._mt5_module.history_deals_total(date_from, date_to)
+
+    def exposed_history_deals_get(self, date_from=None, date_to=None,
+                                  group=None, ticket=None, position=None):
+        kwargs = {}
+        if date_from:
+            kwargs["date_from"] = date_from
+        if date_to:
+            kwargs["date_to"] = date_to
+        if group:
+            kwargs["group"] = group
+        if ticket:
+            kwargs["ticket"] = ticket
+        if position:
+            kwargs["position"] = position
+        if kwargs:
+            return MT5Service._mt5_module.history_deals_get(**kwargs)
+        return MT5Service._mt5_module.history_deals_get()
+
+
 def graceful_shutdown(signum, frame):
-    """Handle shutdown signals for clean process stops."""
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
-    print(f"[mt5linux] Received {sig_name}, shutting down gracefully...")
+    print(f"[mt5linux] Received {sig_name}, shutting down...")
     if _server is not None:
         _server.close()
     sys.exit(0)
+
 
 if __name__ == "__main__":
     host = sys.argv[1] if len(sys.argv) > 1 else "0.0.0.0"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 18812
 
-    # Setup signal handlers
     signal.signal(signal.SIGTERM, graceful_shutdown)
     signal.signal(signal.SIGINT, graceful_shutdown)
 
-    print(f"[mt5linux] Starting RPyC server on {host}:{port}")
+    print(f"[mt5linux] Starting MT5Service on {host}:{port}")
+    print("[mt5linux] Using modern rpyc.Service (NO SlaveService, NO STUBS)")
 
-    _server = ThreadedServer(
-        SlaveService,
+    _server = ThreadPoolServer(
+        MT5Service,
         hostname=host,
         port=port,
         reuse_addr=True,
+        nbThreads=10,
+        protocol_config={"allow_public_attrs": True, "sync_request_timeout": 300},
     )
 
     try:
@@ -163,32 +951,21 @@ if __name__ == "__main__":
 '''
 
 
+# =============================================================================
+# Server Class
+# =============================================================================
+
+
 class Server:
-    """Production-grade RPyC server with automatic recovery.
-
-    Features:
-    - Automatic restart on failure with exponential backoff
-    - Graceful shutdown on SIGTERM/SIGINT
-    - Health monitoring (optional)
-    - Structured logging
-
-    Example:
-        >>> config = ServerConfig(host="0.0.0.0", port=8001, mode=ServerMode.WINE)
-        >>> server = Server(config)
-        >>> server.run()  # Blocks until shutdown
-    """
+    """Production-grade RPyC server with automatic recovery."""
 
     def __init__(self, config: ServerConfig | None = None) -> None:
-        """Initialize server with configuration.
-
-        Args:
-            config: Server configuration. Uses defaults if None.
-        """
         self.config = config or ServerConfig()
         self._state = ServerState.STOPPED
         self._restart_count = 0
         self._shutdown_event = threading.Event()
         self._process: subprocess.Popen[str] | None = None
+        self._server: ThreadedServer | ThreadPoolServer | None = None
         self._server_thread: threading.Thread | None = None
         self._log = log.bind(
             host=self.config.host,
@@ -198,32 +975,27 @@ class Server:
 
     @property
     def state(self) -> ServerState:
-        """Current server state."""
         return self._state
 
     @property
     def restart_count(self) -> int:
-        """Number of restarts since last successful run."""
         return self._restart_count
 
     def _set_state(self, state: ServerState) -> None:
-        """Update server state with logging."""
         old_state = self._state
         self._state = state
-        self._log.debug(
-            "state_changed", old_state=old_state.value, new_state=state.value
-        )
+        self._log.debug("state_changed", old_state=old_state.value, new_state=state.value)
 
     def _calculate_restart_delay(self) -> float:
-        """Calculate delay before next restart using exponential backoff."""
-        delay = self.config.restart_delay_base * (
-            self.config.restart_delay_multiplier ** self._restart_count
+        return exponential_backoff_with_jitter(
+            self._restart_count,
+            base_delay=self.config.restart_delay_base,
+            max_delay=self.config.restart_delay_max,
+            multiplier=self.config.restart_delay_multiplier,
+            jitter_factor=self.config.jitter_factor,
         )
-        return min(delay, self.config.restart_delay_max)
 
     def _setup_signal_handlers(self) -> None:
-        """Setup graceful shutdown signal handlers."""
-
         def signal_handler(signum: int, _frame: FrameType | None) -> None:
             sig_name = signal.Signals(signum).name
             self._log.info("signal_received", signal=sig_name)
@@ -233,11 +1005,6 @@ class Server:
         signal.signal(signal.SIGINT, signal_handler)
 
     def _generate_server_script(self) -> Path:
-        """Generate RPyC server script for Wine mode.
-
-        Returns:
-            Path to generated script.
-        """
         self.config.server_dir.mkdir(parents=True, exist_ok=True)
         script_path = self.config.server_dir / "rpyc_server.py"
         script_path.write_text(RPYC_SERVER_SCRIPT)
@@ -245,11 +1012,7 @@ class Server:
         return script_path
 
     def _run_wine_server(self) -> int:
-        """Run RPyC server via Wine subprocess.
-
-        Returns:
-            Exit code from Wine process.
-        """
+        """Run RPyC server via Wine subprocess."""
         script_path = self._generate_server_script()
 
         cmd = [
@@ -267,15 +1030,13 @@ class Server:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            bufsize=1,  # Line buffered
+            bufsize=1,
         )
 
-        # Stream output in real-time
         if self._process.stdout:
             for raw_line in self._process.stdout:
                 output = raw_line.rstrip()
                 if output:
-                    # Parse log level from Wine output
                     if "error" in output.lower():
                         self._log.error("wine_output", message=output)
                     elif "warning" in output.lower():
@@ -283,39 +1044,50 @@ class Server:
                     else:
                         self._log.info("wine_output", message=output)
 
-                # Check for shutdown
                 if self._shutdown_event.is_set():
                     break
 
         return self._process.wait()
 
     def _run_direct_server(self) -> int:
-        """Run RPyC server directly (Linux mode).
-
-        Returns:
-            Exit code (0 for normal shutdown).
-        """
-
-        self._log.info("starting_direct_server")
-
-        server = ThreadedServer(
-            SlaveService,
-            hostname=self.config.host,
-            port=self.config.port,
-            reuse_addr=True,
+        """Run RPyC server directly (Linux mode)."""
+        self._log.info(
+            "starting_direct_server",
+            use_thread_pool=self.config.use_thread_pool,
+            mt5_available=is_mt5_available(),
         )
 
+        server_class: type[ThreadedServer] | type[ThreadPoolServer]
+        kwargs: dict[str, Any] = {
+            "service": MT5Service,
+            "hostname": self.config.host,
+            "port": self.config.port,
+            "reuse_addr": True,
+            "protocol_config": self.config.get_protocol_config(),
+        }
+
+        if self.config.use_thread_pool:
+            server_class = ThreadPoolServer
+            kwargs["nbThreads"] = self.config.thread_pool_size
+        else:
+            server_class = ThreadedServer
+
+        self._server = server_class(**kwargs)
+
         try:
-            server.start()
+            self._server.start()
         except KeyboardInterrupt:
             self._log.info("server_interrupted")
+        except Exception as e:
+            _health_monitor.record_error(str(e))
+            raise
         finally:
-            server.close()
+            if self._server:
+                self._server.close()
 
         return 0
 
     def _server_loop(self) -> None:
-        """Main server loop with restart logic."""
         self._set_state(ServerState.RUNNING)
 
         while not self._shutdown_event.is_set():
@@ -333,16 +1105,12 @@ class Server:
 
                 if exit_code == 0:
                     self._log.info("server_exited_normally", exit_code=exit_code)
-                    self._restart_count = 0  # Reset on clean exit
+                    self._restart_count = 0
                     break
 
-                # Non-zero exit - attempt restart
                 self._restart_count += 1
                 if self._restart_count > self.config.max_restarts:
-                    self._log.error(
-                        "max_restarts_exceeded",
-                        max_restarts=self.config.max_restarts,
-                    )
+                    self._log.error("max_restarts_exceeded", max_restarts=self.config.max_restarts)
                     self._set_state(ServerState.FAILED)
                     break
 
@@ -351,14 +1119,13 @@ class Server:
                     "server_crashed",
                     exit_code=exit_code,
                     restart_count=self._restart_count,
-                    restart_delay=delay,
+                    restart_delay=f"{delay:.2f}s",
                 )
 
                 self._set_state(ServerState.RESTARTING)
 
-                # Wait with shutdown check
                 if self._shutdown_event.wait(delay):
-                    break  # Shutdown requested during wait
+                    break
 
             except Exception:
                 self._log.exception("server_error")
@@ -377,11 +1144,6 @@ class Server:
         self._set_state(ServerState.STOPPED)
 
     def run(self, *, blocking: bool = True) -> None:
-        """Start the server.
-
-        Args:
-            blocking: If True, blocks until server stops. If False, runs in background.
-        """
         self._shutdown_event.clear()
         self._setup_signal_handlers()
 
@@ -389,6 +1151,7 @@ class Server:
             "server_starting",
             blocking=blocking,
             max_restarts=self.config.max_restarts,
+            use_thread_pool=self.config.use_thread_pool,
         )
 
         if blocking:
@@ -402,16 +1165,10 @@ class Server:
             self._server_thread.start()
 
     def stop(self, timeout: float = 10.0) -> None:
-        """Stop the server gracefully.
-
-        Args:
-            timeout: Maximum time to wait for shutdown.
-        """
         self._log.info("stopping_server")
         self._set_state(ServerState.STOPPING)
         self._shutdown_event.set()
 
-        # Terminate Wine process if running
         if self._process and self._process.poll() is None:
             self._log.debug("terminating_wine_process")
             self._process.terminate()
@@ -421,7 +1178,10 @@ class Server:
                 self._log.warning("killing_wine_process")
                 self._process.kill()
 
-        # Wait for server thread
+        if self._server:
+            self._log.debug("closing_rpyc_server")
+            self._server.close()
+
         if self._server_thread and self._server_thread.is_alive():
             self._server_thread.join(timeout=timeout)
 
@@ -429,31 +1189,20 @@ class Server:
         self._log.info("server_stopped")
 
     def check_health(self) -> bool:
-        """Check if server is healthy by attempting RPyC connection.
-
-        Returns:
-            True if server responds to health check.
-        """
+        """Check if server is healthy using modern rpyc.connect()."""
         try:
-
-            host = self.config.host if self.config.host != "0.0.0.0" else "localhost"
-            conn = rpyc.classic.connect(host, self.config.port)
+            host = "localhost" if self.config.host == "0.0.0.0" else self.config.host  # noqa: S104
+            conn = rpyc.connect(
+                host, self.config.port, config={"sync_request_timeout": 5}
+            )
+            status = conn.root.health_check()
             conn.close()
+            return status.get("healthy", False)
         except Exception:
             return False
-        else:
-            return True
 
     @contextmanager
     def managed(self) -> Iterator[Server]:
-        """Context manager for automatic start/stop.
-
-        Example:
-            >>> with Server(config).managed() as server:
-            ...     # Server is running
-            ...     pass
-            # Server is stopped
-        """
         self.run(blocking=False)
         try:
             yield self
@@ -461,63 +1210,33 @@ class Server:
             self.stop()
 
 
+# =============================================================================
+# CLI
+# =============================================================================
+
+
 def parse_args(argv: list[str] | None = None) -> ServerConfig:
-    """Parse command line arguments into ServerConfig.
-
-    Args:
-        argv: Command line arguments. Uses sys.argv if None.
-
-    Returns:
-        Parsed configuration.
-    """
     parser = argparse.ArgumentParser(
-        description="Resilient RPyC server for MetaTrader5",
+        description="Modern RPyC server for MetaTrader5 (NO STUBS)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    # Connection settings
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")  # noqa: S104
+    parser.add_argument("-p", "--port", type=int, default=18812, help="Port to listen on")
     parser.add_argument(
-        "--host",
-        default="0.0.0.0",
-        help="Host to bind to",
+        "--wine", "-w", dest="wine_cmd", metavar="CMD", help="Wine command (enables Wine mode)"
     )
     parser.add_argument(
-        "-p", "--port",
-        type=int,
-        default=18812,
-        help="Port to listen on",
+        "--python", dest="python_exe", default="python.exe", help="Python executable (Wine mode)"
     )
-
-    # Mode selection
-    parser.add_argument(
-        "--wine", "-w",
-        dest="wine_cmd",
-        metavar="CMD",
-        help="Wine command (enables Wine mode)",
-    )
-    parser.add_argument(
-        "--python",
-        dest="python_exe",
-        default="python.exe",
-        help="Python executable path (Wine mode)",
-    )
-
-    # Resilience settings
-    parser.add_argument(
-        "--max-restarts",
-        type=int,
-        default=10,
-        help="Maximum restart attempts",
-    )
-    parser.add_argument(
-        "--server-dir",
-        default="/tmp/mt5linux",
-        help="Directory for server script (Wine mode)",
-    )
+    parser.add_argument("--max-restarts", type=int, default=10, help="Maximum restart attempts")
+    parser.add_argument("--server-dir", default="/tmp/mt5linux", help="Server script directory")  # noqa: S108
+    parser.add_argument("--no-thread-pool", action="store_true", help="Disable ThreadPoolServer")
+    parser.add_argument("--threads", type=int, default=10, help="Worker threads")
+    parser.add_argument("--timeout", type=int, default=300, help="Request timeout (seconds)")
 
     args = parser.parse_args(argv)
 
-    # Determine mode based on wine argument
     mode = ServerMode.WINE if args.wine_cmd else ServerMode.DIRECT
 
     return ServerConfig(
@@ -527,29 +1246,21 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
         wine_cmd=args.wine_cmd or "wine",
         python_exe=args.python_exe,
         server_dir=Path(args.server_dir),
+        use_thread_pool=not args.no_thread_pool,
+        thread_pool_size=args.threads,
         max_restarts=args.max_restarts,
+        sync_request_timeout=args.timeout,
     )
 
 
 def run_server(
-    host: str = "0.0.0.0",
+    host: str = "0.0.0.0",  # noqa: S104
     port: int = 18812,
     *,
     wine_cmd: str | None = None,
     python_exe: str = "python.exe",
     max_restarts: int = 10,
 ) -> None:
-    """Run resilient RPyC server.
-
-    Convenience function for programmatic use.
-
-    Args:
-        host: Host to bind to.
-        port: Port to listen on.
-        wine_cmd: Wine command (None for direct mode).
-        python_exe: Python executable for Wine mode.
-        max_restarts: Maximum restart attempts.
-    """
     config = ServerConfig(
         host=host,
         port=port,
@@ -558,18 +1269,29 @@ def run_server(
         python_exe=python_exe,
         max_restarts=max_restarts,
     )
-
-    server = Server(config)
-    server.run(blocking=True)
+    Server(config).run(blocking=True)
 
 
 def main() -> int:
-    """Entry point for command line usage.
+    # Support positional args for Wine mode (mt5docker compatibility)
+    # wine python.exe server.py 0.0.0.0 8001
+    if len(sys.argv) >= 3 and sys.argv[1].count(".") == 3:
+        host = sys.argv[1]
+        port = int(sys.argv[2])
+        config = ServerConfig(host=host, port=port, mode=ServerMode.DIRECT)
+    else:
+        config = parse_args()
 
-    Returns:
-        Exit code.
-    """
-    config = parse_args()
+    env = detect_environment()
+    mt5_avail = is_mt5_available()
+
+    log.info(
+        "server_initializing",
+        environment=env.name,
+        mt5_available=mt5_avail,
+        use_thread_pool=config.use_thread_pool,
+    )
+
     server = Server(config)
 
     try:
@@ -577,6 +1299,9 @@ def main() -> int:
     except KeyboardInterrupt:
         server.stop()
         return 0
+    except MT5NotAvailableError as e:
+        log.error("mt5_not_available", error=str(e))
+        return 1
     else:
         return 0 if server.state != ServerState.FAILED else 1
 

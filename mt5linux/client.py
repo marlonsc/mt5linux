@@ -1,8 +1,10 @@
-"""MetaTrader5 client - transparent bridge via rpyc.
+"""MetaTrader5 client - modern RPyC bridge.
 
-Fail-fast error handling:
-- ConnectionError raised when MT5 connection not established
-- Cleanup errors logged at DEBUG level (not suppressed silently)
+Modern RPyC client for connecting to MT5Service:
+- Uses rpyc.connect() instead of deprecated rpyc.classic.connect()
+- Direct method calls via conn.root.exposed_*
+- Fail-fast error handling
+- numpy array handling via rpyc.utils.classic.obtain()
 
 Compatible with rpyc 6.x.
 """
@@ -28,10 +30,10 @@ if TYPE_CHECKING:
 
 
 class MetaTrader5:
-    """Transparent proxy for MetaTrader5 via rpyc.
+    """Modern RPyC client for MetaTrader5.
 
-    All MT5 attributes and methods are accessed via __getattr__,
-    delegating to the real MetaTrader5 module on Windows/Docker server.
+    Connects to MT5Service (modern rpyc.Service) via rpyc.connect().
+    Delegates MT5 operations to exposed service methods.
 
     Example:
         >>> with MetaTrader5(host="localhost", port=18812) as mt5:
@@ -61,16 +63,27 @@ class MetaTrader5:
         self._timeout = timeout
         self._conn = None
         self._mt5 = None
+        self._service_root: Any = None
         self.connect()
 
     def connect(self) -> None:
-        """Establish connection to rpyc server."""
+        """Establish connection to rpyc server using modern API."""
         if self._conn is not None:
             return
-        # rpyc 6.x: rpyc.classic.connect still works
-        self._conn = rpyc.classic.connect(self._host, self._port)
-        self._conn._config["sync_request_timeout"] = self._timeout
-        self._mt5 = self._conn.modules.MetaTrader5
+
+        # Modern rpyc.connect() instead of deprecated rpyc.classic.connect()
+        self._conn = rpyc.connect(
+            self._host,
+            self._port,
+            config={
+                "sync_request_timeout": self._timeout,
+                "allow_public_attrs": True,
+            },
+        )
+        self._service_root = self._conn.root
+
+        # Get MT5 module reference via exposed_get_mt5()
+        self._mt5 = self._service_root.get_mt5()
 
     def __getattr__(self, name: str) -> Any:
         """Transparent proxy for any MT5 attribute."""
@@ -105,11 +118,208 @@ class MetaTrader5:
                 log.debug("RPyC connection close failed (may already be closed)")
             self._conn = None
             self._mt5 = None
+            self._service_root = None
 
-    # ========================================
-    # Methods that need to fetch numpy arrays locally via obtain()
-    # Without this, would return netref (remote reference) instead of real array
-    # ========================================
+    # =========================================================================
+    # Health and diagnostics
+    # =========================================================================
+
+    def health_check(self) -> dict[str, Any]:
+        """Get server health status.
+
+        Returns:
+            Health status dict from server.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return dict(self._service_root.health_check())
+
+    def reset_circuit_breaker(self) -> bool:
+        """Reset server circuit breaker.
+
+        Returns:
+            True if reset successful.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return bool(self._service_root.reset_circuit_breaker())
+
+    # =========================================================================
+    # Terminal operations - delegate to service
+    # =========================================================================
+
+    def initialize(
+        self,
+        path: str | None = None,
+        login: int | None = None,
+        password: str | None = None,
+        server: str | None = None,
+        timeout: int | None = None,
+        portable: bool = False,
+    ) -> bool:
+        """Initialize MT5 terminal.
+
+        Args:
+            path: Path to the MetaTrader 5 terminal executable.
+            login: Trading account number.
+            password: Trading account password.
+            server: Trade server name.
+            timeout: Connection timeout.
+            portable: Portable mode flag.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return bool(
+            self._service_root.initialize(path, login, password, server, timeout, portable)
+        )
+
+    def login(
+        self,
+        login: int,
+        password: str,
+        server: str,
+        timeout: int = 60000,
+    ) -> bool:
+        """Login to trading account.
+
+        Args:
+            login: Trading account number.
+            password: Trading account password.
+            server: Trade server name.
+            timeout: Connection timeout in milliseconds.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return bool(self._service_root.login(login, password, server, timeout))
+
+    def shutdown(self) -> None:
+        """Shutdown MT5 terminal."""
+        if self._service_root is None:
+            return
+        self._service_root.shutdown()
+
+    def version(self) -> tuple[int, int, str] | None:
+        """Get MT5 terminal version.
+
+        Returns:
+            Tuple of (version, build, version_string) or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.version()
+
+    def last_error(self) -> tuple[int, str]:
+        """Get last MT5 error.
+
+        Returns:
+            Tuple of (error_code, error_description).
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.last_error()
+
+    def terminal_info(self) -> Any:
+        """Get terminal info.
+
+        Returns:
+            TerminalInfo object from MT5.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.terminal_info()
+
+    def account_info(self) -> Any:
+        """Get account info.
+
+        Returns:
+            AccountInfo object from MT5.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.account_info()
+
+    # =========================================================================
+    # Symbol operations
+    # =========================================================================
+
+    def symbols_total(self) -> int:
+        """Get total number of symbols.
+
+        Returns:
+            Number of available symbols.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return int(self._service_root.symbols_total())
+
+    def symbols_get(self, group: str | None = None) -> Any:
+        """Get available symbols.
+
+        Args:
+            group: Optional group filter.
+
+        Returns:
+            Tuple of SymbolInfo objects.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.symbols_get(group)
+
+    def symbol_info(self, symbol: str) -> Any:
+        """Get symbol info.
+
+        Args:
+            symbol: Symbol name.
+
+        Returns:
+            SymbolInfo object or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.symbol_info(symbol)
+
+    def symbol_info_tick(self, symbol: str) -> Any:
+        """Get symbol tick info.
+
+        Args:
+            symbol: Symbol name.
+
+        Returns:
+            Tick object or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.symbol_info_tick(symbol)
+
+    def symbol_select(self, symbol: str, enable: bool = True) -> bool:
+        """Select symbol in Market Watch.
+
+        Args:
+            symbol: Symbol name.
+            enable: True to select, False to remove.
+
+        Returns:
+            True if successful.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return bool(self._service_root.symbol_select(symbol, enable))
+
+    # =========================================================================
+    # Market data operations - with obtain() for numpy arrays
+    # =========================================================================
 
     def copy_rates_from(
         self,
@@ -129,7 +339,9 @@ class MetaTrader5:
         Returns:
             Numpy structured array with OHLCV data or None.
         """
-        result = self._mt5.copy_rates_from(symbol, timeframe, date_from, count)
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        result = self._service_root.copy_rates_from(symbol, timeframe, date_from, count)
         return obtain(result) if result is not None else None
 
     def copy_rates_from_pos(
@@ -150,7 +362,9 @@ class MetaTrader5:
         Returns:
             Numpy structured array with OHLCV data or None.
         """
-        result = self._mt5.copy_rates_from_pos(symbol, timeframe, start_pos, count)
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        result = self._service_root.copy_rates_from_pos(symbol, timeframe, start_pos, count)
         return obtain(result) if result is not None else None
 
     def copy_rates_range(
@@ -171,7 +385,9 @@ class MetaTrader5:
         Returns:
             Numpy structured array with OHLCV data or None.
         """
-        result = self._mt5.copy_rates_range(symbol, timeframe, date_from, date_to)
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        result = self._service_root.copy_rates_range(symbol, timeframe, date_from, date_to)
         return obtain(result) if result is not None else None
 
     def copy_ticks_from(
@@ -192,7 +408,9 @@ class MetaTrader5:
         Returns:
             Numpy structured array with tick data or None.
         """
-        result = self._mt5.copy_ticks_from(symbol, date_from, count, flags)
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        result = self._service_root.copy_ticks_from(symbol, date_from, count, flags)
         return obtain(result) if result is not None else None
 
     def copy_ticks_range(
@@ -213,36 +431,62 @@ class MetaTrader5:
         Returns:
             Numpy structured array with tick data or None.
         """
-        result = self._mt5.copy_ticks_range(symbol, date_from, date_to, flags)
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        result = self._service_root.copy_ticks_range(symbol, date_from, date_to, flags)
         return obtain(result) if result is not None else None
 
-    # ========================================
-    # Methods that need special handling for RPyC dict serialization
-    # MT5's order_send/order_check don't accept RPyC netref dicts,
-    # so we serialize the request and recreate it natively on remote side
-    # ========================================
+    # =========================================================================
+    # Trading operations - direct service calls (no conn.execute hack)
+    # =========================================================================
 
-    def order_send(self, request: dict[str, Any]) -> Any:
-        """Send trading order to MT5.
+    def order_calc_margin(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price: float,
+    ) -> float | None:
+        """Calculate margin for order.
 
         Args:
-            request: Order request dict with keys like action, symbol, volume, etc.
+            action: Order action (ORDER_TYPE_BUY, ORDER_TYPE_SELL).
+            symbol: Symbol name.
+            volume: Order volume.
+            price: Order price.
 
         Returns:
-            OrderSendResult from MT5.
-
-        Raises:
-            ConnectionError: If not connected to MT5 server.
-
-        Note:
-            Serializes request and recreates it on remote side to avoid RPyC issues.
+            Required margin or None.
         """
-        if self._conn is None:
+        if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.order_calc_margin(action, symbol, volume, price)
 
-        code = self._build_order_code(request, "_order_result", "order_send")
-        self._conn.execute(code)
-        return self._conn.namespace.get("_order_result")
+    def order_calc_profit(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price_open: float,
+        price_close: float,
+    ) -> float | None:
+        """Calculate profit for order.
+
+        Args:
+            action: Order action (ORDER_TYPE_BUY, ORDER_TYPE_SELL).
+            symbol: Symbol name.
+            volume: Order volume.
+            price_open: Open price.
+            price_close: Close price.
+
+        Returns:
+            Calculated profit or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.order_calc_profit(
+            action, symbol, volume, price_open, price_close
+        )
 
     def order_check(self, request: dict[str, Any]) -> Any:
         """Check order parameters without sending.
@@ -256,61 +500,178 @@ class MetaTrader5:
         Raises:
             ConnectionError: If not connected to MT5 server.
         """
-        if self._conn is None:
+        if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
 
-        code = self._build_order_code(request, "_check_result", "order_check")
-        self._conn.execute(code)
-        return self._conn.namespace.get("_check_result")
+        # Direct service call - no conn.execute() hack needed
+        return self._service_root.order_check(request)
 
-    def _build_order_code(
-        self, request: dict[str, Any], result_var: str, method: str
-    ) -> str:
-        """Build Python code to execute order_send/order_check on remote side.
+    def order_send(self, request: dict[str, Any]) -> Any:
+        """Send trading order to MT5.
 
-        Creates the request dict natively on Windows to avoid RPyC serialization issues.
+        Args:
+            request: Order request dict with keys like action, symbol, volume, etc.
+
+        Returns:
+            OrderSendResult from MT5.
+
+        Raises:
+            ConnectionError: If not connected to MT5 server.
         """
-        # Map common enum values to MT5 constants
-        action_map = {1: "_mt5.TRADE_ACTION_DEAL", 6: "_mt5.TRADE_ACTION_CLOSE_BY"}
-        type_map = {
-            0: "_mt5.ORDER_TYPE_BUY",
-            1: "_mt5.ORDER_TYPE_SELL",
-            2: "_mt5.ORDER_TYPE_BUY_LIMIT",
-            3: "_mt5.ORDER_TYPE_SELL_LIMIT",
-            4: "_mt5.ORDER_TYPE_BUY_STOP",
-            5: "_mt5.ORDER_TYPE_SELL_STOP",
-        }
-        filling_map = {
-            0: "_mt5.ORDER_FILLING_FOK",
-            1: "_mt5.ORDER_FILLING_IOC",
-            2: "_mt5.ORDER_FILLING_RETURN",
-        }
-        time_map = {
-            0: "_mt5.ORDER_TIME_GTC",
-            1: "_mt5.ORDER_TIME_DAY",
-            2: "_mt5.ORDER_TIME_SPECIFIED",
-            3: "_mt5.ORDER_TIME_SPECIFIED_DAY",
-        }
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
 
-        # Build request dict items as Python code
-        items = []
-        for key, value in request.items():
-            if key == "action":
-                items.append(f'"action": {action_map.get(value, value)}')
-            elif key == "type":
-                items.append(f'"type": {type_map.get(value, value)}')
-            elif key == "type_filling":
-                items.append(f'"type_filling": {filling_map.get(value, value)}')
-            elif key == "type_time":
-                items.append(f'"type_time": {time_map.get(value, value)}')
-            elif isinstance(value, str):
-                items.append(f'"{key}": "{value}"')
-            else:
-                items.append(f'"{key}": {value}')
+        # Direct service call - no conn.execute() hack needed
+        return self._service_root.order_send(request)
 
-        request_str = "{" + ", ".join(items) + "}"
+    # =========================================================================
+    # Position operations
+    # =========================================================================
 
-        return f"""import MetaTrader5 as _mt5
-_request = {request_str}
-{result_var} = _mt5.{method}(_request)
-"""
+    def positions_total(self) -> int:
+        """Get total number of open positions.
+
+        Returns:
+            Number of open positions.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return int(self._service_root.positions_total())
+
+    def positions_get(
+        self,
+        symbol: str | None = None,
+        group: str | None = None,
+        ticket: int | None = None,
+    ) -> Any:
+        """Get open positions.
+
+        Args:
+            symbol: Filter by symbol.
+            group: Filter by group.
+            ticket: Filter by ticket.
+
+        Returns:
+            Tuple of TradePosition objects or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.positions_get(symbol, group, ticket)
+
+    # =========================================================================
+    # Order operations
+    # =========================================================================
+
+    def orders_total(self) -> int:
+        """Get total number of pending orders.
+
+        Returns:
+            Number of pending orders.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return int(self._service_root.orders_total())
+
+    def orders_get(
+        self,
+        symbol: str | None = None,
+        group: str | None = None,
+        ticket: int | None = None,
+    ) -> Any:
+        """Get pending orders.
+
+        Args:
+            symbol: Filter by symbol.
+            group: Filter by group.
+            ticket: Filter by ticket.
+
+        Returns:
+            Tuple of TradeOrder objects or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.orders_get(symbol, group, ticket)
+
+    # =========================================================================
+    # History operations
+    # =========================================================================
+
+    def history_orders_total(self, date_from: datetime, date_to: datetime) -> int | None:
+        """Get total number of historical orders.
+
+        Args:
+            date_from: Start datetime.
+            date_to: End datetime.
+
+        Returns:
+            Number of historical orders or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.history_orders_total(date_from, date_to)
+
+    def history_orders_get(
+        self,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        group: str | None = None,
+        ticket: int | None = None,
+        position: int | None = None,
+    ) -> Any:
+        """Get historical orders.
+
+        Args:
+            date_from: Start datetime.
+            date_to: End datetime.
+            group: Filter by group.
+            ticket: Filter by ticket.
+            position: Filter by position.
+
+        Returns:
+            Tuple of TradeOrder objects or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.history_orders_get(
+            date_from, date_to, group, ticket, position
+        )
+
+    def history_deals_total(self, date_from: datetime, date_to: datetime) -> int | None:
+        """Get total number of historical deals.
+
+        Args:
+            date_from: Start datetime.
+            date_to: End datetime.
+
+        Returns:
+            Number of historical deals or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.history_deals_total(date_from, date_to)
+
+    def history_deals_get(
+        self,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        group: str | None = None,
+        ticket: int | None = None,
+        position: int | None = None,
+    ) -> Any:
+        """Get historical deals.
+
+        Args:
+            date_from: Start datetime.
+            date_to: End datetime.
+            group: Filter by group.
+            ticket: Filter by ticket.
+            position: Filter by position.
+
+        Returns:
+            Tuple of TradeDeal objects or None.
+        """
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._service_root.history_deals_get(
+            date_from, date_to, group, ticket, position
+        )
