@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: T201, C901, TRY300, N813
+# ruff: noqa: T201, TRY300
 """Auto-generate MT5 enums from the real MetaTrader5 library.
 
 This script extracts all constants from the MT5 library and generates
@@ -23,8 +23,10 @@ If --check fails, commit the updated enums.py to the repository.
 
 from __future__ import annotations
 
+import argparse
 import ast
 import operator
+import os
 import re
 import socket
 import subprocess
@@ -82,7 +84,7 @@ def extract_from_rpyc(host: str = "localhost", port: int = 38812) -> dict[str, i
     import rpyc
 
     # rpyc 6.x native API - connect to SlaveService
-    conn = rpyc.connect(host, port, service=rpyc.SlaveService)
+    conn = rpyc.connect(host, port, service=rpyc.SlaveService)  # type: ignore[arg-type]
     mt5 = conn.root.getmodule("MetaTrader5")
 
     constants: dict[str, int] = {}

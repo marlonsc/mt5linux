@@ -80,6 +80,8 @@ class MetaTrader5:
                 "allow_public_attrs": True,
             },
         )
+        if self._conn is None:
+            raise RuntimeError("Failed to establish RPyC connection")
         self._service_root = self._conn.root
 
         # Get MT5 module reference via exposed_get_mt5()
@@ -105,7 +107,7 @@ class MetaTrader5:
         """Context manager exit - cleanup."""
         try:
             self.shutdown()
-        except Exception:
+        except (OSError, ConnectionError, EOFError):
             log.debug("MT5 shutdown failed during cleanup (connection may be closed)")
         self.close()
 
@@ -114,7 +116,7 @@ class MetaTrader5:
         if self._conn is not None:
             try:
                 self._conn.close()
-            except Exception:
+            except (OSError, ConnectionError, EOFError):
                 log.debug("RPyC connection close failed (may already be closed)")
             self._conn = None
             self._mt5 = None
