@@ -55,7 +55,7 @@ class OrderRequest(BaseModel):
     @property
     def is_market_order(self) -> bool:
         """Check if this is a market order."""
-        return self.type in (OrderType.BUY, OrderType.SELL)
+        return self.type in {OrderType.BUY, OrderType.SELL}
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to MT5 API request dict."""
