@@ -1,1 +1,1 @@
-"""Tests for mt5linux."""
+"""mt5linux test suite."""

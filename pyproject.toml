@@ -4,7 +4,7 @@ requires = ["poetry-core"]
 
 [tool.poetry]
 name = "mt5linux"
-version = "0.2.1"
+version = "0.3.0"
 description = "MetaTrader5 bridge for Linux via rpyc"
 authors = ["Lucas Prett Campagna"]
 license = "MIT"
@@ -14,15 +14,17 @@ repository = "https://github.com/lucas-campagna/mt5linux"
 packages = [{ include = "mt5linux" }]
 
 [tool.poetry.dependencies]
-python = "^3.11"
-numpy = ">=2.0.0"
-rpyc = ">=5.2.0,<6.0.0"
+python = "^3.13"
+numpy = ">=2.1.0"
+rpyc = "^6.0.2"
+pydantic = "^2.10.0"
 structlog = "^25.5.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.0"
 pytest-cov = "^6.0.0"
 pytest-xdist = "^3.0"
+pytest-asyncio = "^1.0.0"
 hypothesis = "^6.0"
 ruff = "^0.11.0"
 mypy = "^1.15.0"
@@ -30,7 +32,7 @@ python-dotenv = "^1.0.0"
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -63,7 +65,7 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -72,6 +74,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+asyncio_mode = "auto"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "trading: marks tests that place real orders",

@@ -3,6 +3,8 @@
 Fail-fast error handling:
 - ConnectionError raised when MT5 connection not established
 - Cleanup errors logged at DEBUG level (not suppressed silently)
+
+Compatible with rpyc 6.x.
 """
 
 from __future__ import annotations
@@ -19,9 +21,10 @@ log = logging.getLogger(__name__)
 _NOT_CONNECTED_MSG = "MT5 connection not established - call connect first"
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from types import TracebackType
 
-    from numpy.typing import NDArray
+    from mt5linux._types import RatesArray, TicksArray
 
 
 class MetaTrader5:
@@ -53,12 +56,27 @@ class MetaTrader5:
             port: rpyc server port.
             timeout: Timeout in seconds for operations.
         """
-        self._conn = rpyc.classic.connect(host, port)
-        self._conn._config["sync_request_timeout"] = timeout  # noqa: SLF001
+        self._host = host
+        self._port = port
+        self._timeout = timeout
+        self._conn = None
+        self._mt5 = None
+        self.connect()
+
+    def connect(self) -> None:
+        """Establish connection to rpyc server."""
+        if self._conn is not None:
+            return
+        # rpyc 6.x: rpyc.classic.connect still works
+        self._conn = rpyc.classic.connect(self._host, self._port)
+        self._conn._config["sync_request_timeout"] = self._timeout  # noqa: SLF001
         self._mt5 = self._conn.modules.MetaTrader5
 
     def __getattr__(self, name: str) -> Any:
         """Transparent proxy for any MT5 attribute."""
+        if self._mt5 is None:
+            msg = f"'{type(self).__name__}' object has no attribute '{name}'"
+            raise AttributeError(msg)
         return getattr(self._mt5, name)
 
     def __enter__(self) -> Self:
@@ -86,38 +104,123 @@ class MetaTrader5:
             except Exception:  # noqa: BLE001
                 log.debug("RPyC connection close failed (may already be closed)")
             self._conn = None
+            self._mt5 = None
 
+    # ========================================
     # Methods that need to fetch numpy arrays locally via obtain()
     # Without this, would return netref (remote reference) instead of real array
+    # ========================================
 
-    def copy_rates_from(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copy rates from a date. Fetches array locally."""
-        result = self._mt5.copy_rates_from(*args, **kwargs)
+    def copy_rates_from(
+        self,
+        symbol: str,
+        timeframe: int,
+        date_from: datetime,
+        count: int,
+    ) -> RatesArray | None:
+        """Copy rates from a date. Fetches array locally.
+
+        Args:
+            symbol: Symbol name.
+            timeframe: Timeframe constant (TIMEFRAME_M1, etc.).
+            date_from: Start datetime.
+            count: Number of bars to copy.
+
+        Returns:
+            Numpy structured array with OHLCV data or None.
+        """
+        result = self._mt5.copy_rates_from(symbol, timeframe, date_from, count)
         return obtain(result) if result is not None else None
 
-    def copy_rates_from_pos(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copy rates from a position. Fetches array locally."""
-        result = self._mt5.copy_rates_from_pos(*args, **kwargs)
+    def copy_rates_from_pos(
+        self,
+        symbol: str,
+        timeframe: int,
+        start_pos: int,
+        count: int,
+    ) -> RatesArray | None:
+        """Copy rates from a position. Fetches array locally.
+
+        Args:
+            symbol: Symbol name.
+            timeframe: Timeframe constant.
+            start_pos: Start position (0 = current bar).
+            count: Number of bars to copy.
+
+        Returns:
+            Numpy structured array with OHLCV data or None.
+        """
+        result = self._mt5.copy_rates_from_pos(symbol, timeframe, start_pos, count)
         return obtain(result) if result is not None else None
 
-    def copy_rates_range(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copy rates in a date range. Fetches array locally."""
-        result = self._mt5.copy_rates_range(*args, **kwargs)
+    def copy_rates_range(
+        self,
+        symbol: str,
+        timeframe: int,
+        date_from: datetime,
+        date_to: datetime,
+    ) -> RatesArray | None:
+        """Copy rates in a date range. Fetches array locally.
+
+        Args:
+            symbol: Symbol name.
+            timeframe: Timeframe constant.
+            date_from: Start datetime.
+            date_to: End datetime.
+
+        Returns:
+            Numpy structured array with OHLCV data or None.
+        """
+        result = self._mt5.copy_rates_range(symbol, timeframe, date_from, date_to)
         return obtain(result) if result is not None else None
 
-    def copy_ticks_from(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copy ticks from a date. Fetches array locally."""
-        result = self._mt5.copy_ticks_from(*args, **kwargs)
+    def copy_ticks_from(
+        self,
+        symbol: str,
+        date_from: datetime,
+        count: int,
+        flags: int,
+    ) -> TicksArray | None:
+        """Copy ticks from a date. Fetches array locally.
+
+        Args:
+            symbol: Symbol name.
+            date_from: Start datetime.
+            count: Number of ticks to copy.
+            flags: COPY_TICKS_ALL, COPY_TICKS_INFO, or COPY_TICKS_TRADE.
+
+        Returns:
+            Numpy structured array with tick data or None.
+        """
+        result = self._mt5.copy_ticks_from(symbol, date_from, count, flags)
         return obtain(result) if result is not None else None
 
-    def copy_ticks_range(self, *args: Any, **kwargs: Any) -> NDArray[Any] | None:
-        """Copy ticks in a date range. Fetches array locally."""
-        result = self._mt5.copy_ticks_range(*args, **kwargs)
+    def copy_ticks_range(
+        self,
+        symbol: str,
+        date_from: datetime,
+        date_to: datetime,
+        flags: int,
+    ) -> TicksArray | None:
+        """Copy ticks in a date range. Fetches array locally.
+
+        Args:
+            symbol: Symbol name.
+            date_from: Start datetime.
+            date_to: End datetime.
+            flags: COPY_TICKS_ALL, COPY_TICKS_INFO, or COPY_TICKS_TRADE.
+
+        Returns:
+            Numpy structured array with tick data or None.
+        """
+        result = self._mt5.copy_ticks_range(symbol, date_from, date_to, flags)
         return obtain(result) if result is not None else None
 
+    # ========================================
     # Methods that need special handling for RPyC dict serialization
     # MT5's order_send/order_check don't accept RPyC netref dicts,
     # so we serialize the request and recreate it natively on remote side
+    # ========================================
 
     def order_send(self, request: dict[str, Any]) -> Any:
         """Send trading order to MT5.

@@ -39,9 +39,9 @@ services:
       # Use local code via PYTHONPATH (parent directory of package)
       - PYTHONPATH=/opt/mt5linux-pkg
       # MT5 credentials from .env (mapped to container env vars)
-      - MT5_LOGIN=${MT5_TEST_LOGIN}
-      - MT5_PASSWORD=${MT5_TEST_PASSWORD}
-      - MT5_SERVER=${MT5_TEST_SERVER:-MetaQuotes-Demo}
+      - MT5_LOGIN=${MT5_LOGIN}
+      - MT5_PASSWORD=${MT5_PASSWORD}
+      - MT5_SERVER=${MT5_SERVER:-MetaQuotes-Demo}
       # Container settings
       - ENABLE_WIN_DOTNET=1
       - ENABLE_DATA_SYNC=0

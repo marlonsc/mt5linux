@@ -1,80 +1,216 @@
-# MetaTrader 5 for linux system
+# MetaTrader 5 for Linux
 
-A simple package that uses [wine](https://www.winehq.org), [rpyc](https://github.com/tomerfiliba-org/rpyc) and a Python
-Windows version to allow using [MetaTrader5](https://pypi.org/project/MetaTrader5) on Linux.
+A Python package that uses [rpyc](https://github.com/tomerfiliba-org/rpyc) to bridge [MetaTrader5](https://pypi.org/project/MetaTrader5) to
+Linux systems.
 
-## Install
+## Features
 
-1. Install [Wine](https://wiki.winehq.org/Download).
+- **Sync Client**: `MetaTrader5` - Traditional blocking client
+- **Async Client**: `AsyncMetaTrader5` - Non-blocking client for asyncio
+- **Pydantic Models**: Type-safe models for trading data
+- **Python 3.13+**: Modern type hints and features
+- **rpyc 6.x**: Latest rpyc with security fixes
 
-2. Install [Python for Windows](https://www.python.org/downloads/windows/) on Linux with the help of Wine.
+## Requirements
 
-3. Find the path to `python.exe`.
+- Python 3.13+
+- rpyc 6.0.2+
+- numpy 2.1.0+
+- pydantic 2.10.0+
 
-   - Mine is installed on
-     `/home/user/.wine/drive_c/users/user/Local Settings/Application Data/Programs/Python/Python39`.
+## Installation
 
-4. Install [mt5](https://www.mql5.com/en/docs/integration/python_metatrader5) library on your **Windows** Python
-   version.
+```bash
+pip install mt5linux
+```
 
-   ```bash
-   pip install MetaTrader5
-   pip install --upgrade MetaTrader5
-   ```
+Or from source:
 
-5. Install this package on both **Windows** and **Linux** Python versions:
+```bash
+pip install git+https://github.com/marlonsc/mt5linux.git@master
+```
 
-   ```bash
-   pip install mt5linux
-   ```
+## Quick Start
 
-## How To Use
-
-Follow the steps:
-
-1. Open MetaTrader5.
-
-2. On **Windows** side, start the server on a terminal:
-
-   ```bash
-   python -m mt5linux <path/to/python.exe>
-   ```
-
-3. On **Linux** side, make your scripts/notebooks as you did with MetaTrader5:
-
-   ```python
-   # import the package
-   from mt5linux import MetaTrader5
-   # connect to the server
-   mt5 = MetaTrader5(
-       # host = 'localhost' (default)
-       # port = 18812       (default)
-   )
-   # use as you learned from: https://www.mql5.com/en/docs/integration/python_metatrader5/
-   mt5.initialize()
-   mt5.terminal_info()
-   mt5.copy_rates_from_pos('GOOG',mt5.TIMEFRAME_M1,0,1000)
-   # ...
-   # don't forget to shutdown
-   mt5.shutdown()
-   ```
-
-4. Be happy!
-
-On step 2 you can provide the port, host, executable, etc... just type `python -m mt5linux --help`.
-
-## Error Handling
-
-The library uses **fail-fast** error handling - errors are raised immediately rather than returning silent `None` values.
-
-### Connection Errors
-
-Trading operations (`order_send`, `order_check`) raise `ConnectionError` if called without an active connection:
+### Sync Client
 
 ```python
 from mt5linux import MetaTrader5
 
-mt5 = MetaTrader5(host="localhost", port=18812)
+with MetaTrader5(host="localhost", port=8001) as mt5:
+    mt5.initialize(login=12345, password="pass", server="Demo")
+
+    # Account info
+    account = mt5.account_info()
+    print(f"Balance: {account.balance}")
+
+    # Symbol info
+    info = mt5.symbol_info("EURUSD")
+    print(f"EURUSD bid: {info.bid}")
+
+    # OHLCV data
+    rates = mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 100)
+    print(f"Got {len(rates)} bars")
+```
+
+### Async Client
+
+```python
+import asyncio
+from mt5linux import AsyncMetaTrader5
+
+async def main():
+    async with AsyncMetaTrader5(host="localhost", port=8001) as mt5:
+        await mt5.initialize(login=12345, password="pass", server="Demo")
+
+        # Parallel data fetching
+        account, symbol, tick = await asyncio.gather(
+            mt5.account_info(),
+            mt5.symbol_info("EURUSD"),
+            mt5.symbol_info_tick("EURUSD"),
+        )
+
+        print(f"Balance: {account.balance}")
+        print(f"Bid: {tick.bid}, Ask: {tick.ask}")
+
+asyncio.run(main())
+```
+
+### Pydantic Models
+
+```python
+from mt5linux import (
+    OrderRequest,
+    OrderResult,
+    TradeAction,
+    OrderType,
+    OrderFilling,
+)
+
+# Create validated order request
+request = OrderRequest(
+    action=TradeAction.DEAL,
+    symbol="EURUSD",
+    volume=0.1,
+    type=OrderType.BUY,
+    price=0,  # Market order
+    deviation=20,
+    magic=123456,
+    comment="Test order",
+    type_filling=OrderFilling.FOK,
+)
+
+# Send order
+result = mt5.order_send(request.to_dict())
+
+# Parse result with validation
+order_result = OrderResult.from_mt5(result)
+if order_result.is_success:
+    print(f"Order placed: {order_result.order}")
+else:
+    print(f"Error: {order_result.comment}")
+```
+
+## Server Setup
+
+### Option 1: Docker (Recommended)
+
+Use [mt5docker](https://github.com/marlonsc/mt5docker) for a complete containerized setup:
+
+```bash
+docker compose up -d
+```
+
+The container runs rpyc server on port 8001.
+
+### Option 2: Manual Wine Setup
+
+1. Install Wine and Python for Windows
+2. Install MetaTrader5 package in Wine Python:
+
+   ```bash
+   wine pip install MetaTrader5
+   ```
+
+3. Start rpyc server:
+
+   ```bash
+   python -m mt5linux.server --wine wine --python python.exe -p 8001
+   ```
+
+## API Reference
+
+### MetaTrader5 (Sync Client)
+
+All [official MT5 Python functions](https://www.mql5.com/en/docs/python_metatrader5) are available:
+
+**Connection**:
+
+- `initialize()`, `login()`, `shutdown()`
+- `version()`, `last_error()`
+- `terminal_info()`, `account_info()`
+
+**Symbols**:
+
+- `symbols_total()`, `symbols_get()`
+- `symbol_info()`, `symbol_info_tick()`
+- `symbol_select()`
+
+**Market Data**:
+
+- `copy_rates_from()`, `copy_rates_from_pos()`, `copy_rates_range()`
+- `copy_ticks_from()`, `copy_ticks_range()`
+
+**Trading**:
+
+- `order_calc_margin()`, `order_calc_profit()`
+- `order_check()`, `order_send()`
+
+**Positions & Orders**:
+
+- `positions_total()`, `positions_get()`
+- `orders_total()`, `orders_get()`
+
+**History**:
+
+- `history_orders_total()`, `history_orders_get()`
+- `history_deals_total()`, `history_deals_get()`
+
+### AsyncMetaTrader5 (Async Client)
+
+Same API as sync client, but all methods are async:
+
+```python
+await mt5.initialize()
+await mt5.order_send(request)
+rates = await mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 100)
+```
+
+### Pydantic Models
+
+- `OrderRequest` - Validated order request
+- `OrderResult` - Order execution result
+- `AccountInfo` - Account information
+- `SymbolInfo` - Symbol metadata
+- `Position` - Open position
+- `Tick` - Price tick
+
+### Enums
+
+- `TradeAction` - DEAL, PENDING, SLTP, MODIFY, REMOVE, CLOSE_BY
+- `OrderType` - BUY, SELL, BUY_LIMIT, SELL_LIMIT, etc.
+- `OrderFilling` - FOK, IOC, RETURN
+- `OrderTime` - GTC, DAY, SPECIFIED, SPECIFIED_DAY
+- `TradeRetcode` - DONE, REQUOTE, ERROR, NO_MONEY, etc.
+
+## Error Handling
+
+The library uses **fail-fast** error handling:
+
+```python
+from mt5linux import MetaTrader5
+
+mt5 = MetaTrader5(host="localhost", port=8001)
 
 try:
     result = mt5.order_send(request)
@@ -84,7 +220,7 @@ except ConnectionError as e:
 
 ### Logging
 
-The client logs cleanup operations at DEBUG level. Enable logging to see diagnostic information:
+Enable debug logging to see diagnostic information:
 
 ```python
 import logging
@@ -95,64 +231,45 @@ logging.basicConfig(level=logging.DEBUG)
 
 ### Prerequisites
 
-1. **Docker** - Required to run the isolated test container.
-
-2. **MT5 Demo Account** - Create a free demo account at [MetaQuotes](https://www.metatrader5.com/).
-
-3. **Configure credentials** - Copy `.env.example` to `.env` and fill in your credentials:
+1. Docker for isolated test container
+2. MT5 demo account credentials in `.env`:
 
    ```bash
-   cp .env.example .env
-   ```
-
-   Edit `.env` with your demo account details:
-
-   ```bash
-   MT5_LOGIN=your_login_here
-   MT5_PASSWORD=your_password_here
+   MT5_LOGIN=your_login
+   MT5_PASSWORD=your_password
    MT5_SERVER=MetaQuotes-Demo
    ```
 
-   > **Note**: The `.env` file is gitignored and will not be committed.
-
-### Running Tests
+### Run Tests
 
 ```bash
-# Run all tests (auto-starts isolated container on port 38812)
+# All tests
 pytest tests/ -v
 
-# Run only unit tests (no MT5 connection required)
-pytest tests/test_server.py -v
+# Unit tests only (no server)
+pytest tests/test_models.py tests/test_async_client.py -v
 
-# Run with coverage
+# With coverage
 pytest tests/ --cov=mt5linux --cov-report=html
 ```
 
 ### Test Container Isolation
 
-Tests run in a completely isolated Docker container:
+Tests use isolated ports to avoid conflicts:
 
 | Resource | Production | Tests |
 |----------|------------|-------|
 | Container | `mt5` | `mt5linux-unit` |
-| RPyC Port | 8001 | **38812** |
-| VNC Port | 3000 | **33000** |
-| Health Port | 8002 | **38002** |
+| RPyC Port | 8001 | 38812 |
+| VNC Port | 3000 | 33000 |
 
-The test container does **not** affect any production MT5 instance.
+## Version History
 
-### Manual Container Management
+- **0.3.0**: Async client, Pydantic models, Python 3.13+, rpyc 6.x
+- **0.2.1**: Fail-fast error handling, structlog
+- **0.2.0**: Production server with auto-restart
+- **0.1.0**: Initial release
 
-```bash
-# Start test container manually
-docker compose -f tests/fixtures/docker-compose.test.yaml up -d
+## License
 
-# View container logs
-docker logs mt5linux-unit -f
-
-# Stop test container
-docker compose -f tests/fixtures/docker-compose.test.yaml down
-
-# Clean up test volumes
-docker volume rm mt5linux_unit_config mt5linux_unit_downloads mt5linux_unit_cache
-```
+MIT
