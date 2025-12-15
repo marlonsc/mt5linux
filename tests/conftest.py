@@ -77,10 +77,10 @@ TEST_RPYC_PORT = int(os.getenv("MT5_RPYC_PORT", "38812"))
 TEST_VNC_PORT = int(os.getenv("MT5_VNC_PORT", "33000"))
 TEST_CONTAINER_NAME = os.getenv("MT5_CONTAINER_NAME", "mt5linux-unit")
 
-# MT5 credentials for integration tests
+# MT5 credentials for integration tests (MUST come from .env, no defaults)
 MT5_LOGIN = int(os.getenv("MT5_LOGIN", "0"))
 MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
-MT5_SERVER = os.getenv("MT5_SERVER", "MetaQuotes-Demo")
+MT5_SERVER = os.getenv("MT5_SERVER")
 
 MT5_CONFIG: dict[str, str | int] = {
     "host": TEST_RPYC_HOST,

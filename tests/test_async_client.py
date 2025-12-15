@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from mt5linux.async_client import AsyncMetaTrader5
+from tests.conftest import MT5_LOGIN, MT5_PASSWORD
 
 
 class TestAsyncMetaTrader5Unit:
@@ -100,7 +101,10 @@ class TestAsyncMetaTrader5Unit:
 
             client = AsyncMetaTrader5()
             await client.connect()
-            result = await client.initialize(login=12345, password="pass")
+            result = await client.initialize(
+                login=MT5_LOGIN,
+                password=MT5_PASSWORD,
+            )
 
             assert result is True
             mock_instance.initialize.assert_called_once()
