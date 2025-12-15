@@ -83,6 +83,7 @@ warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 exclude = ["typings/"]
+mypy_path = "typings"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
