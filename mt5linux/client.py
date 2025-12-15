@@ -181,7 +181,9 @@ class MetaTrader5:
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
         return bool(
-            self._service_root.initialize(path, login, password, server, timeout, portable)
+            self._service_root.initialize(
+                path, login, password, server, timeout, portable
+            )
         )
 
     def login(
@@ -366,7 +368,9 @@ class MetaTrader5:
         """
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.copy_rates_from_pos(symbol, timeframe, start_pos, count)
+        result = self._service_root.copy_rates_from_pos(
+            symbol, timeframe, start_pos, count
+        )
         return obtain(result) if result is not None else None
 
     def copy_rates_range(
@@ -389,7 +393,9 @@ class MetaTrader5:
         """
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.copy_rates_range(symbol, timeframe, date_from, date_to)
+        result = self._service_root.copy_rates_range(
+            symbol, timeframe, date_from, date_to
+        )
         return obtain(result) if result is not None else None
 
     def copy_ticks_from(
@@ -598,7 +604,9 @@ class MetaTrader5:
     # History operations
     # =========================================================================
 
-    def history_orders_total(self, date_from: datetime, date_to: datetime) -> int | None:
+    def history_orders_total(
+        self, date_from: datetime, date_to: datetime
+    ) -> int | None:
         """Get total number of historical orders.
 
         Args:

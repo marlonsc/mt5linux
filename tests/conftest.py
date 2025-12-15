@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import subprocess
 import sys
@@ -58,7 +59,8 @@ def ensure_docker_and_codegen() -> Generator[None]:
     5. Stops container after all tests complete
     """
     # Start test container
-    print("\n[conftest] Starting test Docker container...")
+    logger = logging.getLogger(__name__)
+    logger.info("Starting test Docker container...")
     try:
         subprocess.run(
             [
@@ -80,10 +82,10 @@ def ensure_docker_and_codegen() -> Generator[None]:
     except subprocess.TimeoutExpired:
         pytest.fail("Timeout waiting for test container to start")
 
-    print("[conftest] Test container started")
+        logger.info("Test container started")
 
     # Run codegen
-    print("[conftest] Running codegen_enums.py...")
+    logger.info("Running codegen_enums.py...")
     try:
         result = subprocess.run(
             [sys.executable, str(CODEGEN_SCRIPT), "--check"],
@@ -100,12 +102,12 @@ def ensure_docker_and_codegen() -> Generator[None]:
     except subprocess.TimeoutExpired:
         pytest.fail("Timeout running codegen_enums.py")
 
-    print("[conftest] Codegen complete")
+    logger.info("Codegen complete")
 
     yield
 
     # Teardown: stop container
-    print("\n[conftest] Stopping test container...")
+    logger.info("Stopping test container...")
     subprocess.run(
         ["docker", "compose", "-f", str(COMPOSE_FILE), "down"],
         cwd=PROJECT_ROOT,
@@ -252,7 +254,11 @@ def cleanup_test_positions(mt5: MetaTrader5) -> Generator[None]:
     yield
     # Close any positions opened by test
     try:
-        positions = mt5.positions_get(magic=123456)
+        all_positions = mt5.positions_get()
+        positions = [
+            pos for pos in (all_positions or [])
+            if getattr(pos, "magic", None) == 123456
+        ]
         if positions:
             for pos in positions:
                 # Build close request

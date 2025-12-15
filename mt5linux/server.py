@@ -43,7 +43,7 @@ from typing import Any
 
 import rpyc
 import structlog
-from rpyc.utils.server import ThreadPoolServer, ThreadedServer
+from rpyc.utils.server import ThreadedServer, ThreadPoolServer
 
 # Configure structlog for clean output
 structlog.configure(
@@ -89,7 +89,7 @@ def detect_environment() -> Environment:
 def is_mt5_available() -> bool:
     """Check if MetaTrader5 module is importable."""
     try:
-        import MetaTrader5  # noqa: F401, PLC0415
+        import MetaTrader5  # noqa: F401, PLC0415  # pyright: ignore[reportMissingImports]
 
         return True
     except ImportError:
@@ -339,24 +339,23 @@ class MT5Service(rpyc.Service):
     _mt5_lock = threading.RLock()
     _rate_limiter = TokenBucketRateLimiter(rate=100, capacity=200)
 
-    def on_connect(self, conn: rpyc.Connection) -> None:
+    def on_connect(self, _conn: rpyc.Connection) -> None:
         """Initialize MT5 module on connection."""
         _health_monitor.record_connection()
 
         with MT5Service._mt5_lock:
             if MT5Service._mt5_module is None:
                 try:
-                    import MetaTrader5 as MT5  # noqa: N814, PLC0415
+                    import MetaTrader5 as MT5  # noqa: N814, PLC0415  # pyright: ignore[reportMissingImports]
 
                     MT5Service._mt5_module = MT5
                     log.info("mt5_module_loaded")
                 except ImportError as e:
-                    log.error("mt5_module_not_available", error=str(e))
-                    raise MT5NotAvailableError(
-                        "MetaTrader5 module not available. NO STUBS."
-                    ) from e
+                    log.exception("mt5_module_not_available", error=str(e))
+                    msg = "MetaTrader5 module not available. NO STUBS."
+                    raise MT5NotAvailableError(msg) from e
 
-    def on_disconnect(self, conn: rpyc.Connection) -> None:
+    def on_disconnect(self, _conn: rpyc.Connection) -> None:
         _health_monitor.record_disconnection()
         log.debug("client_disconnected")
 

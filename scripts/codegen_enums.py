@@ -28,11 +28,14 @@ import ast
 import operator
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+import rpyc
 
 # Mapping of MT5 constant prefixes to enum class names
 PREFIX_TO_CLASS: dict[str, str] = {
@@ -81,21 +84,27 @@ def is_rpyc_available(host: str = "localhost", port: int = 38812) -> bool:
 
 def extract_from_rpyc(host: str = "localhost", port: int = 38812) -> dict[str, int]:
     """Extract constants from MT5 via rpyc 6.x native API."""
-    import rpyc
-
     # rpyc 6.x native API - connect to SlaveService
     conn = rpyc.connect(host, port, service=rpyc.SlaveService)  # type: ignore[arg-type]
     mt5 = conn.root.getmodule("MetaTrader5")
 
     constants: dict[str, int] = {}
-    for name in dir(mt5):
-        if name.isupper() and not name.startswith("_"):
-            try:
-                value = getattr(mt5, name)
-                if isinstance(value, int):
-                    constants[name] = value
-            except Exception:
-                pass  # Intentionally ignore attribute errors
+    all_names = dir(mt5)
+
+    for name in all_names:
+        # Only process uppercase names (constants) that don't start with _
+        if not name.isupper() or name.startswith("_"):
+            continue
+
+        # Check attribute exists before accessing
+        if not hasattr(mt5, name):
+            continue
+
+        value = getattr(mt5, name)
+
+        # Only include integer constants
+        if isinstance(value, int):
+            constants[name] = value
 
     conn.close()
     return constants
@@ -189,44 +198,85 @@ def validate_generated_code(code: str) -> bool:
         return False
 
 
+def _find_git_executable() -> str | None:
+    """Find git executable cross-platform (Linux, macOS, Windows)."""
+    # Try standard git first
+    git_path = shutil.which("git")
+    if git_path:
+        return git_path
+
+    # On Windows, also try git.exe explicitly
+    if sys.platform == "win32":
+        git_path = shutil.which("git.exe")
+        if git_path:
+            return git_path
+
+    return None
+
+
+def _is_git_repository(path: Path) -> bool:
+    """Check if path is inside a git repository."""
+    git_path = _find_git_executable()
+    if not git_path:
+        return False
+
+    # Use git rev-parse to check if we're in a git repo
+    result = subprocess.run(
+        [git_path, "rev-parse", "--git-dir"],
+        capture_output=True,
+        cwd=path if path.is_dir() else path.parent,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def check_git_status(file_path: Path) -> bool:
     """Check if file has uncommitted changes in git.
 
     Returns:
-        True if file is clean (no uncommitted changes)
+        True if file is clean (no uncommitted changes) or not in a git repo
         False if file has uncommitted changes
     """
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--quiet", str(file_path)],
-            capture_output=True,
-            cwd=file_path.parent,
-            check=False,
-        )
-        if result.returncode != 0:
-            print(f"ERROR: {file_path} has uncommitted changes!", file=sys.stderr)
-            print("Run 'git add' and commit the updated enums.py", file=sys.stderr)
-            return False
-
-        # Also check staged changes
-        result = subprocess.run(
-            ["git", "diff", "--cached", "--quiet", str(file_path)],
-            capture_output=True,
-            cwd=file_path.parent,
-            check=False,
-        )
-        if result.returncode != 0:
-            print(
-                f"ERROR: {file_path} has staged but uncommitted changes!",
-                file=sys.stderr,
-            )
-            print("Commit the updated enums.py", file=sys.stderr)
-            return False
-
+    git_path = _find_git_executable()
+    if not git_path:
+        # Git not available - skip check (not an error)
+        print("Note: git not found, skipping commit check", file=sys.stderr)
         return True
-    except FileNotFoundError:
-        # git not available, skip check
+
+    # Check if we're in a git repository
+    if not _is_git_repository(file_path.parent):
+        # Not a git repo - skip check (not an error)
+        print("Note: not a git repository, skipping commit check", file=sys.stderr)
         return True
+
+    # Check for unstaged changes
+    result = subprocess.run(
+        [git_path, "diff", "--quiet", str(file_path)],
+        capture_output=True,
+        cwd=file_path.parent,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(f"ERROR: {file_path} has uncommitted changes!", file=sys.stderr)
+        print("Run 'git add' and commit the updated enums.py", file=sys.stderr)
+        return False
+
+    # Check for staged but uncommitted changes
+    result = subprocess.run(
+        [git_path, "diff", "--cached", "--quiet", str(file_path)],
+        capture_output=True,
+        cwd=file_path.parent,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(
+            f"ERROR: {file_path} has staged but uncommitted changes!",
+            file=sys.stderr,
+        )
+        print("Commit the updated enums.py", file=sys.stderr)
+        return False
+
+    return True
 
 
 def generate_enums(
@@ -270,8 +320,11 @@ def generate_enums(
         constants = extract_from_rpyc(host, port)
         source = f"mt5docker test container (rpyc:{port})"
         print(f"  Extracted {len(constants)} constants")
-    except Exception as e:
+    except (ConnectionError, ImportError, RuntimeError) as e:
         print(f"ERROR: Failed to extract constants: {e}", file=sys.stderr)
+        return False
+    except Exception as e:  # noqa: BLE001
+        print(f"ERROR: Unexpected error extracting constants: {e}", file=sys.stderr)
         return False
 
     if not constants:
@@ -301,8 +354,6 @@ def generate_enums(
 
 def main() -> int:
     """CLI entry point."""
-    import argparse
-    import os
 
     parser = argparse.ArgumentParser(description="Generate MT5 enums")
     parser.add_argument(
