@@ -89,7 +89,7 @@ def detect_environment() -> Environment:
 def is_mt5_available() -> bool:
     """Check if MetaTrader5 module is importable."""
     try:
-        import MetaTrader5  # noqa: F401
+        import MetaTrader5
 
     except ImportError:
         return False
@@ -436,9 +436,9 @@ class MT5Service(rpyc.Service):
         with MT5Service._mt5_lock:
             if MT5Service._mt5_module is None:
                 try:
-                    import MetaTrader5 as mt5  # noqa: N813  # pyright: ignore[reportMissingImports]
+                    import MetaTrader5 as MT5
 
-                    MT5Service._mt5_module = mt5
+                    MT5Service._mt5_module = MT5
                     log.info("mt5_module_loaded")
                 except ImportError as e:
                     log.exception("mt5_module_not_available", error=str(e))

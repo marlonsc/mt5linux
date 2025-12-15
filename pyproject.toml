@@ -55,6 +55,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"mt5linux/server.py" = [
+    "F401",    # MetaTrader5 import unused in Linux (Wine-only module)
+    "N814",    # Camelcase alias for MetaTrader5 module (intentional)
+]
 "tests/*" = [
     "S101",    # assert ok in tests
     "S104",    # binding to all interfaces ok in tests
@@ -84,6 +88,20 @@ warn_unused_configs = true
 ignore_missing_imports = true
 exclude = ["typings/"]
 mypy_path = "typings"
+
+[[tool.mypy.overrides]]
+# MetaTrader5 only available in Wine, not Linux - ignore import errors
+module = "mt5linux.server"
+ignore_errors = true
+
+[tool.pyright]
+# Pyright config for MetaTrader5 module (Wine-only)
+include = ["mt5linux"]
+exclude = ["tests", "typings", ".venv"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+reportMissingImports = false
+reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
