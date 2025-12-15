@@ -156,7 +156,7 @@ def build_market_sell_request(
     }
 
 
-def build_limit_order_request(  # noqa: PLR0913
+def build_limit_order_request(
     symbol: str = "EURUSD",
     volume: float = 0.01,
     price: float = 1.0,
@@ -187,7 +187,7 @@ def build_limit_order_request(  # noqa: PLR0913
     }
 
 
-def build_close_position_request(  # noqa: PLR0913
+def build_close_position_request(
     position_ticket: int,
     symbol: str = "EURUSD",
     volume: float = 0.01,

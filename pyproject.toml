@@ -43,12 +43,21 @@ ignore = [
     "ANN401",  # Any type disallowed - required for transparent bridge
     "TC003",   # typing imports - allow in TYPE_CHECKING
     "S603",    # subprocess call - needed for docker
+    "S101",    # assert used for runtime type guards in async client
+    "ASYNC109",# timeout param matches MT5 API signature
+    "FBT001",  # boolean positional matches MT5 API
+    "FBT002",  # boolean default matches MT5 API
+    "PLR0913", # many args matches MT5 API
+    "PYI036",  # exc_tb Any type ok in __aexit__
+    "RUF022",  # __all__ sorting - keep grouped by category
+    "UP040",   # TypeAlias syntax - keep for numpy forward refs
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
     "S101",    # assert ok in tests
     "S104",    # binding to all interfaces ok in tests
+    "S106",    # hardcoded password ok in tests (fixtures)
     "S607",    # partial path ok in tests (docker)
     "S110",    # try-except-pass ok in tests
     "SLF001",  # private member access ok in tests
@@ -62,6 +71,8 @@ ignore = [
     "BLE001",  # blind exception ok in test helpers
     "TRY300",  # try-return pattern ok in test helpers
     "UP037",   # quoted annotations ok for forward refs
+    "F401",    # unused imports ok (MagicMock etc)
+    "UP017",   # timezone.utc ok (backward compat)
 ]
 
 [tool.mypy]
@@ -70,6 +81,10 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "scripts.*"
+disable_error_code = ["unused-ignore"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
