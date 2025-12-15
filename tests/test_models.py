@@ -327,6 +327,7 @@ class TestPosition:
         mock_pos.profit = 50.00
         mock_pos.symbol = "EURUSD"
         mock_pos.comment = "Test position"
+        mock_pos.external_id = ""
 
         position = Position.from_mt5(mock_pos)
 
