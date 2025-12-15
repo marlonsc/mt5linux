@@ -238,7 +238,12 @@ class MetaTrader5:
             raise ConnectionError(_NOT_CONNECTED_MSG)
         return bool(
             self._service_root.initialize(
-                path, login, password, server, timeout, portable
+                path=path,
+                login=login,
+                password=password,
+                server=server,
+                timeout=timeout,
+                portable=portable,
             )
         )
 
@@ -262,7 +267,11 @@ class MetaTrader5:
         """
         if self._service_root is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
-        return bool(self._service_root.login(login, password, server, timeout))
+        return bool(
+            self._service_root.login(
+                login=login, password=password, server=server, timeout=timeout
+            )
+        )
 
     def shutdown(self) -> None:
         """Shutdown MT5 terminal."""

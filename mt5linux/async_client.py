@@ -7,13 +7,25 @@ Example:
     ...     await mt5.initialize(login=12345)
     ...     account = await mt5.account_info()
     ...     rates = await mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 100)
+
+Thread Safety:
+    The async client wraps a synchronous MetaTrader5 client and executes
+    operations via asyncio.to_thread(). While the async interface is safe
+    for concurrent coroutines, the underlying sync client shares a single
+    RPyC connection. High-concurrency scenarios may experience serialization
+    at the connection level.
+
+Attribute Access:
+    The __getattr__ method proxies MT5 constants (TIMEFRAME_*, ORDER_TYPE_*, etc.)
+    directly from the sync client. These are simple attribute lookups and do not
+    block. Do NOT call methods via __getattr__ - use the explicit async methods.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self
 
@@ -24,25 +36,36 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Error message for not connected state (same as sync client)
+_NOT_CONNECTED_MSG = "MT5 connection not established - call connect() first"
+
 
 class AsyncMetaTrader5:
     """Async wrapper for MetaTrader5 client.
 
-    All MT5 operations are executed in a thread pool to avoid blocking
+    All MT5 operations are executed via asyncio.to_thread() to avoid blocking
     the asyncio event loop. This is essential for neptor's concurrent
     order processing.
 
     Attributes:
-        TIMEFRAME_M1, TIMEFRAME_H1, etc.: MT5 timeframe constants
+        TIMEFRAME_M1, TIMEFRAME_H1, etc.: MT5 timeframe constants (via __getattr__)
         ORDER_TYPE_BUY, ORDER_TYPE_SELL, etc.: MT5 order type constants
+        (via __getattr__)
+
+    Thread Safety:
+        - connect() is protected by asyncio.Lock (safe for concurrent calls)
+        - Lock initialization uses threading.Lock guard (safe across threads)
+        - Operations on the sync client may serialize at the RPyC connection level
     """
+
+    # Class-level lock for initializing instance locks (thread-safe)
+    _lock_init_guard = threading.Lock()
 
     def __init__(
         self,
         host: str = "localhost",
         port: int = 18812,
         timeout: int = 300,
-        max_workers: int = 4,
     ) -> None:
         """Initialize async MT5 client.
 
@@ -50,17 +73,29 @@ class AsyncMetaTrader5:
             host: RPyC server address.
             port: RPyC server port.
             timeout: Timeout in seconds for MT5 operations.
-            max_workers: Max threads for concurrent operations.
         """
         self._host = host
         self._port = port
         self._timeout = timeout
         self._sync_client: MetaTrader5 | None = None
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._connected = False
+        self._connect_lock: asyncio.Lock | None = None
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if client is connected.
+
+        Returns:
+            True if connected to RPyC server.
+        """
+        return self._sync_client is not None
 
     def __getattr__(self, name: str) -> Any:
-        """Proxy MT5 constants (TIMEFRAME_*, ORDER_TYPE_*, etc.)."""
+        """Proxy MT5 constants (TIMEFRAME_*, ORDER_TYPE_*, etc.).
+
+        Warning:
+            This only works for attribute access (constants).
+            Do NOT call methods via this - use the explicit async methods.
+        """
         if self._sync_client is not None:
             return getattr(self._sync_client, name)
         msg = f"'{type(self).__name__}' object has no attribute '{name}'"
@@ -81,32 +116,97 @@ class AsyncMetaTrader5:
         await self.disconnect()
 
     async def connect(self) -> None:
-        """Connect to RPyC server."""
-        if self._connected:
-            return
+        """Connect to RPyC server.
 
-        def _connect() -> MetaTrader5:
-            return MetaTrader5(self._host, self._port, self._timeout)
+        Thread-safe: uses asyncio.Lock to prevent race conditions
+        when multiple coroutines call connect() concurrently.
+        Lock initialization uses threading.Lock for thread safety.
+        """
+        # Thread-safe lock initialization
+        with self._lock_init_guard:
+            if self._connect_lock is None:
+                self._connect_lock = asyncio.Lock()
 
-        self._sync_client = await asyncio.to_thread(_connect)
-        self._connected = True
-        log.debug("Connected to MT5 at %s:%s", self._host, self._port)
+        async with self._connect_lock:
+            # Use single source of truth for connection state
+            if self._sync_client is not None:
+                return
+
+            def _connect() -> MetaTrader5:
+                return MetaTrader5(self._host, self._port, self._timeout)
+
+            self._sync_client = await asyncio.to_thread(_connect)
+            log.debug("Connected to MT5 at %s:%s", self._host, self._port)
 
     async def disconnect(self) -> None:
-        """Disconnect from RPyC server."""
-        if not self._connected or self._sync_client is None:
+        """Disconnect from RPyC server.
+
+        Safe cleanup: resets state FIRST, then attempts cleanup operations.
+        This ensures the client is in a consistent state even if cleanup fails.
+        """
+        if self._sync_client is None:
             return
 
-        try:
-            await asyncio.to_thread(self._sync_client.shutdown)
-        except (OSError, ConnectionError, EOFError):
-            log.debug("MT5 shutdown failed during disconnect")
-
-        await asyncio.to_thread(self._sync_client.close)
+        # Capture reference and reset state FIRST (atomic-ish)
+        client = self._sync_client
         self._sync_client = None
-        self._connected = False
-        self._executor.shutdown(wait=False)
+
+        # Attempt graceful shutdown
+        try:
+            await asyncio.to_thread(client.shutdown)
+        except (OSError, ConnectionError, EOFError):
+            log.debug(
+                "MT5 shutdown failed during disconnect (connection may be closed)"
+            )
+
+        # Always attempt to close connection
+        try:
+            await asyncio.to_thread(client.close)
+        except (OSError, ConnectionError, EOFError):
+            log.debug("RPyC close failed during disconnect (may already be closed)")
+
         log.debug("Disconnected from MT5")
+
+    def _ensure_connected(self) -> MetaTrader5:
+        """Ensure client is connected and return sync client.
+
+        Raises:
+            ConnectionError: If not connected.
+
+        Returns:
+            The sync MetaTrader5 client.
+        """
+        if self._sync_client is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        return self._sync_client
+
+    # ========================================
+    # Health & Diagnostics
+    # ========================================
+
+    async def health_check(self) -> dict[str, Any]:
+        """Get server health status.
+
+        Returns:
+            Health status dict from server.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.health_check)
+
+    async def reset_circuit_breaker(self) -> bool:
+        """Reset server circuit breaker.
+
+        Returns:
+            True if reset successful.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.reset_circuit_breaker)
 
     # ========================================
     # Connection & Terminal
@@ -136,15 +236,9 @@ class AsyncMetaTrader5:
         """
         if self._sync_client is None:
             await self.connect()
-        assert self._sync_client is not None
+        client = self._ensure_connected()
         return await asyncio.to_thread(
-            self._sync_client.initialize,
-            path,
-            login,
-            password,
-            server,
-            timeout,
-            portable,
+            client.initialize, path, login, password, server, timeout, portable
         )
 
     async def login(
@@ -155,35 +249,36 @@ class AsyncMetaTrader5:
         timeout: int = 60000,
     ) -> bool:
         """Login to MT5 account."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(
-            self._sync_client.login, login, password, server, timeout
-        )
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.login, login, password, server, timeout)
 
     async def shutdown(self) -> None:
-        """Shutdown MT5 terminal connection."""
+        """Shutdown MT5 terminal connection.
+
+        Note: This is a no-op if not connected (graceful degradation).
+        """
         if self._sync_client is not None:
             await asyncio.to_thread(self._sync_client.shutdown)
 
     async def version(self) -> tuple[int, int, str] | None:
         """Get MT5 terminal version."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.version)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.version)
 
     async def last_error(self) -> tuple[int, str]:
         """Get last error code and description."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.last_error)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.last_error)
 
     async def terminal_info(self) -> Any:
         """Get terminal info."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.terminal_info)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.terminal_info)
 
     async def account_info(self) -> Any:
         """Get account info."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.account_info)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.account_info)
 
     # ========================================
     # Symbols
@@ -191,30 +286,28 @@ class AsyncMetaTrader5:
 
     async def symbols_total(self) -> int:
         """Get total number of symbols."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.symbols_total)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.symbols_total)
 
-    async def symbols_get(self, group: str | None = None) -> tuple[Any, ...] | None:
+    async def symbols_get(self, group: str | None = None) -> Any:
         """Get symbols matching filter."""
-        assert self._sync_client is not None
-        if group:
-            return await asyncio.to_thread(self._sync_client.symbols_get, group=group)
-        return await asyncio.to_thread(self._sync_client.symbols_get)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.symbols_get, group)
 
     async def symbol_info(self, symbol: str) -> Any:
         """Get symbol info."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.symbol_info, symbol)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.symbol_info, symbol)
 
     async def symbol_info_tick(self, symbol: str) -> Any:
         """Get symbol tick info."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.symbol_info_tick, symbol)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.symbol_info_tick, symbol)
 
     async def symbol_select(self, symbol: str, enable: bool = True) -> bool:
         """Select/deselect symbol in Market Watch."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.symbol_select, symbol, enable)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.symbol_select, symbol, enable)
 
     # ========================================
     # Market Data
@@ -228,13 +321,9 @@ class AsyncMetaTrader5:
         count: int,
     ) -> RatesArray | None:
         """Copy OHLCV rates from date."""
-        assert self._sync_client is not None
+        client = self._ensure_connected()
         return await asyncio.to_thread(
-            self._sync_client.copy_rates_from,
-            symbol,
-            timeframe,
-            date_from,
-            count,
+            client.copy_rates_from, symbol, timeframe, date_from, count
         )
 
     async def copy_rates_from_pos(
@@ -245,13 +334,9 @@ class AsyncMetaTrader5:
         count: int,
     ) -> RatesArray | None:
         """Copy OHLCV rates from position."""
-        assert self._sync_client is not None
+        client = self._ensure_connected()
         return await asyncio.to_thread(
-            self._sync_client.copy_rates_from_pos,
-            symbol,
-            timeframe,
-            start_pos,
-            count,
+            client.copy_rates_from_pos, symbol, timeframe, start_pos, count
         )
 
     async def copy_rates_range(
@@ -262,13 +347,9 @@ class AsyncMetaTrader5:
         date_to: datetime,
     ) -> RatesArray | None:
         """Copy OHLCV rates in date range."""
-        assert self._sync_client is not None
+        client = self._ensure_connected()
         return await asyncio.to_thread(
-            self._sync_client.copy_rates_range,
-            symbol,
-            timeframe,
-            date_from,
-            date_to,
+            client.copy_rates_range, symbol, timeframe, date_from, date_to
         )
 
     async def copy_ticks_from(
@@ -279,13 +360,9 @@ class AsyncMetaTrader5:
         flags: int,
     ) -> TicksArray | None:
         """Copy ticks from date."""
-        assert self._sync_client is not None
+        client = self._ensure_connected()
         return await asyncio.to_thread(
-            self._sync_client.copy_ticks_from,
-            symbol,
-            date_from,
-            count,
-            flags,
+            client.copy_ticks_from, symbol, date_from, count, flags
         )
 
     async def copy_ticks_range(
@@ -296,13 +373,9 @@ class AsyncMetaTrader5:
         flags: int,
     ) -> TicksArray | None:
         """Copy ticks in date range."""
-        assert self._sync_client is not None
+        client = self._ensure_connected()
         return await asyncio.to_thread(
-            self._sync_client.copy_ticks_range,
-            symbol,
-            date_from,
-            date_to,
-            flags,
+            client.copy_ticks_range, symbol, date_from, date_to, flags
         )
 
     # ========================================
@@ -317,13 +390,9 @@ class AsyncMetaTrader5:
         price: float,
     ) -> float | None:
         """Calculate margin for order."""
-        assert self._sync_client is not None
+        client = self._ensure_connected()
         return await asyncio.to_thread(
-            self._sync_client.order_calc_margin,
-            action,
-            symbol,
-            volume,
-            price,
+            client.order_calc_margin, action, symbol, volume, price
         )
 
     async def order_calc_profit(
@@ -335,25 +404,20 @@ class AsyncMetaTrader5:
         price_close: float,
     ) -> float | None:
         """Calculate profit for order."""
-        assert self._sync_client is not None
+        client = self._ensure_connected()
         return await asyncio.to_thread(
-            self._sync_client.order_calc_profit,
-            action,
-            symbol,
-            volume,
-            price_open,
-            price_close,
+            client.order_calc_profit, action, symbol, volume, price_open, price_close
         )
 
     async def order_check(self, request: dict[str, Any]) -> Any:
         """Check order parameters."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.order_check, request)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.order_check, request)
 
     async def order_send(self, request: dict[str, Any]) -> Any:
         """Send trading order."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.order_send, request)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.order_send, request)
 
     # ========================================
     # Positions
@@ -361,27 +425,18 @@ class AsyncMetaTrader5:
 
     async def positions_total(self) -> int:
         """Get total open positions."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.positions_total)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.positions_total)
 
     async def positions_get(
         self,
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> tuple[Any, ...] | None:
+    ) -> Any:
         """Get open positions."""
-        assert self._sync_client is not None
-        kwargs: dict[str, Any] = {}
-        if symbol:
-            kwargs["symbol"] = symbol
-        if group:
-            kwargs["group"] = group
-        if ticket:
-            kwargs["ticket"] = ticket
-        if kwargs:
-            return await asyncio.to_thread(self._sync_client.positions_get, **kwargs)
-        return await asyncio.to_thread(self._sync_client.positions_get)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.positions_get, symbol, group, ticket)
 
     # ========================================
     # Orders
@@ -389,27 +444,18 @@ class AsyncMetaTrader5:
 
     async def orders_total(self) -> int:
         """Get total pending orders."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(self._sync_client.orders_total)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.orders_total)
 
     async def orders_get(
         self,
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> tuple[Any, ...] | None:
+    ) -> Any:
         """Get pending orders."""
-        assert self._sync_client is not None
-        kwargs: dict[str, Any] = {}
-        if symbol:
-            kwargs["symbol"] = symbol
-        if group:
-            kwargs["group"] = group
-        if ticket:
-            kwargs["ticket"] = ticket
-        if kwargs:
-            return await asyncio.to_thread(self._sync_client.orders_get, **kwargs)
-        return await asyncio.to_thread(self._sync_client.orders_get)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.orders_get, symbol, group, ticket)
 
     # ========================================
     # History
@@ -421,12 +467,8 @@ class AsyncMetaTrader5:
         date_to: datetime,
     ) -> int | None:
         """Get total historical orders."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(
-            self._sync_client.history_orders_total,
-            date_from,
-            date_to,
-        )
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.history_orders_total, date_from, date_to)
 
     async def history_orders_get(
         self,
@@ -435,25 +477,12 @@ class AsyncMetaTrader5:
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> tuple[Any, ...] | None:
+    ) -> Any:
         """Get historical orders."""
-        assert self._sync_client is not None
-        kwargs: dict[str, Any] = {}
-        if date_from:
-            kwargs["date_from"] = date_from
-        if date_to:
-            kwargs["date_to"] = date_to
-        if group:
-            kwargs["group"] = group
-        if ticket:
-            kwargs["ticket"] = ticket
-        if position:
-            kwargs["position"] = position
-        if kwargs:
-            return await asyncio.to_thread(
-                self._sync_client.history_orders_get, **kwargs
-            )
-        return await asyncio.to_thread(self._sync_client.history_orders_get)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(
+            client.history_orders_get, date_from, date_to, group, ticket, position
+        )
 
     async def history_deals_total(
         self,
@@ -461,12 +490,8 @@ class AsyncMetaTrader5:
         date_to: datetime,
     ) -> int | None:
         """Get total historical deals."""
-        assert self._sync_client is not None
-        return await asyncio.to_thread(
-            self._sync_client.history_deals_total,
-            date_from,
-            date_to,
-        )
+        client = self._ensure_connected()
+        return await asyncio.to_thread(client.history_deals_total, date_from, date_to)
 
     async def history_deals_get(
         self,
@@ -475,22 +500,9 @@ class AsyncMetaTrader5:
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> tuple[Any, ...] | None:
+    ) -> Any:
         """Get historical deals."""
-        assert self._sync_client is not None
-        kwargs: dict[str, Any] = {}
-        if date_from:
-            kwargs["date_from"] = date_from
-        if date_to:
-            kwargs["date_to"] = date_to
-        if group:
-            kwargs["group"] = group
-        if ticket:
-            kwargs["ticket"] = ticket
-        if position:
-            kwargs["position"] = position
-        if kwargs:
-            return await asyncio.to_thread(
-                self._sync_client.history_deals_get, **kwargs
-            )
-        return await asyncio.to_thread(self._sync_client.history_deals_get)
+        client = self._ensure_connected()
+        return await asyncio.to_thread(
+            client.history_deals_get, date_from, date_to, group, ticket, position
+        )

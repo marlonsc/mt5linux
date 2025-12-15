@@ -97,7 +97,7 @@ def is_mt5_available() -> bool:
         bool: True if MetaTrader5 can be imported, False otherwise.
     """
     try:
-        import MetaTrader5
+        import MetaTrader5  # pyright: ignore[reportUnusedImport, reportMissingImports]
 
     except ImportError:
         return False
@@ -437,7 +437,7 @@ class MT5Service(rpyc.Service):
     _mt5_lock = threading.RLock()
     _rate_limiter = TokenBucketRateLimiter(rate=100, capacity=200)
 
-    def on_connect(self, _conn: rpyc.Connection) -> None:
+    def on_connect(self, conn: rpyc.Connection) -> None:  # noqa: ARG002
         """Initialize MT5 module on connection.
 
         MetaTrader5 module is imported lazily when first client connects
@@ -453,7 +453,7 @@ class MT5Service(rpyc.Service):
         with MT5Service._mt5_lock:
             if MT5Service._mt5_module is None:
                 try:
-                    import MetaTrader5 as MT5
+                    import MetaTrader5 as MT5  # pyright: ignore[reportMissingImports]
 
                     MT5Service._mt5_module = MT5
                     log.info("mt5_module_loaded")
@@ -462,7 +462,7 @@ class MT5Service(rpyc.Service):
                     msg = "MetaTrader5 module not available. NO STUBS."
                     raise MT5NotAvailableError(msg) from e
 
-    def on_disconnect(self, _conn: rpyc.Connection) -> None:
+    def on_disconnect(self, conn: rpyc.Connection) -> None:  # noqa: ARG002
         _health_monitor.record_disconnection()
         log.debug("client_disconnected")
 

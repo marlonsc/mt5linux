@@ -7,15 +7,17 @@ import logging
 import os
 import subprocess
 import sys
-from collections.abc import Generator
+import time
+from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+import rpyc
 from dotenv import load_dotenv
 
-from mt5linux import MetaTrader5
+from mt5linux import AsyncMetaTrader5, MetaTrader5
 
 
 def is_docker_available() -> bool:
@@ -41,23 +43,50 @@ def has_mt5_credentials() -> bool:
 def wait_for_rpyc_service(
     host: str = "localhost", port: int | None = None, timeout: int = 300
 ) -> bool:
-    """Wait for RPyC service to become ready by checking if port is open."""
-    import socket
-    import time
+    """Wait for RPyC service to become ready by attempting actual connection.
+
+    This function waits until the RPyC service is fully ready to handle requests,
+    not just when the port is listening. The MT5 container needs time to:
+    1. Start the RPyC server (port becomes available)
+    2. Initialize Wine and MetaTrader5 (service becomes usable)
+
+    Args:
+        host: RPyC server host
+        port: RPyC server port (default: TEST_RPYC_PORT)
+        timeout: Maximum wait time in seconds (default: 300)
+
+    Returns:
+        True if service is ready, False if timeout reached
+    """
 
     rpyc_port = port or TEST_RPYC_PORT
     start = time.time()
+    logger = logging.getLogger(__name__)
 
     while time.time() - start < timeout:
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(5)
-                result = sock.connect_ex((host, rpyc_port))
-                if result == 0:
-                    return True
-        except Exception:
-            pass
-        time.sleep(3)
+            # Connect same way as MetaTrader5 client (no service specified)
+            conn = rpyc.connect(
+                host,
+                rpyc_port,
+                config={
+                    "sync_request_timeout": 30,
+                    "allow_public_attrs": True,
+                },
+            )
+            # If we can connect successfully, the service is ready
+            # The connection establishment itself verifies the service is available
+            conn.close()
+            return True
+        except Exception as e:
+            elapsed = int(time.time() - start)
+            if elapsed % 30 == 0:  # Log every 30 seconds
+                logger.info(
+                    "Waiting for RPyC service... (%ds elapsed, error: %s)",
+                    elapsed,
+                    type(e).__name__,
+                )
+        time.sleep(5)
 
     return False
 
@@ -176,15 +205,17 @@ def ensure_docker_and_codegen() -> Generator[None]:
         # Set environment for docker compose
         env = os.environ.copy()
         env_file = os.getenv("ENV_FILE", str(PROJECT_ROOT / ".env"))
-        env.update({
-            "MT5_CONTAINER_NAME": TEST_CONTAINER_NAME,
-            "MT5_RPYC_PORT": str(TEST_RPYC_PORT),
-            "MT5_VNC_PORT": str(TEST_VNC_PORT),
-            "MT5_LOGIN": str(MT5_LOGIN),
-            "MT5_PASSWORD": MT5_PASSWORD,
-            "MT5_SERVER": MT5_SERVER or "",
-            "ENV_FILE": env_file,
-        })
+        env.update(
+            {
+                "MT5_CONTAINER_NAME": TEST_CONTAINER_NAME,
+                "MT5_RPYC_PORT": str(TEST_RPYC_PORT),
+                "MT5_VNC_PORT": str(TEST_VNC_PORT),
+                "MT5_LOGIN": str(MT5_LOGIN),
+                "MT5_PASSWORD": MT5_PASSWORD,
+                "MT5_SERVER": MT5_SERVER or "",
+                "ENV_FILE": env_file,
+            }
+        )
 
         subprocess.run(
             [
@@ -207,8 +238,17 @@ def ensure_docker_and_codegen() -> Generator[None]:
     except subprocess.TimeoutExpired:
         pytest.fail("Timeout waiting for test container to start")
 
-    # Container started successfully - tests will handle connection issues
-    logger.info("Container started successfully, continuing with tests")
+    # Container started successfully - wait for RPyC service to be ready
+    logger.info("Container started successfully")
+
+    # Wait for RPyC service to be ready before running tests/codegen
+    logger.info("Waiting for RPyC service to be ready (up to 300s)...")
+    if not wait_for_rpyc_service(TEST_RPYC_HOST, TEST_RPYC_PORT, timeout=300):
+        pytest.fail(
+            f"RPyC service not available on {TEST_RPYC_HOST}:{TEST_RPYC_PORT} "
+            "after 300 seconds"
+        )
+    logger.info("RPyC service is ready")
 
     # Run codegen only if Docker is available and RPyC service is ready
     logger.info("Running codegen_enums.py...")
@@ -409,3 +449,60 @@ def cleanup_test_positions(mt5: MetaTrader5) -> Generator[None]:
                 mt5.order_send(request)
     except Exception:
         pass  # Best effort cleanup
+
+
+# =============================================================================
+# ASYNC FIXTURES
+# =============================================================================
+
+
+@pytest.fixture
+async def async_mt5_raw() -> AsyncGenerator[AsyncMetaTrader5]:
+    """Return raw async MT5 connection (no initialize).
+
+    This fixture creates an async connection to the rpyc server but does NOT
+    call initialize(). Use for testing connection lifecycle.
+    Skips if connection fails.
+    """
+    client = AsyncMetaTrader5(host=TEST_RPYC_HOST, port=TEST_RPYC_PORT)
+    try:
+        await client.connect()
+    except Exception as e:
+        pytest.skip(f"Async MT5 connection failed: {e}")
+    yield client
+    await client.disconnect()
+
+
+@pytest.fixture
+async def async_mt5(
+    async_mt5_raw: AsyncMetaTrader5,
+) -> AsyncGenerator[AsyncMetaTrader5]:
+    """Return fully initialized async MT5 client.
+
+    This fixture connects AND initializes the MT5 terminal.
+    Skips test if MT5_LOGIN is not configured (=0), credentials missing,
+    or if initialization fails.
+    """
+    if not has_mt5_credentials():
+        pytest.skip(
+            "MT5 credentials not configured - set MT5_LOGIN, MT5_PASSWORD, "
+            "and MT5_SERVER in .env file"
+        )
+
+    try:
+        result = await async_mt5_raw.initialize(
+            login=MT5_LOGIN,
+            password=MT5_PASSWORD,
+            server=MT5_SERVER,
+        )
+    except Exception as e:
+        pytest.skip(f"Async MT5 connection failed: {e}")
+
+    if not result:
+        error = await async_mt5_raw.last_error()
+        pytest.skip(f"Async MT5 initialize failed: {error}")
+
+    yield async_mt5_raw
+
+    with contextlib.suppress(Exception):
+        await async_mt5_raw.shutdown()

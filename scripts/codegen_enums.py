@@ -85,7 +85,7 @@ def is_rpyc_available(host: str = "localhost", port: int = 38812) -> bool:
 def extract_from_rpyc(host: str = "localhost", port: int = 38812) -> dict[str, int]:
     """Extract constants from MT5 via rpyc 6.x native API."""
     # rpyc 6.x native API - connect to SlaveService
-    conn = rpyc.connect(host, port, service=rpyc.SlaveService)
+    conn = rpyc.connect(host, port, service=rpyc.core.service.VoidService)
     mt5 = conn.root.getmodule("MetaTrader5")
 
     constants: dict[str, int] = {}
