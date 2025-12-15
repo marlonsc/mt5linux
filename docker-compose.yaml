@@ -1,0 +1,88 @@
+# docker-compose.yaml - Parametrized MT5 test container
+#
+# Single source of truth for all test environments
+# Supports multiple test scenarios via environment variables
+#
+# Environment Variables (with defaults):
+#   MT5_CONTAINER_NAME - Container name (default: mt5linux-unit)
+#   MT5_RPYC_PORT     - RPyC server port (default: 38812)
+#   MT5_VNC_PORT      - VNC port (default: 33000)
+#   MT5_HEALTH_PORT   - Health check port (default: 38002)
+#   MT5_LOGIN         - MT5 account login (default: from .env)
+#   MT5_PASSWORD      - MT5 account password (default: from .env)
+#   MT5_SERVER        - MT5 server name (default: MetaQuotes-Demo)
+#
+# Usage (production):
+#   docker compose up -d
+#
+# Usage (custom test config):
+#   MT5_CONTAINER_NAME=mt5-custom \
+#   MT5_RPYC_PORT=48812 \
+#   MT5_VNC_PORT=43000 \
+#   MT5_LOGIN=123456 \
+#   MT5_PASSWORD=mypass \
+#   MT5_SERVER=MyBroker-Live \
+#   docker compose up -d
+#
+# Usage (pytest via conftest.py):
+#   Automatically parametrized by conftest.py
+#
+
+services:
+  mt5:
+    build:
+      context: ../mt5docker
+      dockerfile: Dockerfile
+    image: mt5docker:test
+    container_name: ${MT5_CONTAINER_NAME:-mt5linux-unit}
+    ports:
+      - "${MT5_VNC_PORT:-33000}:3000"     # VNC
+      - "${MT5_RPYC_PORT:-38812}:8001"   # RPyC server
+      - "${MT5_HEALTH_PORT:-38002}:8002" # Health check
+    volumes:
+      # Isolated volumes (not shared with production or neptor)
+      - mt5_config:/config:uid=911,gid=911
+      - mt5_downloads:/downloads:uid=911,gid=911
+      - mt5_cache:/cache:uid=911,gid=911
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      # Force mt5linux installation from GitHub main branch (always)
+      # No local environment dependency - ensures consistent CI/CD behavior
+      - MT5LINUX_REPO=https://github.com/marlonsc/mt5linux
+      - MT5LINUX_BRANCH=master
+      - MT5LINUX_SPEC=https://github.com/marlonsc/mt5linux/archive/refs/heads/master.tar.gz
+      # Use installed package (not local mount)
+      - PYTHONPATH=/opt/mt5linux-pkg
+      # MT5 credentials (overridable via environment)
+      - MT5_LOGIN=${MT5_LOGIN}
+      - MT5_PASSWORD=${MT5_PASSWORD}
+      - MT5_SERVER=${MT5_SERVER:-MetaQuotes-Demo}
+      # Container settings
+      - ENABLE_WIN_DOTNET=1
+      - ENABLE_DATA_SYNC=0
+      - TZ=UTC
+      # RPyC settings
+      - RPYC_RESILIENT=1
+      - RPYC_HEALTH_PORT=8002
+      - RPYC_MAX_RESTARTS=5
+      - RPYC_MAX_CONNECTIONS=5
+    restart: "no"
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+
+volumes:
+  mt5_config:
+    name: ${MT5_CONTAINER_NAME:-mt5linux-unit}_config
+    labels:
+      description: "MT5 test configuration (isolated)"
+  mt5_downloads:
+    name: ${MT5_CONTAINER_NAME:-mt5linux-unit}_downloads
+    labels:
+      description: "MT5 test downloads (isolated)"
+  mt5_cache:
+    name: ${MT5_CONTAINER_NAME:-mt5linux-unit}_cache
+    labels:
+      description: "MT5 test cache (isolated)"

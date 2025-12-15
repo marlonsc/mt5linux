@@ -67,9 +67,8 @@ load_dotenv()
 
 # Paths
 TESTS_DIR = Path(__file__).parent
-FIXTURES_DIR = TESTS_DIR / "fixtures"
-COMPOSE_FILE = FIXTURES_DIR / "docker-compose.test.yaml"
 PROJECT_ROOT = TESTS_DIR.parent
+COMPOSE_FILE = PROJECT_ROOT / "docker-compose.yaml"
 CODEGEN_SCRIPT = PROJECT_ROOT / "scripts" / "codegen_enums.py"
 
 # Test container configuration
@@ -117,8 +116,11 @@ def _cleanup_test_container_and_volumes() -> None:
         )
 
     # Clean up test volumes to ensure complete isolation
+    # Volumes are parametrized with container name
     test_volumes = [
-        "mt5linux_unit_config",
+        f"{TEST_CONTAINER_NAME}_config",
+        f"{TEST_CONTAINER_NAME}_downloads",
+        f"{TEST_CONTAINER_NAME}_cache",
     ]
     for volume in test_volumes:
         logger.info("Cleaning test volume: %s", volume)
@@ -163,9 +165,27 @@ def ensure_docker_and_codegen() -> Generator[None]:
     except Exception as e:
         logger.warning("Error during cleanup (continuing): %s", e)
 
-    # Start fresh test container
-    logger.info("Starting test Docker container...")
+    # Start fresh test container with parametrized environment
+    logger.info("Starting test Docker container with configuration...")
+    logger.info(f"  Container: {TEST_CONTAINER_NAME}")
+    logger.info(f"  RPyC Port: {TEST_RPYC_PORT}")
+    logger.info(f"  VNC Port: {TEST_VNC_PORT}")
+    logger.info(f"  Server: {MT5_SERVER}")
+
     try:
+        # Set environment for docker compose
+        env = os.environ.copy()
+        env_file = os.getenv("ENV_FILE", str(PROJECT_ROOT / ".env"))
+        env.update({
+            "MT5_CONTAINER_NAME": TEST_CONTAINER_NAME,
+            "MT5_RPYC_PORT": str(TEST_RPYC_PORT),
+            "MT5_VNC_PORT": str(TEST_VNC_PORT),
+            "MT5_LOGIN": str(MT5_LOGIN),
+            "MT5_PASSWORD": MT5_PASSWORD,
+            "MT5_SERVER": MT5_SERVER,
+            "ENV_FILE": env_file,
+        })
+
         subprocess.run(
             [
                 "docker",
@@ -179,6 +199,7 @@ def ensure_docker_and_codegen() -> Generator[None]:
             cwd=PROJECT_ROOT,
             capture_output=True,
             timeout=60,
+            env=env,
         )
         logger.info("Test container started successfully")
     except subprocess.CalledProcessError as e:
