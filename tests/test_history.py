@@ -1,0 +1,253 @@
+"""History query tests for MT5 API.
+
+Tests historical order and deal retrieval with filtering.
+
+Markers:
+    @pytest.mark.integration - Tests requiring MT5 server
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
+
+import pytest
+
+if TYPE_CHECKING:
+    from mt5linux import MetaTrader5
+
+
+class TestHistoryDeals:
+    """Historical deals tests (history_deals_get)."""
+
+    def test_history_deals_get_all(
+        self,
+        mt5: MetaTrader5,
+        date_range_month: tuple[datetime, datetime],
+    ) -> None:
+        """Test getting all deals in date range."""
+        date_from, date_to = date_range_month
+
+        deals = mt5.history_deals_get(date_from, date_to)
+
+        # May be None or empty tuple if no deals
+        if deals is not None:
+            assert isinstance(deals, tuple)
+
+            # If there are deals, verify structure
+            if len(deals) > 0:
+                deal = deals[0]
+                assert hasattr(deal, "ticket")
+                assert hasattr(deal, "order")
+                assert hasattr(deal, "time")
+                assert hasattr(deal, "type")
+                assert hasattr(deal, "symbol")
+                assert hasattr(deal, "volume")
+                assert hasattr(deal, "price")
+                assert hasattr(deal, "profit")
+
+    def test_history_deals_get_by_symbol(self, mt5: MetaTrader5) -> None:
+        """Test filtering deals by symbol."""
+        date_from = datetime.now(UTC) - timedelta(days=365)
+        date_to = datetime.now(UTC)
+
+        deals = mt5.history_deals_get(date_from, date_to, group="*USD*")
+
+        if deals is not None and len(deals) > 0:
+            # All deals should contain USD in symbol
+            for deal in deals:
+                # Balance operations may have empty symbol
+                if deal.symbol:
+                    assert "USD" in deal.symbol
+
+    def test_history_deals_get_by_ticket(self, mt5: MetaTrader5) -> None:
+        """Test getting specific deal by ticket."""
+        # First get some deals
+        date_from = datetime.now(UTC) - timedelta(days=365)
+        date_to = datetime.now(UTC)
+
+        all_deals = mt5.history_deals_get(date_from, date_to)
+
+        if all_deals is None or len(all_deals) == 0:
+            pytest.skip("No historical deals available")
+
+        # Get first deal ticket
+        ticket = all_deals[0].ticket
+
+        # Query by ticket
+        deal = mt5.history_deals_get(ticket=ticket)
+
+        if deal is not None:
+            assert isinstance(deal, tuple)
+            if len(deal) > 0:
+                assert deal[0].ticket == ticket
+
+    def test_history_deals_get_empty_range(self, mt5: MetaTrader5) -> None:
+        """Test getting deals from empty date range."""
+        # Use a future date range where no deals exist
+        date_from = datetime(2099, 1, 1, tzinfo=UTC)
+        date_to = datetime(2099, 12, 31, tzinfo=UTC)
+
+        deals = mt5.history_deals_get(date_from, date_to)
+
+        # Should be None or empty
+        assert deals is None or len(deals) == 0
+
+    def test_history_deals_get_position(self, mt5: MetaTrader5) -> None:
+        """Test getting deals for specific position."""
+        # Get recent deals to find a position
+        date_from = datetime.now(UTC) - timedelta(days=30)
+        date_to = datetime.now(UTC)
+
+        deals = mt5.history_deals_get(date_from, date_to)
+
+        if deals is None or len(deals) == 0:
+            pytest.skip("No historical deals available")
+
+        # Find a deal with position_id
+        position_id = None
+        for deal in deals:
+            if deal.position_id > 0:
+                position_id = deal.position_id
+                break
+
+        if position_id is None:
+            pytest.skip("No deals with position_id found")
+
+        # Query by position
+        position_deals = mt5.history_deals_get(position=position_id)
+
+        if position_deals is not None and len(position_deals) > 0:
+            for deal in position_deals:
+                assert deal.position_id == position_id
+
+
+class TestHistoryOrders:
+    """Historical orders tests (history_orders_get)."""
+
+    def test_history_orders_get_all(
+        self,
+        mt5: MetaTrader5,
+        date_range_month: tuple[datetime, datetime],
+    ) -> None:
+        """Test getting all orders in date range."""
+        date_from, date_to = date_range_month
+
+        orders = mt5.history_orders_get(date_from, date_to)
+
+        # May be None or empty tuple if no orders
+        if orders is not None:
+            assert isinstance(orders, tuple)
+
+            # If there are orders, verify structure
+            if len(orders) > 0:
+                order = orders[0]
+                assert hasattr(order, "ticket")
+                assert hasattr(order, "time_setup")
+                assert hasattr(order, "type")
+                assert hasattr(order, "symbol")
+                assert hasattr(order, "volume_initial")
+                assert hasattr(order, "price_open")
+                assert hasattr(order, "state")
+
+    def test_history_orders_get_by_symbol(self, mt5: MetaTrader5) -> None:
+        """Test filtering orders by symbol."""
+        date_from = datetime.now(UTC) - timedelta(days=365)
+        date_to = datetime.now(UTC)
+
+        orders = mt5.history_orders_get(date_from, date_to, group="*EUR*")
+
+        if orders is not None and len(orders) > 0:
+            # All orders should contain EUR in symbol
+            for order in orders:
+                if order.symbol:
+                    assert "EUR" in order.symbol
+
+    def test_history_orders_get_by_ticket(self, mt5: MetaTrader5) -> None:
+        """Test getting specific order by ticket."""
+        # First get some orders
+        date_from = datetime.now(UTC) - timedelta(days=365)
+        date_to = datetime.now(UTC)
+
+        all_orders = mt5.history_orders_get(date_from, date_to)
+
+        if all_orders is None or len(all_orders) == 0:
+            pytest.skip("No historical orders available")
+
+        # Get first order ticket
+        ticket = all_orders[0].ticket
+
+        # Query by ticket
+        order = mt5.history_orders_get(ticket=ticket)
+
+        if order is not None:
+            assert isinstance(order, tuple)
+            if len(order) > 0:
+                assert order[0].ticket == ticket
+
+    def test_history_orders_get_empty_range(self, mt5: MetaTrader5) -> None:
+        """Test getting orders from empty date range."""
+        # Use a future date range where no orders exist
+        date_from = datetime(2099, 1, 1, tzinfo=UTC)
+        date_to = datetime(2099, 12, 31, tzinfo=UTC)
+
+        orders = mt5.history_orders_get(date_from, date_to)
+
+        # Should be None or empty
+        assert orders is None or len(orders) == 0
+
+    def test_history_orders_get_position(self, mt5: MetaTrader5) -> None:
+        """Test getting orders for specific position."""
+        date_from = datetime.now(UTC) - timedelta(days=30)
+        date_to = datetime.now(UTC)
+
+        orders = mt5.history_orders_get(date_from, date_to)
+
+        if orders is None or len(orders) == 0:
+            pytest.skip("No historical orders available")
+
+        # Find an order with position_id
+        position_id = None
+        for order in orders:
+            if order.position_id > 0:
+                position_id = order.position_id
+                break
+
+        if position_id is None:
+            pytest.skip("No orders with position_id found")
+
+        # Query by position
+        position_orders = mt5.history_orders_get(position=position_id)
+
+        if position_orders is not None and len(position_orders) > 0:
+            for order in position_orders:
+                assert order.position_id == position_id
+
+
+class TestHistoryCombined:
+    """Combined history tests."""
+
+    def test_history_deals_and_orders_match(self, mt5: MetaTrader5) -> None:
+        """Test that deals and orders counts are consistent."""
+        date_from = datetime.now(UTC) - timedelta(days=30)
+        date_to = datetime.now(UTC)
+
+        deals_total = mt5.history_deals_total(date_from, date_to)
+        orders_total = mt5.history_orders_total(date_from, date_to)
+
+        # Both should return non-negative integers
+        assert isinstance(deals_total, int)
+        assert isinstance(orders_total, int)
+        assert deals_total >= 0
+        assert orders_total >= 0
+
+        # Get actual data
+        deals = mt5.history_deals_get(date_from, date_to)
+        orders = mt5.history_orders_get(date_from, date_to)
+
+        # Count should match total
+        deals_count = len(deals) if deals else 0
+        orders_count = len(orders) if orders else 0
+
+        assert deals_count == deals_total
+        assert orders_count == orders_total

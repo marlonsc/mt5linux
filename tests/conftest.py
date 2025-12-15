@@ -21,8 +21,9 @@ import socket
 import subprocess
 import time
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from dotenv import load_dotenv
@@ -335,3 +336,148 @@ def mt5_raw() -> Generator[MetaTrader5, None, None]:
     client = MetaTrader5(host="localhost", port=TEST_RPYC_PORT)
     yield client
     client.close()
+
+
+# =============================================================================
+# DATA GENERATION FIXTURES
+# =============================================================================
+
+
+@pytest.fixture
+def major_pairs() -> list[str]:
+    """Major forex pairs available on most brokers."""
+    return ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"]
+
+
+@pytest.fixture
+def timeframes(mt5: MetaTrader5) -> list[int]:
+    """Common timeframes for testing."""
+    return [
+        mt5.TIMEFRAME_M1,
+        mt5.TIMEFRAME_M5,
+        mt5.TIMEFRAME_H1,
+        mt5.TIMEFRAME_D1,
+    ]
+
+
+@pytest.fixture
+def date_range_week() -> tuple[datetime, datetime]:
+    """Date range for last 7 days."""
+    now = datetime.now(UTC)
+    return (now - timedelta(days=7), now)
+
+
+@pytest.fixture
+def date_range_month() -> tuple[datetime, datetime]:
+    """Date range for last 30 days."""
+    now = datetime.now(UTC)
+    return (now - timedelta(days=30), now)
+
+
+@pytest.fixture
+def date_range_year() -> tuple[datetime, datetime]:
+    """Date range for last 365 days."""
+    now = datetime.now(UTC)
+    return (now - timedelta(days=365), now)
+
+
+# =============================================================================
+# TRADING FIXTURES
+# =============================================================================
+
+# Test magic number to identify test orders
+TEST_MAGIC = 999999
+TEST_COMMENT = "mt5linux_test"
+
+
+@pytest.fixture
+def buy_order_request(mt5: MetaTrader5) -> dict[str, Any]:
+    """Build a market buy order request for testing.
+
+    Uses minimum volume (0.01 lots) for safety.
+    """
+    tick = mt5.symbol_info_tick("EURUSD")
+    return {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": "EURUSD",
+        "volume": 0.01,
+        "type": mt5.ORDER_TYPE_BUY,
+        "price": tick.ask if tick else 0,
+        "deviation": 20,
+        "magic": TEST_MAGIC,
+        "comment": TEST_COMMENT,
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+
+
+@pytest.fixture
+def sell_order_request(mt5: MetaTrader5) -> dict[str, Any]:
+    """Build a market sell order request for testing.
+
+    Uses minimum volume (0.01 lots) for safety.
+    """
+    tick = mt5.symbol_info_tick("EURUSD")
+    return {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": "EURUSD",
+        "volume": 0.01,
+        "type": mt5.ORDER_TYPE_SELL,
+        "price": tick.bid if tick else 0,
+        "deviation": 20,
+        "magic": TEST_MAGIC,
+        "comment": TEST_COMMENT,
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+
+
+@pytest.fixture
+def cleanup_test_positions(mt5: MetaTrader5) -> Generator[None, None, None]:
+    """Cleanup any test positions after test.
+
+    Closes all positions with TEST_MAGIC number.
+    """
+    yield
+
+    # Close all positions with test magic number
+    positions = mt5.positions_get()
+    if positions:
+        for pos in positions:
+            if pos.magic == TEST_MAGIC:
+                # Build close request
+                tick = mt5.symbol_info_tick(pos.symbol)
+                close_request = {
+                    "action": mt5.TRADE_ACTION_DEAL,
+                    "symbol": pos.symbol,
+                    "volume": pos.volume,
+                    "type": (
+                        mt5.ORDER_TYPE_SELL if pos.type == 0 else mt5.ORDER_TYPE_BUY
+                    ),
+                    "position": pos.ticket,
+                    "price": tick.bid if pos.type == 0 else tick.ask,
+                    "deviation": 20,
+                    "magic": TEST_MAGIC,
+                    "comment": "cleanup",
+                    "type_time": mt5.ORDER_TIME_GTC,
+                    "type_filling": mt5.ORDER_FILLING_IOC,
+                }
+                mt5.order_send(close_request)
+
+
+# =============================================================================
+# MARKET DEPTH FIXTURES
+# =============================================================================
+
+
+@pytest.fixture
+def market_book_symbol(mt5: MetaTrader5) -> Generator[str, None, None]:
+    """Subscribe to market book and cleanup after test.
+
+    Returns symbol name after subscribing.
+    """
+    symbol = "EURUSD"
+    mt5.symbol_select(symbol, True)
+    mt5.market_book_add(symbol)
+    yield symbol
+    mt5.market_book_release(symbol)

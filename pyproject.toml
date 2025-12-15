@@ -5,7 +5,7 @@ requires = ["poetry-core"]
 [tool.poetry]
 name = "mt5linux"
 version = "0.2.1"
-description = "MetaTrader5 bridge para Linux via rpyc"
+description = "MetaTrader5 bridge for Linux via rpyc"
 authors = ["Lucas Prett Campagna"]
 license = "MIT"
 readme = "README.md"
@@ -16,13 +16,16 @@ packages = [{ include = "mt5linux" }]
 [tool.poetry.dependencies]
 python = "^3.11"
 numpy = ">=2.0.0"
-rpyc = ">=5.2.0,<6.0.0" # Protocol compatibility with container
+rpyc = ">=5.2.0,<6.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.0"
 pytest-cov = "^6.0.0"
+pytest-xdist = "^3.0"
+hypothesis = "^6.0"
 ruff = "^0.11.0"
 mypy = "^1.15.0"
+python-dotenv = "^1.0.0"
 
 [tool.ruff]
 line-length = 88
@@ -31,31 +34,30 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "D",       # pydocstyle - docstrings opcionais
-    "C901",    # too complex (conflicts with formatter)
+    "D",       # pydocstyle - optional docstrings
     "COM812",  # missing-trailing-comma (conflicts with formatter)
     "ISC001",  # single-line-implicit-string-concatenation (conflicts with formatter)
-    "ANN401",  # Any type disallowed - necessário para bridge transparente
-    "TC003",   # typing imports - permitir no TYPE_CHECKING
-    "S603",    # subprocess call ok in wine server side
+    "ANN401",  # Any type disallowed - required for transparent bridge
+    "TC003",   # typing imports - allow in TYPE_CHECKING
+    "S603",    # subprocess call - needed for docker
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "S101",    # assert ok em testes
-    "S104",    # binding to all interfaces ok em testes
-    "S607",    # partial path ok em testes (docker)
-    "S110",    # try-except-pass ok em testes
-    "SLF001",  # private member access ok em testes
-    "PLR2004", # magic values ok em testes
-    "ANN",     # annotations opcionais em testes
-    "FBT001",  # boolean positional ok em fixtures
-    "FBT003",  # boolean positional ok em testes
-    "ARG001",  # unused args ok em fixtures (dependency injection)
-    "ARG002",  # unused method args ok em fixtures
-    "PLW0603", # global statement ok em test config
-    "BLE001",  # blind exception ok em test helpers
-    "TRY300",  # try-return pattern ok em test helpers
+    "S101",    # assert ok in tests
+    "S104",    # binding to all interfaces ok in tests
+    "S607",    # partial path ok in tests (docker)
+    "S110",    # try-except-pass ok in tests
+    "SLF001",  # private member access ok in tests
+    "PLR2004", # magic values ok in tests
+    "ANN",     # annotations optional in tests
+    "FBT001",  # boolean positional ok in fixtures
+    "FBT003",  # boolean positional ok in tests
+    "ARG001",  # unused args ok in fixtures (dependency injection)
+    "ARG002",  # unused method args ok in fixtures
+    "PLW0603", # global statement ok in test config
+    "BLE001",  # blind exception ok in test helpers
+    "TRY300",  # try-return pattern ok in test helpers
     "UP037",   # quoted annotations ok for forward refs
 ]
 
@@ -69,6 +71,13 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "trading: marks tests that place real orders",
+    "market_depth: marks tests requiring market depth subscription",
+    "integration: marks tests requiring MT5 server",
+    "unit: marks pure unit tests (no server needed)",
+]
 
 [tool.coverage.run]
 source = ["mt5linux"]

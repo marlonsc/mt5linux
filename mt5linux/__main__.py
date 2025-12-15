@@ -83,9 +83,9 @@ def run_wine_server(
     server_script = str(Path(server_dir) / "server.py")
     _generate_server_script(server_script)
 
-    print(f"[mt5linux] Starting server via {wine_cmd}")
-    print(f"[mt5linux] Python: {python_exe}")
-    print(f"[mt5linux] Host: {host}, Port: {port}")
+    print(f"[mt5linux] Starting server via {wine_cmd}")  # noqa: T201
+    print(f"[mt5linux] Python: {python_exe}")  # noqa: T201
+    print(f"[mt5linux] Host: {host}, Port: {port}")  # noqa: T201
 
     process = Popen(
         [wine_cmd, python_exe, server_script, "--host", host, "-p", str(port)],
@@ -108,7 +108,7 @@ def run_direct_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> int
     return 0
 
 
-def _parse_wine_mode_args(argv: list[str]) -> dict[str, str | int]:
+def _parse_wine_mode_args(argv: list[str]) -> dict[str, str | int]:  # noqa: C901
     """Parse arguments for Wine mode (manual parsing to avoid argparse conflicts).
 
     Supports both orderings:
@@ -186,7 +186,8 @@ def _parse_server_mode_args(argv: list[str]) -> dict[str, str | int]:
 
 def _print_help() -> None:
     """Print usage help."""
-    print("""mt5linux - MetaTrader5 bridge for Linux
+    print(  # noqa: T201
+        """mt5linux - MetaTrader5 bridge for Linux
 
 Usage:
   Wine mode (for mt5docker - runs RPyC server inside Wine):
@@ -206,7 +207,8 @@ Options (Wine mode):
 Options (server mode):
   --host HOST       Host to bind (default: 0.0.0.0)
   --port PORT       Port to listen on (default: 18812)
-""")
+""",
+    )
 
 
 def main() -> int:
@@ -235,8 +237,8 @@ def main() -> int:
     args = _parse_wine_mode_args(argv)
 
     if not args["python_exe"]:
-        print("Error: python.exe path required for Wine mode")
-        print("Use 'python -m mt5linux server' for direct mode")
+        print("Error: python.exe path required for Wine mode")  # noqa: T201
+        print("Use 'python -m mt5linux server' for direct mode")  # noqa: T201
         _print_help()
         return 1
 
