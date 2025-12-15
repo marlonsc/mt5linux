@@ -436,7 +436,7 @@ class MT5Service(rpyc.Service):
         with MT5Service._mt5_lock:
             if MT5Service._mt5_module is None:
                 try:
-                    import MetaTrader5 as mt5  # noqa: N813
+                    import MetaTrader5 as mt5  # noqa: N813  # pyright: ignore[reportMissingImports]
 
                     MT5Service._mt5_module = mt5
                     log.info("mt5_module_loaded")

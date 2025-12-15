@@ -6,7 +6,7 @@ This script extracts all constants from the MT5 library and generates
 Python IntEnum classes for type-safe usage in neptor and mt5linux.
 
 REQUIRES: Docker test container running on port 38812
-  (tests/fixtures/docker-compose.test.yaml)
+  (tests/fixtures/docker-compose.yaml)
 
 NO FALLBACK - fails if Docker not available.
 
@@ -307,7 +307,7 @@ def generate_enums(  # noqa: PLR0911 - Complex codegen needs multiple return pat
             file=sys.stderr,
         )
         print(
-            "Start: docker compose -f tests/fixtures/docker-compose.test.yaml up -d",
+            "Start: docker compose -f tests/fixtures/docker-compose.yaml up -d",
             file=sys.stderr,
         )
         return False

@@ -1,15 +1,15 @@
-# docker-compose.test.yaml - ISOLATED container for UNIT tests of mt5linux
+# docker-compose.yaml - ISOLATED container for UNIT tests of mt5linux
 #
 # DOES NOT affect production mt5 container (port 8001)
 # DOES NOT conflict with neptor tests (port 28812) or mt5docker
 # Uses completely separate ports and volumes
 #
-# Location: tests/fixtures/docker-compose.test.yaml
+# Location: tests/fixtures/docker-compose.yaml
 # Paths are relative to this file
 #
 # Usage:
 #   cd mt5linux
-#   docker compose -f tests/fixtures/docker-compose.test.yaml up -d
+#   docker compose -f tests/fixtures/docker-compose.yaml up -d
 #   pytest tests/ -v
 #
 # Or pytest auto-starts via conftest.py
@@ -27,16 +27,19 @@ services:
       - "38002:8002"    # Health isolated (no conflict with 8002/28002)
     volumes:
       # ISOLATED volumes (not shared with production or neptor)
+      # Always use these volumes for complete test isolation
       - mt5linux_unit_config:/config:uid=911,gid=911
       - mt5linux_unit_downloads:/downloads:uid=911,gid=911
       - mt5linux_unit_cache:/cache:uid=911,gid=911
-      # Mount LOCAL mt5linux code as Python package
-      # ../../mt5linux -> /opt/mt5linux-pkg/mt5linux (for import mt5linux to work)
-      - ../../mt5linux:/opt/mt5linux-pkg/mt5linux:ro
     env_file:
       - ../../.env
     environment:
-      # Use local code via PYTHONPATH (parent directory of package)
+      # Force mt5linux installation from GitHub main branch (always)
+      # No local environment dependency - ensures consistent CI/CD behavior
+      - MT5LINUX_REPO=https://github.com/marlonsc/mt5linux
+      - MT5LINUX_BRANCH=master
+      - MT5LINUX_SPEC=https://github.com/marlonsc/mt5linux/archive/refs/heads/master.tar.gz
+      # Use installed package (not local mount)
       - PYTHONPATH=/opt/mt5linux-pkg
       # MT5 credentials from .env (mapped to container env vars)
       - MT5_LOGIN=${MT5_LOGIN}

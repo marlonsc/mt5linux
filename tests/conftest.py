@@ -23,7 +23,7 @@ load_dotenv()
 # Paths
 TESTS_DIR = Path(__file__).parent
 FIXTURES_DIR = TESTS_DIR / "fixtures"
-COMPOSE_FILE = FIXTURES_DIR / "docker-compose.test.yaml"
+COMPOSE_FILE = FIXTURES_DIR / "docker-compose.yaml"
 PROJECT_ROOT = TESTS_DIR.parent
 CODEGEN_SCRIPT = PROJECT_ROOT / "scripts" / "codegen_enums.py"
 
@@ -47,19 +47,68 @@ MT5_CONFIG: dict[str, str | int] = {
 }
 
 
+def _is_container_running(container_name: str) -> bool:
+    """Check if container is running."""
+    result = subprocess.run(
+        ["docker", "ps", "-q", "-f", f"name=^{container_name}$"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return bool(result.stdout.strip())
+
+
+def _cleanup_test_container_and_volumes() -> None:
+    """Clean up test container and volumes for complete isolation."""
+    logger = logging.getLogger(__name__)
+
+    # Force remove container if running
+    if _is_container_running(TEST_CONTAINER_NAME):
+        logger.info("Removing existing test container %s", TEST_CONTAINER_NAME)
+        subprocess.run(
+            ["docker", "rm", "-f", TEST_CONTAINER_NAME],
+            capture_output=True,
+            check=False,
+        )
+
+    # Clean up test volumes to ensure complete isolation
+    test_volumes = [
+        "mt5linux_unit_config",
+        "mt5linux_unit_downloads",
+        "mt5linux_unit_cache"
+    ]
+    for volume in test_volumes:
+        logger.info("Cleaning test volume: %s", volume)
+        subprocess.run(
+            ["docker", "volume", "rm", volume],
+            capture_output=True,
+            check=False,
+        )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def ensure_docker_and_codegen() -> Generator[None]:
     """Start test Docker container and run codegen before all tests.
 
     This fixture:
-    1. Starts the test container from tests/fixtures/docker-compose.test.yaml
-    2. Waits for container to be healthy
-    3. Runs codegen_enums.py to regenerate enums
-    4. Fails if codegen fails or enums.py has uncommitted changes
-    5. Stops container after all tests complete
+    1. Ensures complete clean container state (removes container and volumes)
+    2. Starts the test container from tests/fixtures/docker-compose.yaml
+    3. Waits for container to be healthy
+    4. Runs codegen_enums.py to regenerate enums
+    5. Fails if codegen fails or enums.py has uncommitted changes
+    6. Stops container after all tests complete
     """
-    # Start test container
     logger = logging.getLogger(__name__)
+    logger.info("Ensuring clean Docker test container state...")
+
+    # Always clean up container and volumes for complete test isolation
+    try:
+        _cleanup_test_container_and_volumes()
+        logger.info("Cleaned up existing test containers and volumes")
+    except Exception as e:
+        logger.warning("Error during cleanup (continuing): %s", e)
+
+    # Start fresh test container
     logger.info("Starting test Docker container...")
     try:
         subprocess.run(
@@ -77,12 +126,11 @@ def ensure_docker_and_codegen() -> Generator[None]:
             capture_output=True,
             timeout=300,
         )
+        logger.info("Test container started successfully")
     except subprocess.CalledProcessError as e:
         pytest.fail(f"Failed to start test container:\n{e.stderr.decode()}")
     except subprocess.TimeoutExpired:
         pytest.fail("Timeout waiting for test container to start")
-
-        logger.info("Test container started")
 
     # Run codegen
     logger.info("Running codegen_enums.py...")
@@ -104,14 +152,13 @@ def ensure_docker_and_codegen() -> Generator[None]:
 
     yield
 
-    # Teardown: stop container
-    logger.info("Stopping test container...")
-    subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "down"],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        check=False,
-    )
+    # Teardown: clean up container and volumes completely
+    logger.info("Cleaning up test container and volumes...")
+    try:
+        _cleanup_test_container_and_volumes()
+        logger.info("Test cleanup completed")
+    except Exception as e:
+        logger.warning("Error during test cleanup: %s", e)
 
 
 def pytest_configure(config: pytest.Config) -> None:
