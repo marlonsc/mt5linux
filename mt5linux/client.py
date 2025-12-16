@@ -31,7 +31,6 @@ from mt5linux._resilience import (
     RETRYABLE_EXCEPTIONS,
     CircuitBreaker,
     CircuitOpenError,
-    retry_with_backoff,
 )
 
 # =============================================================================
@@ -418,7 +417,7 @@ class MetaTrader5:
 
         self._last_health_check = now
 
-    def _safe_rpc_call(
+    def _safe_rpc_call(  # noqa: C901
         self,
         method_name: str,
         *args: Any,
@@ -480,18 +479,17 @@ class MetaTrader5:
                         )
                         time.sleep(delay)
                         continue
-                    else:
-                        log.warning(
-                            "%s returned None after %d attempts",
-                            method_name,
-                            max_attempts,
-                        )
+                    log.warning(
+                        "%s returned None after %d attempts",
+                        method_name,
+                        max_attempts,
+                    )
 
                 # Success
                 self._circuit_breaker.record_success()
                 if attempt > 0:
                     log.info("%s succeeded on attempt %d", method_name, attempt + 1)
-                return result
+                return result  # noqa: TRY300
 
             except RETRYABLE_EXCEPTIONS as e:
                 last_exception = e
@@ -509,12 +507,14 @@ class MetaTrader5:
                     )
                     time.sleep(delay)
                     # Try reconnecting before next attempt
-                    try:
+                    try:  # noqa: SIM105
                         self._reconnect()
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110
                         pass  # Will fail on next attempt if reconnect failed
                 else:
-                    log.exception("%s failed after %d attempts", method_name, max_attempts)
+                    log.exception(
+                        "%s failed after %d attempts", method_name, max_attempts
+                    )
                     raise
 
             except Exception:

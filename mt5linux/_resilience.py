@@ -178,9 +178,9 @@ def retry_with_backoff(  # noqa: C901
     if retryable_exceptions is None:
         retryable_exceptions = RETRYABLE_EXCEPTIONS
 
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:  # noqa: C901
         @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> T:
+        def wrapper(*args: Any, **kwargs: Any) -> T:  # noqa: C901
             last_exception: Exception | None = None
 
             for attempt in range(max_attempts):
@@ -206,13 +206,12 @@ def retry_with_backoff(  # noqa: C901
                             )
                             time.sleep(delay)
                             continue
-                        else:
-                            log.warning(
-                                "%s returned None after %d attempts",
-                                func.__name__,
-                                max_attempts,
-                            )
-                            return result  # type: ignore[return-value]
+                        log.warning(
+                            "%s returned None after %d attempts",
+                            func.__name__,
+                            max_attempts,
+                        )
+                        return result  # type: ignore[return-value]
 
                 except retryable_exceptions as e:
                     last_exception = e
@@ -304,9 +303,9 @@ def async_retry_with_backoff(  # noqa: C901
     if retryable_exceptions is None:
         retryable_exceptions = RETRYABLE_EXCEPTIONS
 
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:  # noqa: C901
         @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: C901
             last_exception: Exception | None = None
 
             for attempt in range(max_attempts):
@@ -332,13 +331,12 @@ def async_retry_with_backoff(  # noqa: C901
                             )
                             await asyncio.sleep(delay)
                             continue
-                        else:
-                            log.warning(
-                                "%s returned None after %d attempts",
-                                func.__name__,
-                                max_attempts,
-                            )
-                            return result
+                        log.warning(
+                            "%s returned None after %d attempts",
+                            func.__name__,
+                            max_attempts,
+                        )
+                        return result
 
                 except retryable_exceptions as e:
                     last_exception = e

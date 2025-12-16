@@ -258,17 +258,16 @@ class AsyncMetaTrader5:
                         )
                         await asyncio.sleep(delay)
                         continue
-                    else:
-                        log.warning(
-                            "%s returned None after %d attempts",
-                            func.__name__,
-                            max_attempts,
-                        )
+                    log.warning(
+                        "%s returned None after %d attempts",
+                        func.__name__,
+                        max_attempts,
+                    )
 
                 # Success
                 if attempt > 0:
                     log.info("%s succeeded on attempt %d", func.__name__, attempt + 1)
-                return result
+                return result  # noqa: TRY300
 
             except RETRYABLE_EXCEPTIONS as e:
                 if attempt < max_attempts - 1:
@@ -562,7 +561,7 @@ class AsyncMetaTrader5:
     async def positions_total(self) -> int:
         """Get total open positions."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.positions_total)
+        return await self._resilient_call(client.positions_total)
 
     async def positions_get(
         self,
@@ -572,7 +571,7 @@ class AsyncMetaTrader5:
     ) -> Any:
         """Get open positions."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.positions_get, symbol, group, ticket)
+        return await self._resilient_call(client.positions_get, symbol, group, ticket)
 
     # ========================================
     # Orders
@@ -581,7 +580,7 @@ class AsyncMetaTrader5:
     async def orders_total(self) -> int:
         """Get total pending orders."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.orders_total)
+        return await self._resilient_call(client.orders_total)
 
     async def orders_get(
         self,
@@ -591,7 +590,7 @@ class AsyncMetaTrader5:
     ) -> Any:
         """Get pending orders."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.orders_get, symbol, group, ticket)
+        return await self._resilient_call(client.orders_get, symbol, group, ticket)
 
     # ========================================
     # History
@@ -604,7 +603,9 @@ class AsyncMetaTrader5:
     ) -> int | None:
         """Get total historical orders."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.history_orders_total, date_from, date_to)
+        return await self._resilient_call(
+            client.history_orders_total, date_from, date_to
+        )
 
     async def history_orders_get(
         self,
@@ -616,7 +617,7 @@ class AsyncMetaTrader5:
     ) -> Any:
         """Get historical orders."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.history_orders_get, date_from, date_to, group, ticket, position
         )
 
@@ -627,7 +628,9 @@ class AsyncMetaTrader5:
     ) -> int | None:
         """Get total historical deals."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.history_deals_total, date_from, date_to)
+        return await self._resilient_call(
+            client.history_deals_total, date_from, date_to
+        )
 
     async def history_deals_get(
         self,
@@ -639,6 +642,6 @@ class AsyncMetaTrader5:
     ) -> Any:
         """Get historical deals."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.history_deals_get, date_from, date_to, group, ticket, position
         )
