@@ -22,6 +22,7 @@ For MT5 method documentation, see:
 
 from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.client import MetaTrader5
+from mt5linux.config import Defaults, config
 from mt5linux.constants import MT5
 from mt5linux.models import (
     AccountInfo,
@@ -40,6 +41,9 @@ __all__ = [
     "MetaTrader5",
     "AsyncMetaTrader5",
     "Server",
+    # Configuration
+    "config",
+    "Defaults",
     # Constants container
     "MT5",
     # Types container
