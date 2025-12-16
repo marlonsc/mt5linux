@@ -23,10 +23,10 @@ class TestAsyncMetaTrader5Connection:
 
     @pytest.mark.asyncio
     async def test_connect_idempotent(self, async_mt5_raw: AsyncMetaTrader5) -> None:
-        """Test connect() is idempotent - calling twice doesn't break."""
+        """Test _connect() is idempotent - calling twice doesn't break."""
         assert async_mt5_raw.is_connected is True
         # Second connect should be no-op
-        await async_mt5_raw.connect()
+        await async_mt5_raw._connect()
         assert async_mt5_raw.is_connected is True
 
     @pytest.mark.asyncio
@@ -47,19 +47,19 @@ class TestAsyncMetaTrader5Connection:
 
     @pytest.mark.asyncio
     async def test_concurrent_connect_is_safe(self) -> None:
-        """Test that concurrent connect() calls are thread-safe."""
+        """Test that concurrent _connect() calls are thread-safe."""
         client = AsyncMetaTrader5(host=TEST_RPYC_HOST, port=TEST_RPYC_PORT)
 
         try:
             # Simulate many concurrent connect calls
-            await asyncio.gather(*[client.connect() for _ in range(10)])
+            await asyncio.gather(*[client._connect() for _ in range(10)])
         except (ConnectionError, EOFError, OSError) as e:
             pytest.skip(f"MT5 connection failed: {e}")
 
         # Should be connected with no errors
         assert client.is_connected is True
 
-        await client.disconnect()
+        await client._disconnect()
         assert client.is_connected is False
 
 

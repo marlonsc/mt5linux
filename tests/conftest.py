@@ -42,9 +42,9 @@ def has_mt5_credentials() -> bool:
 
 
 def is_rpyc_service_ready(host: str = "localhost", port: int | None = None) -> bool:
-    """Check if RPyC service is ready (actual handshake + health_check).
+    """Check if RPyC service is ready (actual handshake + version call).
 
-    Uses rpyc.connect() and calls health_check() to verify MT5Service is ready.
+    Uses rpyc.connect() and calls exposed_version() to verify MT5Service is ready.
     Uses a 60 second timeout because Wine/Python RPyC server can be slow.
     """
     rpyc_port = port or TEST_RPYC_PORT
@@ -58,8 +58,8 @@ def is_rpyc_service_ready(host: str = "localhost", port: int | None = None) -> b
                 "allow_pickle": True,
             },
         )
-        # Verify connection works by calling health_check
-        _ = conn.root.health_check()
+        # Verify connection works by calling exposed_version (official MT5 method)
+        _ = conn.root.exposed_version()
         conn.close()
     except (OSError, ConnectionError, TimeoutError, EOFError):
         return False
@@ -118,10 +118,10 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)  # Credentials override
 
 # Test container configuration
 # Default ports match mt5linux/docker-compose.yaml defaults
-_defaults = MT5Config.Defaults
+_config = MT5Config()
 TEST_RPYC_HOST = os.getenv("MT5_HOST", "localhost")
-TEST_RPYC_PORT = int(os.getenv("MT5_RPYC_PORT", str(_defaults.PORT_DOCKER_MAPPED)))
-TEST_VNC_PORT = int(os.getenv("MT5_VNC_PORT", str(_defaults.PORT_VNC)))
+TEST_RPYC_PORT = int(os.getenv("MT5_RPYC_PORT", str(_config.docker_mapped_port)))
+TEST_VNC_PORT = int(os.getenv("MT5_VNC_PORT", str(_config.vnc_port)))
 TEST_CONTAINER_NAME = os.getenv("MT5_CONTAINER_NAME", "mt5linux-unit")
 
 # MT5 credentials for integration tests (MUST come from .env, no defaults)

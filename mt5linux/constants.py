@@ -19,8 +19,6 @@ Backward compatibility:
     >>> from mt5linux.constants import MT5  # alias for MT5Constants
 """
 
-from __future__ import annotations
-
 from enum import IntEnum
 
 

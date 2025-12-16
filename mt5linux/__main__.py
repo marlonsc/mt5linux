@@ -17,8 +17,6 @@ Usage:
         account = mt5.account_info()
 """
 
-from __future__ import annotations
-
 import sys
 
 from mt5linux import __version__

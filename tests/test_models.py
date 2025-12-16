@@ -83,8 +83,8 @@ class TestOrderRequest:
                 type=MT5Constants.OrderType.BUY,
             )
 
-    def test_to_dict_basic(self) -> None:
-        """Test to_dict produces valid MT5 request."""
+    def test_to_mt5_request_basic(self) -> None:
+        """Test to_mt5_request produces valid MT5 request."""
         request = OrderRequest(
             action=MT5Constants.TradeAction.DEAL,
             symbol="EURUSD",
@@ -92,7 +92,7 @@ class TestOrderRequest:
             type=MT5Constants.OrderType.BUY,
             deviation=20,
         )
-        d = request.to_dict()
+        d = request.to_mt5_request()
 
         assert d["action"] == 1  # MT5Constants.TradeAction.DEAL
         assert d["symbol"] == "EURUSD"
@@ -102,8 +102,8 @@ class TestOrderRequest:
         assert "sl" not in d  # Zero values excluded
         assert "tp" not in d
 
-    def test_to_dict_with_sl_tp(self) -> None:
-        """Test to_dict includes sl/tp when set."""
+    def test_to_mt5_request_with_sl_tp(self) -> None:
+        """Test to_mt5_request includes sl/tp when set."""
         request = OrderRequest(
             action=MT5Constants.TradeAction.DEAL,
             symbol="EURUSD",
@@ -112,13 +112,13 @@ class TestOrderRequest:
             sl=1.0900,
             tp=1.1100,
         )
-        d = request.to_dict()
+        d = request.to_mt5_request()
 
         assert d["sl"] == 1.0900
         assert d["tp"] == 1.1100
 
-    def test_to_dict_with_expiration(self) -> None:
-        """Test to_dict converts expiration to timestamp."""
+    def test_to_mt5_request_with_expiration(self) -> None:
+        """Test to_mt5_request converts expiration to timestamp."""
         exp = datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
         request = OrderRequest(
             action=MT5Constants.TradeAction.DEAL,
@@ -129,7 +129,7 @@ class TestOrderRequest:
             type_time=MT5Constants.OrderTime.SPECIFIED,
             expiration=exp,
         )
-        d = request.to_dict()
+        d = request.to_mt5_request()
 
         assert "expiration" in d
         assert isinstance(d["expiration"], int)

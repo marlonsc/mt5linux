@@ -17,15 +17,16 @@ Usage:
     result = MT5Models.OrderResult.from_mt5(response)
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from mt5linux.config import MT5Config
 from mt5linux.constants import MT5Constants
+
+# Default config instance for model defaults
+_config = MT5Config()
 
 
 class MT5Models:
@@ -79,13 +80,13 @@ class MT5Models:
 
         Example:
             >>> request = MT5Models.OrderRequest(
-            ...     action=MT5.TradeAction.DEAL,
+            ...     action=MT5Constants.TradeAction.DEAL,
             ...     symbol="EURUSD",
             ...     volume=0.1,
-            ...     type=MT5.OrderType.BUY,
+            ...     type=MT5Constants.OrderType.BUY,
             ...     price=1.1000,
             ... )
-            >>> mt5.order_send(request.to_dict())
+            >>> mt5.order_send(request.to_mt5_request())
         """
 
         model_config = ConfigDict(frozen=True, use_enum_values=True)
@@ -97,23 +98,27 @@ class MT5Models:
         price: float = Field(ge=0, default=0.0)
         sl: float = Field(ge=0, default=0.0)
         tp: float = Field(ge=0, default=0.0)
-        deviation: int = Field(ge=0, default=MT5Config.Defaults.ORDER_DEVIATION)
-        magic: int = Field(ge=0, default=MT5Config.Defaults.ORDER_MAGIC)
+        deviation: int = Field(ge=0, default=_config.order_deviation)
+        magic: int = Field(ge=0, default=_config.order_magic)
         comment: str = Field(max_length=31, default="")
-        type_time: MT5Constants.OrderTime = MT5Config.Defaults.ORDER_TIME
+        type_time: MT5Constants.OrderTime = Field(default=_config.order_time)
         expiration: datetime | None = None
-        type_filling: MT5Constants.OrderFilling = MT5Config.Defaults.ORDER_FILLING
+        type_filling: MT5Constants.OrderFilling = Field(default=_config.order_filling)
         position: int = Field(ge=0, default=0)
         position_by: int = Field(ge=0, default=0)
 
+        @computed_field  # type: ignore[prop-decorator]
         @property
         def is_market_order(self) -> bool:
             """Check if this is a market order."""
             market_types = {MT5Constants.OrderType.BUY, MT5Constants.OrderType.SELL}
             return self.type in market_types
 
-        def to_dict(self) -> dict[str, Any]:
-            """Convert to MT5 API request dict."""
+        def to_mt5_request(self) -> dict[str, Any]:
+            """Export to MT5 API format.
+
+            Returns dict with only non-default, non-zero values for optional fields.
+            """
             d: dict[str, Any] = {
                 "action": self.action,
                 "symbol": self.symbol,
@@ -159,11 +164,13 @@ class MT5Models:
         request_id: int = 0
         retcode_external: int = 0
 
+        @computed_field  # type: ignore[prop-decorator]
         @property
         def is_success(self) -> bool:
             """Check if order was successful."""
             return self.retcode == MT5Constants.TradeRetcode.DONE
 
+        @computed_field  # type: ignore[prop-decorator]
         @property
         def is_partial(self) -> bool:
             """Check if order was partially filled."""
@@ -279,5 +286,3 @@ class MT5Models:
         time_msc: int = 0
         flags: int = 0
         volume_real: float = 0.0
-
-

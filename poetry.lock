@@ -611,6 +611,30 @@ files = [
 typing-extensions = ">=4.14.1"
 
 [[package]]
+name = "pydantic-settings"
+version = "2.12.0"
+description = "Settings management using Pydantic"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "pydantic_settings-2.12.0-py3-none-any.whl", hash = "sha256:fddb9fd99a5b18da837b29710391e945b1e30c135477f484084ee513adb93809"},
+    {file = "pydantic_settings-2.12.0.tar.gz", hash = "sha256:005538ef951e3c2a68e1c08b292b5f2e71490def8589d4221b95dab00dafcfd0"},
+]
+
+[package.dependencies]
+pydantic = ">=2.7.0"
+python-dotenv = ">=0.21.0"
+typing-inspection = ">=0.4.0"
+
+[package.extras]
+aws-secrets-manager = ["boto3 (>=1.35.0)", "boto3-stubs[secretsmanager]"]
+azure-key-vault = ["azure-identity (>=1.16.0)", "azure-keyvault-secrets (>=4.8.0)"]
+gcp-secret-manager = ["google-cloud-secret-manager (>=2.23.1)"]
+toml = ["tomli (>=2.0.1)"]
+yaml = ["pyyaml (>=6.0.1)"]
+
+[[package]]
 name = "pygments"
 version = "2.19.2"
 description = "Pygments is a syntax highlighting package written in Python."
@@ -680,7 +704,6 @@ files = [
 
 [package.dependencies]
 pytest = ">=8.2,<10"
-typing-extensions = {version = ">=4.12", markers = "python_version < \"3.13\""}
 
 [package.extras]
 docs = ["sphinx (>=5.3)", "sphinx-rtd-theme (>=1)"]
@@ -733,7 +756,7 @@ version = "1.2.1"
 description = "Read key-value pairs from a .env file and set them as environment variables"
 optional = false
 python-versions = ">=3.9"
-groups = ["dev"]
+groups = ["main", "dev"]
 files = [
     {file = "python_dotenv-1.2.1-py3-none-any.whl", hash = "sha256:b81ee9561e9ca4004139c6cbba3a238c32b03e4894671e181b671e8cb8425d61"},
     {file = "python_dotenv-1.2.1.tar.gz", hash = "sha256:42667e897e16ab0d66954af0e60a9caa94f0fd4ecf3aaf6d2d260eec1aa36ad6"},
@@ -869,5 +892,5 @@ typing-extensions = ">=4.12.0"
 
 [metadata]
 lock-version = "2.1"
-python-versions = "^3.12"
-content-hash = "9949e18898e297e972f34c6801418086816fd7e5f2b428567cd49ae177c65abe"
+python-versions = ">=3.13,<3.14"
+content-hash = "7bb147c72ed1847a196573592471f4e84babaf68b81bb5f8619b3b1f4da51ec1"

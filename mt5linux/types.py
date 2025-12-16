@@ -16,8 +16,6 @@ Usage:
     >>> def create_request() -> MT5Types.OrderRequestDict: ...
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict, runtime_checkable
