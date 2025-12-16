@@ -12,13 +12,19 @@ Resilience features:
 - Connection health monitoring with auto-reconnect
 - Per-operation timeouts
 
-Compatible with rpyc 6.x.
+Compatible with rpyc 6.x and Python 3.12+.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import random
+import threading
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from enum import IntEnum
+from functools import cache
 from typing import TYPE_CHECKING, Any, Self
 
 import rpyc
@@ -26,31 +32,11 @@ import rpyc.core.channel
 import rpyc.core.stream
 from rpyc.utils.classic import obtain
 
-from mt5linux._resilience import (
-    DEFAULT_HEALTH_CHECK_INTERVAL,
-    RETRYABLE_EXCEPTIONS,
-    CircuitBreaker,
-    CircuitOpenError,
-)
-
 # =============================================================================
 # RPyC Performance Optimization for Large Data Transfers
 # =============================================================================
-# When retrieving large datasets (e.g., 9116 symbols via symbols_get()),
-# RPyC's default settings cause severe performance issues:
-# - Default MAX_IO_CHUNK (8000 bytes) causes excessive network fragmentation
-# - Each chunk requires a separate network round-trip
-#
-# Solution based on RPyC GitHub Issues #279 and #329:
-# - Increase chunk size to ~650KB for 30x performance improvement
-# - Disable compression (faster for already-structured data)
-#
-# References:
-# - https://github.com/tomerfiliba-org/rpyc/issues/279
-# - https://github.com/tomerfiliba-org/rpyc/issues/329
-# =============================================================================
-rpyc.core.stream.SocketStream.MAX_IO_CHUNK = 65355 * 10  # ~650KB chunks
-rpyc.core.channel.Channel.COMPRESSION_LEVEL = 0  # Disable compression for speed
+RPYC_MAX_IO_CHUNK = 65355 * 10  # ~650KB chunks
+RPYC_COMPRESSION_LEVEL = 0  # Disable compression for speed
 
 log = logging.getLogger(__name__)
 
@@ -60,40 +46,60 @@ _NOT_CONNECTED_MSG = "MT5 connection not established - call connect first"
 if TYPE_CHECKING:
     from types import TracebackType
 
-    from mt5linux._types import RatesArray, TicksArray
+    from mt5linux.types import MT5Types
+
+    RatesArray = MT5Types.RatesArray
+    TicksArray = MT5Types.TicksArray
 
 
 # =============================================================================
-# Datetime Serialization Helper - RPyC Fix
+# Retryable Exceptions (module level for sharing)
 # =============================================================================
+
+RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    EOFError,
+    ConnectionError,
+    BrokenPipeError,
+    TimeoutError,
+    ConnectionResetError,
+    ConnectionRefusedError,
+    OSError,
+)
+
+
+# =============================================================================
+# Shared Utilities
+# =============================================================================
+
+
+@cache
+def _calculate_retry_delay(
+    attempt: int,
+    initial_delay: float = 0.5,
+    max_delay: float = 10.0,
+    exponential_base: float = 2.0,
+) -> float:
+    """Calculate exponential backoff delay."""
+    delay = min(initial_delay * (exponential_base**attempt), max_delay)
+    delay *= 0.5 + random.random()  # noqa: S311
+    return delay
 
 
 def _to_timestamp(dt: datetime | int | None) -> int | None:
-    """Convert datetime to Unix timestamp for MT5 API.
-
-    RPyC doesn't properly serialize datetime objects to Wine/Windows.
-    MT5 API accepts Unix timestamps (seconds since epoch).
-
-    Args:
-        dt: datetime object, Unix timestamp (int), or None
-
-    Returns:
-        Unix timestamp (int) or None
-    """
+    """Convert datetime to Unix timestamp for MT5 API."""
     if dt is None:
         return None
     if isinstance(dt, datetime):
         return int(dt.timestamp())
-    return dt  # Already int
+    return dt
 
 
 # =============================================================================
-# Type Validation Helpers - Convert RPyC's Any to Concrete Types
+# Type Validation Helpers
 # =============================================================================
 
-# Constants for tuple length validation
-_VERSION_TUPLE_LEN = 3  # (version, build, version_string)
-_ERROR_TUPLE_LEN = 2  # (error_code, error_description)
+_VERSION_TUPLE_LEN = 3
+_ERROR_TUPLE_LEN = 2
 
 
 def _validate_version(value: object) -> tuple[int, int, str] | None:
@@ -126,7 +132,7 @@ def _validate_float_optional(value: object) -> float | None:
     """Validate and convert Any to float | None."""
     if value is None:
         return None
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    if isinstance(value, int | float) and not isinstance(value, bool):
         return float(value)
     msg = f"Expected float | None, got {type(value).__name__}"
     raise TypeError(msg)
@@ -145,7 +151,6 @@ def _validate_int_optional(value: object) -> int | None:
 # =============================================================================
 # Dict-to-Object Wrappers for MT5 Data
 # =============================================================================
-# Server returns dicts to avoid IPC timeout. Client wraps them for attribute access.
 
 
 class _MT5Object:
@@ -196,11 +201,15 @@ def _unwrap_chunks(result: dict[str, Any] | None) -> tuple | None:
             all_items.extend(_MT5Object(d) for d in chunk)
         return tuple(all_items)
 
-    # Fallback for non-chunked response
-    if isinstance(result, (tuple, list)):
+    if isinstance(result, tuple | list):
         return _wrap_dicts(result)
 
-    return result
+    return None
+
+
+# =============================================================================
+# MetaTrader5 Client with Nested Classes
+# =============================================================================
 
 
 class MetaTrader5:
@@ -213,8 +222,232 @@ class MetaTrader5:
         >>> with MetaTrader5(host="localhost", port=18812) as mt5:
         ...     mt5.initialize(login=12345, password="pass", server="Demo")
         ...     account = mt5.account_info()
-        ...     print(mt5.ORDER_TYPE_BUY)  # Real MT5 constant
+        ...     print(account.balance)
     """
+
+    # =========================================================================
+    # NESTED EXCEPTIONS
+    # =========================================================================
+
+    class Error(Exception):
+        """Base exception for all MT5 client errors."""
+
+    class RetryableError(Error):
+        """Error that can be retried (transient failure)."""
+
+        def __init__(self, code: int, description: str) -> None:
+            super().__init__(f"MT5 error {code}: {description}")
+            self.code = code
+            self.description = description
+
+    class PermanentError(Error):
+        """Error that should not be retried."""
+
+        def __init__(self, code: int, description: str) -> None:
+            super().__init__(f"MT5 permanent error {code}: {description}")
+            self.code = code
+            self.description = description
+
+    class MaxRetriesError(Error):
+        """Maximum retry attempts exceeded."""
+
+        def __init__(
+            self,
+            operation: str,
+            attempts: int,
+            last_error: Exception | None = None,
+        ) -> None:
+            msg = f"Operation '{operation}' failed after {attempts} attempts"
+            if last_error:
+                msg += f": {last_error}"
+            super().__init__(msg)
+            self.operation = operation
+            self.attempts = attempts
+            self.last_error = last_error
+
+    class NotAvailableError(Error):
+        """MT5 module not available."""
+
+    # =========================================================================
+    # NESTED CIRCUIT BREAKER
+    # =========================================================================
+
+    class CircuitBreaker:
+        """Circuit breaker for fault tolerance."""
+
+        class State(IntEnum):
+            """Circuit breaker state."""
+
+            CLOSED = 0  # Normal operation
+            OPEN = 1  # Failing - requests blocked
+            HALF_OPEN = 2  # Testing recovery
+
+        @dataclass
+        class Config:
+            """Circuit breaker configuration."""
+
+            failure_threshold: int = 5
+            recovery_timeout: float = 60.0
+            half_open_max_calls: int = 1
+
+        class OpenError(Exception):
+            """Raised when circuit is open."""
+
+            def __init__(
+                self,
+                message: str = "Circuit breaker is open - too many failures",
+                recovery_time: datetime | None = None,
+            ) -> None:
+                super().__init__(message)
+                self.recovery_time = recovery_time
+
+        def __init__(
+            self,
+            config: MetaTrader5.CircuitBreaker.Config | None = None,
+            name: str = "default",
+        ) -> None:
+            """Initialize circuit breaker."""
+            self._config = config or MetaTrader5.CircuitBreaker.Config()
+            self.name = name
+            self._state = MetaTrader5.CircuitBreaker.State.CLOSED
+            self._failure_count = 0
+            self._success_count = 0
+            self._last_failure_time: datetime | None = None
+            self._half_open_calls = 0
+            self._lock = threading.RLock()
+
+        @property
+        def state(self) -> MetaTrader5.CircuitBreaker.State:
+            """Get current circuit state, transitioning if needed."""
+            with self._lock:
+                if (
+                    self._state == MetaTrader5.CircuitBreaker.State.OPEN
+                    and self._should_attempt_reset()
+                ):
+                    log.info(
+                        "Circuit breaker '%s' transitioning OPEN -> HALF_OPEN",
+                        self.name,
+                    )
+                    self._state = MetaTrader5.CircuitBreaker.State.HALF_OPEN
+                    self._half_open_calls = 0
+                return self._state
+
+        @property
+        def failure_count(self) -> int:
+            """Get current failure count."""
+            with self._lock:
+                return self._failure_count
+
+        def _should_attempt_reset(self) -> bool:
+            """Check if enough time passed to attempt recovery."""
+            if self._last_failure_time is None:
+                return False
+            elapsed = datetime.now(UTC) - self._last_failure_time
+            return elapsed >= timedelta(seconds=self._config.recovery_timeout)
+
+        def record_success(self) -> None:
+            """Record a successful operation."""
+            with self._lock:
+                self._failure_count = 0
+                self._success_count += 1
+                if self._state == MetaTrader5.CircuitBreaker.State.HALF_OPEN:
+                    log.info(
+                        "Circuit breaker '%s' recovered: HALF_OPEN -> CLOSED",
+                        self.name,
+                    )
+                    self._state = MetaTrader5.CircuitBreaker.State.CLOSED
+
+        def record_failure(self) -> None:
+            """Record a failed operation."""
+            with self._lock:
+                self._failure_count += 1
+                self._last_failure_time = datetime.now(UTC)
+
+                if self._state == MetaTrader5.CircuitBreaker.State.HALF_OPEN:
+                    log.warning(
+                        "Circuit breaker '%s' failed during recovery: HALF_OPEN -> OPEN",
+                        self.name,
+                    )
+                    self._state = MetaTrader5.CircuitBreaker.State.OPEN
+                elif self._failure_count >= self._config.failure_threshold:
+                    log.warning(
+                        "Circuit breaker '%s' opened after %d failures",
+                        self.name,
+                        self._failure_count,
+                    )
+                    self._state = MetaTrader5.CircuitBreaker.State.OPEN
+
+        def can_execute(self) -> bool:
+            """Check if a request is allowed through the circuit."""
+            current_state = self.state
+
+            if current_state == MetaTrader5.CircuitBreaker.State.CLOSED:
+                return True
+
+            if current_state == MetaTrader5.CircuitBreaker.State.HALF_OPEN:
+                with self._lock:
+                    if self._half_open_calls < self._config.half_open_max_calls:
+                        self._half_open_calls += 1
+                        return True
+                return False
+
+            return False  # OPEN state
+
+        def reset(self) -> None:
+            """Manually reset the circuit breaker to closed state."""
+            with self._lock:
+                log.info("Circuit breaker '%s' manually reset", self.name)
+                self._state = MetaTrader5.CircuitBreaker.State.CLOSED
+                self._failure_count = 0
+                self._success_count = 0
+                self._last_failure_time = None
+                self._half_open_calls = 0
+
+        def get_status(self) -> dict[str, Any]:
+            """Get circuit breaker status for monitoring."""
+            with self._lock:
+                status: dict[str, Any] = {
+                    "name": self.name,
+                    "state": self._state.name,
+                    "failure_count": self._failure_count,
+                    "success_count": self._success_count,
+                    "failure_threshold": self._config.failure_threshold,
+                }
+
+                if self._last_failure_time:
+                    status["last_failure"] = self._last_failure_time.isoformat()
+                    if self._state == MetaTrader5.CircuitBreaker.State.OPEN:
+                        recovery_at = self._last_failure_time + timedelta(
+                            seconds=self._config.recovery_timeout
+                        )
+                        status["recovery_at"] = recovery_at.isoformat()
+
+                return status
+
+    # =========================================================================
+    # NESTED RETRY CONFIG
+    # =========================================================================
+
+    @dataclass
+    class RetryConfig:
+        """Retry behavior configuration."""
+
+        max_attempts: int = 3
+        initial_delay: float = 0.5
+        max_delay: float = 10.0
+        exponential_base: float = 2.0
+        jitter: bool = True
+        retry_on_none: bool = True
+
+    # =========================================================================
+    # CLASS CONSTANTS
+    # =========================================================================
+
+    DEFAULT_HEALTH_CHECK_INTERVAL: int = 30
+
+    # =========================================================================
+    # INSTANCE ATTRIBUTES
+    # =========================================================================
 
     _conn: rpyc.Connection | None
     _mt5: Any
@@ -225,8 +458,8 @@ class MetaTrader5:
         port: int = 18812,
         timeout: int = 300,
         *,
-        circuit_breaker_threshold: int = 5,
-        circuit_breaker_recovery: float = 60.0,
+        circuit_breaker_config: CircuitBreaker.Config | None = None,
+        retry_config: RetryConfig | None = None,
         health_check_interval: int = DEFAULT_HEALTH_CHECK_INTERVAL,
         max_reconnect_attempts: int = 3,
     ) -> None:
@@ -236,8 +469,8 @@ class MetaTrader5:
             host: rpyc server address.
             port: rpyc server port.
             timeout: Timeout in seconds for operations.
-            circuit_breaker_threshold: Failures before circuit opens.
-            circuit_breaker_recovery: Seconds to wait before recovery attempt.
+            circuit_breaker_config: Circuit breaker configuration.
+            retry_config: Retry behavior configuration.
             health_check_interval: Seconds between connection health checks.
             max_reconnect_attempts: Max attempts for reconnection.
         """
@@ -249,11 +482,12 @@ class MetaTrader5:
         self._service_root: Any = None
 
         # Resilience configuration
-        self._circuit_breaker = CircuitBreaker(
-            failure_threshold=circuit_breaker_threshold,
-            recovery_timeout=circuit_breaker_recovery,
+        cb_config = circuit_breaker_config or MetaTrader5.CircuitBreaker.Config()
+        self._circuit_breaker = MetaTrader5.CircuitBreaker(
+            config=cb_config,
             name=f"mt5-{host}:{port}",
         )
+        self._retry_config = retry_config or MetaTrader5.RetryConfig()
         self._health_check_interval = health_check_interval
         self._last_health_check: datetime | None = None
         self._max_reconnect_attempts = max_reconnect_attempts
@@ -265,8 +499,6 @@ class MetaTrader5:
         if self._conn is not None:
             return
 
-        # Modern rpyc.connect() instead of deprecated rpyc.classic.connect()
-        # allow_pickle=True required for efficient large data transfer (9000+ symbols)
         self._conn = rpyc.connect(
             self._host,
             self._port,
@@ -274,14 +506,14 @@ class MetaTrader5:
                 "sync_request_timeout": self._timeout,
                 "allow_public_attrs": True,
                 "allow_pickle": True,
+                "max_io_chunk": RPYC_MAX_IO_CHUNK,
+                "compression_level": RPYC_COMPRESSION_LEVEL,
             },
         )
         if self._conn is None:
             msg = "Failed to establish RPyC connection"
             raise RuntimeError(msg)
         self._service_root = self._conn.root
-
-        # Get MT5 module reference via exposed_get_mt5()
         self._mt5 = self._service_root.get_mt5()
 
     def __getattr__(self, name: str) -> Any:
@@ -324,18 +556,10 @@ class MetaTrader5:
     # =========================================================================
 
     def _reconnect(self) -> None:
-        """Reconnect to RPyC server with retry logic.
-
-        Closes current connection and establishes a new one.
-        Uses exponential backoff on failures.
-        """
-        import random
-        import time
-
+        """Reconnect to RPyC server with retry logic."""
         log.info("Attempting reconnection to %s:%d", self._host, self._port)
         self.close()
 
-        # Use retry decorator logic manually for reconnection
         last_error: Exception | None = None
         for attempt in range(self._max_reconnect_attempts):
             try:
@@ -343,8 +567,7 @@ class MetaTrader5:
             except RETRYABLE_EXCEPTIONS as e:
                 last_error = e
                 if attempt < self._max_reconnect_attempts - 1:
-                    delay = min(0.5 * (2**attempt), 10.0)
-                    delay *= 0.5 + random.random()  # noqa: S311
+                    delay = _calculate_retry_delay(attempt)
                     log.warning(
                         "Reconnection attempt %d failed: %s, retrying in %.2fs",
                         attempt + 1,
@@ -353,10 +576,7 @@ class MetaTrader5:
                     )
                     time.sleep(delay)
             else:
-                log.info(
-                    "Reconnection successful on attempt %d",
-                    attempt + 1,
-                )
+                log.info("Reconnection successful on attempt %d", attempt + 1)
                 return
 
         msg = f"Reconnection failed after {self._max_reconnect_attempts} attempts"
@@ -366,19 +586,12 @@ class MetaTrader5:
         raise ConnectionError(msg)
 
     def _check_connection_health(self) -> bool:
-        """Verify connection is alive with lightweight ping.
-
-        Returns:
-            True if connection is healthy.
-        """
+        """Verify connection is alive with lightweight ping."""
         if self._conn is None:
             return False
         try:
-            # Check if connection is closed
             if getattr(self._conn, "closed", False):
                 return False
-            # Try a lightweight operation to verify connection is responsive
-            # Access the root service to trigger any connection issues
             _ = self._service_root
         except Exception:  # noqa: BLE001
             return False
@@ -386,17 +599,9 @@ class MetaTrader5:
             return True
 
     def _ensure_healthy_connection(self) -> None:
-        """Ensure connection is healthy, reconnect if needed.
-
-        Raises:
-            CircuitOpenError: If circuit breaker is open.
-        """
-        # Check circuit breaker first
+        """Ensure connection is healthy, reconnect if needed."""
         if not self._circuit_breaker.can_execute():
-            raise CircuitOpenError
-
-        # Skip health check if recent
-        from datetime import UTC
+            raise MetaTrader5.CircuitBreaker.OpenError
 
         now = datetime.now(UTC)
         if (
@@ -406,7 +611,6 @@ class MetaTrader5:
         ):
             return
 
-        # Perform health check
         if not self._check_connection_health():
             log.warning("Connection unhealthy, attempting reconnect")
             try:
@@ -417,83 +621,37 @@ class MetaTrader5:
 
         self._last_health_check = now
 
-    def _safe_rpc_call(  # noqa: C901
+    def _execute_operation(self, operation_name: str, *args: Any, **kwargs: Any) -> Any:
+        """Execute MT5 operation via RPyC."""
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+        method = getattr(self._service_root, operation_name)
+        return method(*args, **kwargs)
+
+    def _safe_rpc_call(
         self,
         method_name: str,
         *args: Any,
-        retry_on_none: bool = True,
+        retry_on_none: bool | None = None,
         **kwargs: Any,
     ) -> Any:
-        """Execute RPC call with full error handling and automatic retry.
-
-        Resilience is automatic and transparent:
-        - Retries on connection errors with exponential backoff
-        - Retries on None returns (transient MT5 failures)
-        - Circuit breaker prevents cascading failures
-        - Auto-reconnect on connection loss
-
-        Args:
-            method_name: Name of the exposed method to call.
-            *args: Positional arguments for the method.
-            retry_on_none: If True (default), retry when method returns None.
-                Set to False for methods where None is a valid response.
-            **kwargs: Keyword arguments for the method.
-
-        Returns:
-            Result from the RPC call.
-
-        Raises:
-            CircuitOpenError: If circuit breaker is open.
-            ConnectionError: If connection fails after all retries.
-        """
-        import random
-        import time
-
-        max_attempts = 3
-        initial_delay = 0.5
-        max_delay = 10.0
-
+        """Execute RPC call with full error handling and automatic retry."""
         self._ensure_healthy_connection()
 
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
+        if retry_on_none is None:
+            retry_on_none = self._retry_config.retry_on_none
 
         last_exception: Exception | None = None
+        max_attempts = self._retry_config.max_attempts
 
         for attempt in range(max_attempts):
-            # Ensure connection is valid before each attempt
-            if self._service_root is None:
-                try:
-                    self._reconnect()
-                except Exception as reconnect_err:  # noqa: BLE001
-                    last_exception = reconnect_err
-                    if attempt < max_attempts - 1:
-                        delay = min(initial_delay * (2**attempt), max_delay)
-                        delay *= 0.5 + random.random()  # noqa: S311
-                        log.warning(
-                            "%s reconnect failed (attempt %d/%d): %s, retrying in %.2fs",
-                            method_name,
-                            attempt + 1,
-                            max_attempts,
-                            reconnect_err,
-                            delay,
-                        )
-                        time.sleep(delay)
-                        continue
-                    else:
-                        raise ConnectionError(
-                            f"Connection failed after {max_attempts} attempts"
-                        ) from reconnect_err
-
             try:
-                method = getattr(self._service_root, method_name)
-                result = method(*args, **kwargs)
+                result = self._execute_operation(method_name, *args, **kwargs)
 
-                # Retry on None if enabled
+                # Handle None results
                 if retry_on_none and result is None:
                     if attempt < max_attempts - 1:
-                        delay = min(initial_delay * (2**attempt), max_delay)
-                        delay *= 0.5 + random.random()  # noqa: S311
+                        delay = _calculate_retry_delay(attempt)
                         log.warning(
                             "%s returned None (attempt %d/%d), retrying in %.2fs",
                             method_name,
@@ -503,24 +661,18 @@ class MetaTrader5:
                         )
                         time.sleep(delay)
                         continue
-                    log.warning(
-                        "%s returned None after %d attempts",
-                        method_name,
-                        max_attempts,
-                    )
 
                 # Success
                 self._circuit_breaker.record_success()
                 if attempt > 0:
                     log.info("%s succeeded on attempt %d", method_name, attempt + 1)
-                return result  # noqa: TRY300
+                return result
 
             except RETRYABLE_EXCEPTIONS as e:
                 last_exception = e
                 self._circuit_breaker.record_failure()
                 if attempt < max_attempts - 1:
-                    delay = min(initial_delay * (2**attempt), max_delay)
-                    delay *= 0.5 + random.random()  # noqa: S311
+                    delay = _calculate_retry_delay(attempt)
                     log.warning(
                         "%s failed (attempt %d/%d): %s, retrying in %.2fs",
                         method_name,
@@ -530,32 +682,21 @@ class MetaTrader5:
                         delay,
                     )
                     time.sleep(delay)
-                    # Try reconnecting before next attempt
-                    try:  # noqa: SIM105
-                        self._reconnect()
-                    except Exception:  # noqa: BLE001, S110
-                        pass  # Will fail on next attempt if reconnect failed
                 else:
-                    log.exception(
-                        "%s failed after %d attempts", method_name, max_attempts
-                    )
+                    log.exception("%s failed after %d attempts", method_name, max_attempts)
                     raise
 
-            except Exception:
-                log.exception("Unexpected error in %s", method_name)
-                raise
+        if last_exception:
+            raise MetaTrader5.MaxRetriesError(
+                operation=method_name,
+                attempts=max_attempts,
+                last_error=last_exception,
+            ) from last_exception
 
-        # Should not reach here, but satisfy type checker
-        if last_exception is not None:
-            raise last_exception
         return None
 
     def get_circuit_breaker_status(self) -> dict[str, Any]:
-        """Get circuit breaker status for monitoring.
-
-        Returns:
-            Dict with circuit breaker state and metrics.
-        """
+        """Get circuit breaker status for monitoring."""
         return self._circuit_breaker.get_status()
 
     def reset_client_circuit_breaker(self) -> None:
@@ -567,30 +708,16 @@ class MetaTrader5:
     # =========================================================================
 
     def health_check(self) -> dict[str, Any]:
-        """Get server health status.
-
-        Returns:
-            Health status dict from server.
-
-        Raises:
-            ConnectionError: If not connected.
-        """
+        """Get server health status."""
         result = self._safe_rpc_call("health_check")
         return dict(result)
 
     def reset_circuit_breaker(self) -> bool:
-        """Reset server circuit breaker.
-
-        Returns:
-            True if reset successful.
-
-        Raises:
-            ConnectionError: If not connected.
-        """
+        """Reset server circuit breaker."""
         return bool(self._safe_rpc_call("reset_circuit_breaker"))
 
     # =========================================================================
-    # Terminal operations - delegate to service
+    # Terminal operations
     # =========================================================================
 
     def initialize(
@@ -602,19 +729,7 @@ class MetaTrader5:
         timeout: int | None = None,
         portable: bool = False,
     ) -> bool:
-        """Initialize MT5 terminal.
-
-        Args:
-            path: Path to the MetaTrader 5 terminal executable.
-            login: Trading account number.
-            password: Trading account password.
-            server: Trade server name.
-            timeout: Connection timeout.
-            portable: Portable mode flag.
-
-        Returns:
-            True if successful, False otherwise.
-        """
+        """Initialize MT5 terminal."""
         result = self._safe_rpc_call(
             "initialize",
             path=path,
@@ -633,17 +748,7 @@ class MetaTrader5:
         server: str,
         timeout: int = 60000,
     ) -> bool:
-        """Login to trading account.
-
-        Args:
-            login: Trading account number.
-            password: Trading account password.
-            server: Trade server name.
-            timeout: Connection timeout in milliseconds.
-
-        Returns:
-            True if successful, False otherwise.
-        """
+        """Login to trading account."""
         result = self._safe_rpc_call(
             "login",
             login=login,
@@ -660,42 +765,25 @@ class MetaTrader5:
         try:
             self._safe_rpc_call("shutdown")
         except RETRYABLE_EXCEPTIONS:
-            # Ignore connection errors during shutdown
             log.debug("Shutdown RPC failed (connection may be closed)")
 
     def version(self) -> tuple[int, int, str] | None:
-        """Get MT5 terminal version.
-
-        Returns:
-            Tuple of (version, build, version_string) or None.
-        """
+        """Get MT5 terminal version."""
         result = self._safe_rpc_call("version")
         return _validate_version(result)
 
     def last_error(self) -> tuple[int, str]:
-        """Get last MT5 error.
-
-        Returns:
-            Tuple of (error_code, error_description).
-        """
+        """Get last MT5 error."""
         result = self._safe_rpc_call("last_error")
         return _validate_last_error(result)
 
     def terminal_info(self) -> Any:
-        """Get terminal info.
-
-        Returns:
-            TerminalInfo-like object with attribute access.
-        """
+        """Get terminal info."""
         result = self._safe_rpc_call("terminal_info")
         return _wrap_dict(result)
 
     def account_info(self) -> Any:
-        """Get account info.
-
-        Returns:
-            AccountInfo-like object with attribute access.
-        """
+        """Get account info."""
         result = self._safe_rpc_call("account_info")
         return _wrap_dict(result)
 
@@ -704,60 +792,27 @@ class MetaTrader5:
     # =========================================================================
 
     def symbols_total(self) -> int:
-        """Get total number of symbols.
-
-        Returns:
-            Number of available symbols.
-        """
+        """Get total number of symbols."""
         result = self._safe_rpc_call("symbols_total")
         return int(result) if result is not None else 0
 
     def symbols_get(self, group: str | None = None) -> tuple | None:
-        """Get available symbols.
-
-        Args:
-            group: Optional group filter.
-
-        Returns:
-            Tuple of SymbolInfo-like objects or None.
-        """
+        """Get available symbols."""
         result = self._safe_rpc_call("symbols_get", group)
         return _unwrap_chunks(result)
 
     def symbol_info(self, symbol: str) -> Any:
-        """Get symbol info.
-
-        Args:
-            symbol: Symbol name.
-
-        Returns:
-            SymbolInfo-like object with attribute access, or None.
-        """
+        """Get symbol info."""
         result = self._safe_rpc_call("symbol_info", symbol)
         return _wrap_dict(result) if result else None
 
     def symbol_info_tick(self, symbol: str) -> Any:
-        """Get symbol tick info.
-
-        Args:
-            symbol: Symbol name.
-
-        Returns:
-            Tick-like object with attribute access, or None.
-        """
+        """Get symbol tick info."""
         result = self._safe_rpc_call("symbol_info_tick", symbol)
         return _wrap_dict(result) if result else None
 
     def symbol_select(self, symbol: str, enable: bool = True) -> bool:
-        """Select symbol in Market Watch.
-
-        Args:
-            symbol: Symbol name.
-            enable: True to select, False to remove.
-
-        Returns:
-            True if successful.
-        """
+        """Select symbol in Market Watch."""
         return bool(self._safe_rpc_call("symbol_select", symbol, enable))
 
     # =========================================================================
@@ -771,17 +826,7 @@ class MetaTrader5:
         date_from: datetime | int,
         count: int,
     ) -> RatesArray | None:
-        """Copy rates from a date. Fetches array locally.
-
-        Args:
-            symbol: Symbol name.
-            timeframe: Timeframe constant (TIMEFRAME_M1, etc.).
-            date_from: Start datetime or Unix timestamp.
-            count: Number of bars to copy.
-
-        Returns:
-            Numpy structured array with OHLCV data or None.
-        """
+        """Copy rates from a date."""
         result = self._safe_rpc_call(
             "copy_rates_from",
             symbol,
@@ -798,17 +843,7 @@ class MetaTrader5:
         start_pos: int,
         count: int,
     ) -> RatesArray | None:
-        """Copy rates from a position. Fetches array locally.
-
-        Args:
-            symbol: Symbol name.
-            timeframe: Timeframe constant.
-            start_pos: Start position (0 = current bar).
-            count: Number of bars to copy.
-
-        Returns:
-            Numpy structured array with OHLCV data or None.
-        """
+        """Copy rates from a position."""
         result = self._safe_rpc_call(
             "copy_rates_from_pos",
             symbol,
@@ -825,17 +860,7 @@ class MetaTrader5:
         date_from: datetime | int,
         date_to: datetime | int,
     ) -> RatesArray | None:
-        """Copy rates in a date range. Fetches array locally.
-
-        Args:
-            symbol: Symbol name.
-            timeframe: Timeframe constant.
-            date_from: Start datetime or Unix timestamp.
-            date_to: End datetime or Unix timestamp.
-
-        Returns:
-            Numpy structured array with OHLCV data or None.
-        """
+        """Copy rates in a date range."""
         result = self._safe_rpc_call(
             "copy_rates_range",
             symbol,
@@ -852,17 +877,7 @@ class MetaTrader5:
         count: int,
         flags: int,
     ) -> TicksArray | None:
-        """Copy ticks from a date. Fetches array locally.
-
-        Args:
-            symbol: Symbol name.
-            date_from: Start datetime or Unix timestamp.
-            count: Number of ticks to copy.
-            flags: COPY_TICKS_ALL, COPY_TICKS_INFO, or COPY_TICKS_TRADE.
-
-        Returns:
-            Numpy structured array with tick data or None.
-        """
+        """Copy ticks from a date."""
         result = self._safe_rpc_call(
             "copy_ticks_from",
             symbol,
@@ -879,17 +894,7 @@ class MetaTrader5:
         date_to: datetime | int,
         flags: int,
     ) -> TicksArray | None:
-        """Copy ticks in a date range. Fetches array locally.
-
-        Args:
-            symbol: Symbol name.
-            date_from: Start datetime or Unix timestamp.
-            date_to: End datetime or Unix timestamp.
-            flags: COPY_TICKS_ALL, COPY_TICKS_INFO, or COPY_TICKS_TRADE.
-
-        Returns:
-            Numpy structured array with tick data or None.
-        """
+        """Copy ticks in a date range."""
         result = self._safe_rpc_call(
             "copy_ticks_range",
             symbol,
@@ -900,7 +905,7 @@ class MetaTrader5:
         return obtain(result) if result is not None else None
 
     # =========================================================================
-    # Trading operations - direct service calls (no conn.execute hack)
+    # Trading operations
     # =========================================================================
 
     def order_calc_margin(
@@ -910,17 +915,7 @@ class MetaTrader5:
         volume: float,
         price: float,
     ) -> float | None:
-        """Calculate margin for order.
-
-        Args:
-            action: Order action (ORDER_TYPE_BUY, ORDER_TYPE_SELL).
-            symbol: Symbol name.
-            volume: Order volume.
-            price: Order price.
-
-        Returns:
-            Required margin or None.
-        """
+        """Calculate margin for order."""
         result = self._safe_rpc_call("order_calc_margin", action, symbol, volume, price)
         return _validate_float_optional(result)
 
@@ -932,18 +927,7 @@ class MetaTrader5:
         price_open: float,
         price_close: float,
     ) -> float | None:
-        """Calculate profit for order.
-
-        Args:
-            action: Order action (ORDER_TYPE_BUY, ORDER_TYPE_SELL).
-            symbol: Symbol name.
-            volume: Order volume.
-            price_open: Open price.
-            price_close: Close price.
-
-        Returns:
-            Calculated profit or None.
-        """
+        """Calculate profit for order."""
         result = self._safe_rpc_call(
             "order_calc_profit",
             action,
@@ -955,32 +939,12 @@ class MetaTrader5:
         return _validate_float_optional(result)
 
     def order_check(self, request: dict[str, Any]) -> Any:
-        """Check order parameters without sending.
-
-        Args:
-            request: Order request dict to validate.
-
-        Returns:
-            OrderCheckResult-like object with attribute access.
-
-        Raises:
-            ConnectionError: If not connected to MT5 server.
-        """
+        """Check order parameters without sending."""
         result = self._safe_rpc_call("order_check", request)
         return _wrap_dict(result) if result else None
 
     def order_send(self, request: dict[str, Any]) -> Any:
-        """Send trading order to MT5.
-
-        Args:
-            request: Order request dict with keys like action, symbol, volume, etc.
-
-        Returns:
-            OrderSendResult-like object with attribute access.
-
-        Raises:
-            ConnectionError: If not connected to MT5 server.
-        """
+        """Send trading order to MT5."""
         result = self._safe_rpc_call("order_send", request)
         return _wrap_dict(result) if result else None
 
@@ -989,11 +953,7 @@ class MetaTrader5:
     # =========================================================================
 
     def positions_total(self) -> int:
-        """Get total number of open positions.
-
-        Returns:
-            Number of open positions.
-        """
+        """Get total number of open positions."""
         result = self._safe_rpc_call("positions_total")
         return int(result) if result is not None else 0
 
@@ -1003,16 +963,7 @@ class MetaTrader5:
         group: str | None = None,
         ticket: int | None = None,
     ) -> tuple | None:
-        """Get open positions.
-
-        Args:
-            symbol: Filter by symbol.
-            group: Filter by group.
-            ticket: Filter by ticket.
-
-        Returns:
-            Tuple of TradePosition-like objects with attribute access, or None.
-        """
+        """Get open positions."""
         result = self._safe_rpc_call("positions_get", symbol, group, ticket)
         return _wrap_dicts(result)
 
@@ -1021,11 +972,7 @@ class MetaTrader5:
     # =========================================================================
 
     def orders_total(self) -> int:
-        """Get total number of pending orders.
-
-        Returns:
-            Number of pending orders.
-        """
+        """Get total number of pending orders."""
         result = self._safe_rpc_call("orders_total")
         return int(result) if result is not None else 0
 
@@ -1035,16 +982,7 @@ class MetaTrader5:
         group: str | None = None,
         ticket: int | None = None,
     ) -> tuple | None:
-        """Get pending orders.
-
-        Args:
-            symbol: Filter by symbol.
-            group: Filter by group.
-            ticket: Filter by ticket.
-
-        Returns:
-            Tuple of TradeOrder-like objects with attribute access, or None.
-        """
+        """Get pending orders."""
         result = self._safe_rpc_call("orders_get", symbol, group, ticket)
         return _wrap_dicts(result)
 
@@ -1055,15 +993,7 @@ class MetaTrader5:
     def history_orders_total(
         self, date_from: datetime | int, date_to: datetime | int
     ) -> int | None:
-        """Get total number of historical orders.
-
-        Args:
-            date_from: Start datetime or Unix timestamp.
-            date_to: End datetime or Unix timestamp.
-
-        Returns:
-            Number of historical orders or None.
-        """
+        """Get total number of historical orders."""
         result = self._safe_rpc_call(
             "history_orders_total",
             _to_timestamp(date_from),
@@ -1079,18 +1009,7 @@ class MetaTrader5:
         ticket: int | None = None,
         position: int | None = None,
     ) -> tuple | None:
-        """Get historical orders.
-
-        Args:
-            date_from: Start datetime or Unix timestamp.
-            date_to: End datetime or Unix timestamp.
-            group: Filter by group.
-            ticket: Filter by ticket.
-            position: Filter by position.
-
-        Returns:
-            Tuple of TradeOrder-like objects with attribute access, or None.
-        """
+        """Get historical orders."""
         result = self._safe_rpc_call(
             "history_orders_get",
             _to_timestamp(date_from),
@@ -1104,15 +1023,7 @@ class MetaTrader5:
     def history_deals_total(
         self, date_from: datetime | int, date_to: datetime | int
     ) -> int | None:
-        """Get total number of historical deals.
-
-        Args:
-            date_from: Start datetime or Unix timestamp.
-            date_to: End datetime or Unix timestamp.
-
-        Returns:
-            Number of historical deals or None.
-        """
+        """Get total number of historical deals."""
         result = self._safe_rpc_call(
             "history_deals_total",
             _to_timestamp(date_from),
@@ -1128,18 +1039,7 @@ class MetaTrader5:
         ticket: int | None = None,
         position: int | None = None,
     ) -> tuple | None:
-        """Get historical deals.
-
-        Args:
-            date_from: Start datetime or Unix timestamp.
-            date_to: End datetime or Unix timestamp.
-            group: Filter by group.
-            ticket: Filter by ticket.
-            position: Filter by position.
-
-        Returns:
-            Tuple of TradeDeal-like objects with attribute access, or None.
-        """
+        """Get historical deals."""
         result = self._safe_rpc_call(
             "history_deals_get",
             _to_timestamp(date_from),
@@ -1149,3 +1049,16 @@ class MetaTrader5:
             position,
         )
         return _wrap_dicts(result)
+
+
+# =============================================================================
+# Backward Compatibility Aliases
+# =============================================================================
+
+# For imports that expect these at module level
+CircuitBreaker = MetaTrader5.CircuitBreaker
+CircuitOpenError = MetaTrader5.CircuitBreaker.OpenError
+MT5Error = MetaTrader5.Error
+MT5RetryableError = MetaTrader5.RetryableError
+MT5PermanentError = MetaTrader5.PermanentError
+MaxRetriesExceededError = MetaTrader5.MaxRetriesError

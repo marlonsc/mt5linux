@@ -323,7 +323,7 @@ class TestErrorHandling:
         assert major >= 0
         assert minor >= 0
         # Third element can be int (build number) or str (date)
-        assert isinstance(build_or_date, (int, str))
+        assert isinstance(build_or_date, int | str)
 
     def test_terminal_info_always_works(self, mt5: MetaTrader5) -> None:
         """Test that terminal_info() always returns valid data."""

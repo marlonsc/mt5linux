@@ -29,6 +29,7 @@ hypothesis = "^6.0"
 ruff = "^0.11.0"
 mypy = "^1.15.0"
 python-dotenv = "^1.0.0"
+pyrefly = "^0.46.0"
 
 [tool.ruff]
 line-length = 88

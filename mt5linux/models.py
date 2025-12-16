@@ -7,17 +7,41 @@ Compatible with neptor's MT5Bridge models.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from mt5linux.enums import (
-    OrderFilling,
-    OrderTime,
-    OrderType,
-    TradeAction,
-    TradeRetcode,
-)
+from mt5linux.constants import MT5
+
+
+class MT5Model(BaseModel):
+    """Base class for MT5 data models.
+
+    Provides a generic `from_mt5()` factory method that handles:
+    - None input (returns None)
+    - Objects with `_asdict()` method (namedtuples)
+    - Objects with attributes (MT5 objects)
+
+    Subclasses can override `from_mt5()` for custom handling.
+    """
+
+    model_config = ConfigDict(frozen=True, from_attributes=True)
+
+    @classmethod
+    def from_mt5(cls, obj: Any) -> Self | None:
+        """Create model from MT5 object.
+
+        Args:
+            obj: MT5 object, namedtuple, or dict.
+
+        Returns:
+            Model instance or None if obj is None.
+        """
+        if obj is None:
+            return None
+        if hasattr(obj, "_asdict"):
+            return cls.model_validate(obj._asdict())
+        return cls.model_validate(obj)
 
 
 class OrderRequest(BaseModel):
@@ -25,10 +49,10 @@ class OrderRequest(BaseModel):
 
     Example:
         >>> request = OrderRequest(
-        ...     action=TradeAction.DEAL,
+        ...     action=MT5.TradeAction.DEAL,
         ...     symbol="EURUSD",
         ...     volume=0.1,
-        ...     type=OrderType.BUY,
+        ...     type=MT5.OrderType.BUY,
         ...     price=1.1000,
         ... )
         >>> mt5.order_send(request.to_dict())
@@ -36,26 +60,26 @@ class OrderRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True, use_enum_values=True)
 
-    action: TradeAction
+    action: MT5.TradeAction
     symbol: str
     volume: float = Field(gt=0, le=1000)
-    type: OrderType
+    type: MT5.OrderType
     price: float = Field(ge=0, default=0.0)
     sl: float = Field(ge=0, default=0.0)
     tp: float = Field(ge=0, default=0.0)
     deviation: int = Field(ge=0, default=20)
     magic: int = Field(ge=0, default=0)
     comment: str = Field(max_length=31, default="")
-    type_time: OrderTime = OrderTime.GTC
+    type_time: MT5.OrderTime = MT5.OrderTime.GTC
     expiration: datetime | None = None
-    type_filling: OrderFilling = OrderFilling.FOK
+    type_filling: MT5.OrderFilling = MT5.OrderFilling.FOK
     position: int = Field(ge=0, default=0)
     position_by: int = Field(ge=0, default=0)
 
     @property
     def is_market_order(self) -> bool:
         """Check if this is a market order."""
-        return self.type in {OrderType.BUY, OrderType.SELL}
+        return self.type in {MT5.OrderType.BUY, MT5.OrderType.SELL}
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to MT5 API request dict."""
@@ -84,7 +108,7 @@ class OrderRequest(BaseModel):
         return d
 
 
-class OrderResult(BaseModel):
+class OrderResult(MT5Model):
     """MT5 order execution result.
 
     Example:
@@ -93,8 +117,6 @@ class OrderResult(BaseModel):
         >>> if order_result.is_success:
         ...     print(f"Order placed: {order_result.order}")
     """
-
-    model_config = ConfigDict(frozen=True)
 
     retcode: int
     deal: int = 0
@@ -110,36 +132,26 @@ class OrderResult(BaseModel):
     @property
     def is_success(self) -> bool:
         """Check if order was successful."""
-        return self.retcode == TradeRetcode.DONE
+        return self.retcode == MT5.TradeRetcode.DONE
 
     @property
     def is_partial(self) -> bool:
         """Check if order was partially filled."""
-        return self.retcode == TradeRetcode.DONE_PARTIAL
+        return self.retcode == MT5.MT5.TradeRetcode.DONE_PARTIAL
 
     @classmethod
-    def from_mt5(cls, result: Any) -> OrderResult:
-        """Create from MT5 OrderSendResult."""
+    def from_mt5(cls, result: Any) -> Self | None:
+        """Create from MT5 OrderSendResult.
+
+        Special handling: returns error result instead of None for None input.
+        """
         if result is None:
-            return cls(retcode=TradeRetcode.ERROR, comment="No result from MT5")
-        return cls(
-            retcode=result.retcode,
-            deal=result.deal,
-            order=result.order,
-            volume=result.volume,
-            price=result.price,
-            bid=result.bid,
-            ask=result.ask,
-            comment=result.comment,
-            request_id=result.request_id,
-            retcode_external=getattr(result, "retcode_external", 0),
-        )
+            return cls(retcode=MT5.TradeRetcode.ERROR, comment="No result from MT5")
+        return super().from_mt5(result)
 
 
-class AccountInfo(BaseModel):
+class AccountInfo(MT5Model):
     """MT5 account information."""
-
-    model_config = ConfigDict(frozen=True)
 
     login: int
     trade_mode: int = 0
@@ -170,47 +182,9 @@ class AccountInfo(BaseModel):
     currency: str = "USD"
     company: str = ""
 
-    @classmethod
-    def from_mt5(cls, info: Any) -> AccountInfo:
-        """Create from MT5 AccountInfo."""
-        if info is None:
-            return cls(login=0)
-        return cls(
-            login=info.login,
-            trade_mode=info.trade_mode,
-            leverage=info.leverage,
-            limit_orders=info.limit_orders,
-            margin_so_mode=info.margin_so_mode,
-            trade_allowed=info.trade_allowed,
-            trade_expert=info.trade_expert,
-            margin_mode=info.margin_mode,
-            currency_digits=info.currency_digits,
-            fifo_close=info.fifo_close,
-            balance=info.balance,
-            credit=info.credit,
-            profit=info.profit,
-            equity=info.equity,
-            margin=info.margin,
-            margin_free=info.margin_free,
-            margin_level=info.margin_level,
-            margin_so_call=info.margin_so_call,
-            margin_so_so=info.margin_so_so,
-            margin_initial=info.margin_initial,
-            margin_maintenance=info.margin_maintenance,
-            assets=info.assets,
-            liabilities=info.liabilities,
-            commission_blocked=info.commission_blocked,
-            name=info.name,
-            server=info.server,
-            currency=info.currency,
-            company=info.company,
-        )
 
-
-class SymbolInfo(BaseModel):
+class SymbolInfo(MT5Model):
     """MT5 symbol information (subset of commonly used fields)."""
-
-    model_config = ConfigDict(frozen=True)
 
     name: str
     visible: bool = False
@@ -240,46 +214,9 @@ class SymbolInfo(BaseModel):
     description: str = ""
     path: str = ""
 
-    @classmethod
-    def from_mt5(cls, info: Any) -> SymbolInfo:
-        """Create from MT5 SymbolInfo."""
-        if info is None:
-            return cls(name="")
-        return cls(
-            name=info.name,
-            visible=info.visible,
-            select=info.select,
-            time=info.time,
-            digits=info.digits,
-            spread=info.spread,
-            spread_float=info.spread_float,
-            trade_mode=info.trade_mode,
-            trade_calc_mode=info.trade_calc_mode,
-            trade_stops_level=info.trade_stops_level,
-            trade_freeze_level=info.trade_freeze_level,
-            bid=info.bid,
-            ask=info.ask,
-            last=info.last,
-            volume=info.volume,
-            point=info.point,
-            trade_tick_value=info.trade_tick_value,
-            trade_tick_size=info.trade_tick_size,
-            trade_contract_size=info.trade_contract_size,
-            volume_min=info.volume_min,
-            volume_max=info.volume_max,
-            volume_step=info.volume_step,
-            currency_base=info.currency_base,
-            currency_profit=info.currency_profit,
-            currency_margin=info.currency_margin,
-            description=info.description,
-            path=info.path,
-        )
 
-
-class Position(BaseModel):
+class Position(MT5Model):
     """MT5 open position."""
-
-    model_config = ConfigDict(frozen=True)
 
     ticket: int
     time: int = 0
@@ -301,38 +238,9 @@ class Position(BaseModel):
     comment: str = ""
     external_id: str = ""
 
-    @classmethod
-    def from_mt5(cls, pos: Any) -> Position:
-        """Create from MT5 TradePosition."""
-        if pos is None:
-            return cls(ticket=0)
-        return cls(
-            ticket=pos.ticket,
-            time=pos.time,
-            time_msc=pos.time_msc,
-            time_update=pos.time_update,
-            time_update_msc=pos.time_update_msc,
-            type=pos.type,
-            magic=pos.magic,
-            identifier=pos.identifier,
-            reason=pos.reason,
-            volume=pos.volume,
-            price_open=pos.price_open,
-            sl=pos.sl,
-            tp=pos.tp,
-            price_current=pos.price_current,
-            swap=pos.swap,
-            profit=pos.profit,
-            symbol=pos.symbol,
-            comment=pos.comment,
-            external_id=getattr(pos, "external_id", ""),
-        )
 
-
-class Tick(BaseModel):
+class Tick(MT5Model):
     """MT5 price tick."""
-
-    model_config = ConfigDict(frozen=True)
 
     time: int
     bid: float = 0.0
@@ -342,19 +250,3 @@ class Tick(BaseModel):
     time_msc: int = 0
     flags: int = 0
     volume_real: float = 0.0
-
-    @classmethod
-    def from_mt5(cls, tick: Any) -> Tick:
-        """Create from MT5 Tick."""
-        if tick is None:
-            return cls(time=0)
-        return cls(
-            time=tick.time,
-            bid=tick.bid,
-            ask=tick.ask,
-            last=tick.last,
-            volume=tick.volume,
-            time_msc=tick.time_msc,
-            flags=tick.flags,
-            volume_real=tick.volume_real,
-        )

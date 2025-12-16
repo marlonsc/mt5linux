@@ -35,7 +35,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from enum import Enum, IntEnum, auto
 from functools import wraps
 from pathlib import Path
 from types import FrameType
@@ -110,229 +110,6 @@ class MT5NotAvailableError(Exception):
 
 
 # =============================================================================
-# Resilience Patterns
-# =============================================================================
-
-
-class CircuitState(Enum):
-    """Circuit breaker states."""
-
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
-
-
-@dataclass
-class CircuitBreakerConfig:
-    """Circuit breaker configuration."""
-
-    failure_threshold: int = 5
-    success_threshold: int = 2
-    timeout: float = 30.0
-    excluded_exceptions: tuple[type[Exception], ...] = ()
-
-
-class CircuitBreaker:
-    """Circuit breaker for fault tolerance."""
-
-    def __init__(self, config: CircuitBreakerConfig | None = None) -> None:
-        self.config = config or CircuitBreakerConfig()
-        self._state = CircuitState.CLOSED
-        self._failure_count = 0
-        self._success_count = 0
-        self._last_failure_time: float | None = None
-        self._lock = threading.RLock()
-
-    @property
-    def state(self) -> CircuitState:
-        """Current circuit state."""
-        with self._lock:
-            if (
-                self._state == CircuitState.OPEN
-                and self._last_failure_time
-                and time.time() - self._last_failure_time >= self.config.timeout
-            ):
-                self._state = CircuitState.HALF_OPEN
-                self._success_count = 0
-            return self._state
-
-    def _record_success(self) -> None:
-        with self._lock:
-            if self._state == CircuitState.HALF_OPEN:
-                self._success_count += 1
-                if self._success_count >= self.config.success_threshold:
-                    self._state = CircuitState.CLOSED
-                    self._failure_count = 0
-            elif self._state == CircuitState.CLOSED:
-                self._failure_count = 0
-
-    def _record_failure(self) -> None:
-        with self._lock:
-            self._failure_count += 1
-            self._last_failure_time = time.time()
-            if self._state == CircuitState.HALF_OPEN or (
-                self._state == CircuitState.CLOSED
-                and self._failure_count >= self.config.failure_threshold
-            ):
-                self._state = CircuitState.OPEN
-
-    def reset(self) -> None:
-        """Reset circuit breaker."""
-        with self._lock:
-            self._state = CircuitState.CLOSED
-            self._failure_count = 0
-            self._success_count = 0
-            self._last_failure_time = None
-
-    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            if self.state == CircuitState.OPEN:
-                msg = f"Circuit breaker open, call to {func.__name__} blocked"
-                raise CircuitBreakerOpenError(msg)
-            try:
-                result = func(*args, **kwargs)
-            except self.config.excluded_exceptions:
-                raise
-            except Exception:
-                self._record_failure()
-                raise
-            else:
-                self._record_success()
-                return result
-
-        return wrapper
-
-
-class CircuitBreakerOpenError(Exception):
-    """Raised when circuit breaker is open."""
-
-
-def exponential_backoff_with_jitter(
-    attempt: int,
-    base_delay: float = 1.0,
-    max_delay: float = 60.0,
-    multiplier: float = 2.0,
-    jitter_factor: float = 0.1,
-) -> float:
-    """Calculate delay with exponential backoff and jitter."""
-    delay = base_delay * (multiplier**attempt)
-    delay = min(delay, max_delay)
-    # S311: random is fine for jitter - not cryptographic
-    jitter = delay * jitter_factor * (2 * random.random() - 1)  # noqa: S311
-    return max(0.0, delay + jitter)
-
-
-# =============================================================================
-# Rate Limiter
-# =============================================================================
-
-
-class TokenBucketRateLimiter:
-    """Token bucket rate limiter."""
-
-    def __init__(self, rate: float, capacity: float) -> None:
-        self._rate = rate
-        self._capacity = capacity
-        self._tokens = capacity
-        self._last_update = time.monotonic()
-        self._lock = threading.Lock()
-
-    def _refill(self) -> None:
-        now = time.monotonic()
-        elapsed = now - self._last_update
-        self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
-        self._last_update = now
-
-    def acquire(self, tokens: float = 1.0) -> bool:
-        with self._lock:
-            self._refill()
-            if self._tokens >= tokens:
-                self._tokens -= tokens
-                return True
-            return False
-
-
-# =============================================================================
-# Health Monitoring
-# =============================================================================
-
-
-@dataclass
-class HealthStatus:
-    """Server health status."""
-
-    healthy: bool
-    uptime_seconds: float
-    connections_total: int
-    connections_active: int
-    requests_total: int
-    requests_failed: int
-    last_error: str | None = None
-    environment: str = ""
-    mt5_available: bool = False
-    circuit_state: str = "closed"
-
-
-class HealthMonitor:
-    """Health monitoring for the server."""
-
-    def __init__(self) -> None:
-        self._start_time = time.time()
-        self._connections_total = 0
-        self._connections_active = 0
-        self._requests_total = 0
-        self._requests_failed = 0
-        self._last_error: str | None = None
-        self._lock = threading.Lock()
-        self._environment = detect_environment()
-
-    def record_connection(self) -> None:
-        with self._lock:
-            self._connections_total += 1
-            self._connections_active += 1
-
-    def record_disconnection(self) -> None:
-        with self._lock:
-            self._connections_active = max(0, self._connections_active - 1)
-
-    def record_request(self, success: bool = True) -> None:
-        with self._lock:
-            self._requests_total += 1
-            if not success:
-                self._requests_failed += 1
-
-    def record_error(self, error: str) -> None:
-        with self._lock:
-            self._last_error = error
-            self._requests_failed += 1
-
-    def clear_error(self) -> None:
-        with self._lock:
-            self._last_error = None
-
-    def get_status(self, circuit_state: str = "closed") -> HealthStatus:
-        with self._lock:
-            return HealthStatus(
-                healthy=self._last_error is None,
-                uptime_seconds=time.time() - self._start_time,
-                connections_total=self._connections_total,
-                connections_active=self._connections_active,
-                requests_total=self._requests_total,
-                requests_failed=self._requests_failed,
-                last_error=self._last_error,
-                environment=self._environment.name,
-                mt5_available=is_mt5_available(),
-                circuit_state=circuit_state,
-            )
-
-
-# Global instances
-_health_monitor = HealthMonitor()
-_mt5_circuit_breaker = CircuitBreaker(CircuitBreakerConfig(failure_threshold=5))
-
-
-# =============================================================================
 # Type Validation Helpers - Convert RPyC's Any to Concrete Types
 # =============================================================================
 
@@ -377,7 +154,7 @@ def _validate_float_optional(value: object) -> float | None:
     """Validate and convert Any to float | None."""
     if value is None:
         return None
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    if isinstance(value, int | float) and not isinstance(value, bool):
         return float(value)
     msg = f"Expected float | None, got {type(value).__name__}"
     raise TypeError(msg)
@@ -417,6 +194,556 @@ def _validate_dict(value: object) -> dict[str, object]:
     raise TypeError(msg)
 
 
+def exponential_backoff_with_jitter(
+    attempt: int,
+    base_delay: float = 1.0,
+    max_delay: float = 60.0,
+    multiplier: float = 2.0,
+    jitter_factor: float = 0.1,
+) -> float:
+    """Calculate delay with exponential backoff and jitter."""
+    delay = base_delay * (multiplier**attempt)
+    delay = min(delay, max_delay)
+    # S311: random is fine for jitter - not cryptographic
+    jitter = delay * jitter_factor * (2 * random.random() - 1)  # noqa: S311
+    return max(0.0, delay + jitter)
+
+
+# =============================================================================
+# Server Class with All Nested Components
+# =============================================================================
+
+
+class Server:
+    """Production-grade RPyC server with automatic recovery.
+
+    Contains all server-related nested classes:
+    - Mode: Server execution mode (DIRECT, WINE)
+    - State: Server lifecycle state (STOPPED, STARTING, RUNNING, etc.)
+    - Config: Server configuration dataclass
+    - CircuitBreaker: Server-side circuit breaker for fault tolerance
+    - RateLimiter: Token bucket rate limiter
+    - HealthMonitor: Health monitoring with status tracking
+    """
+
+    # =========================================================================
+    # NESTED ENUMS
+    # =========================================================================
+
+    class Mode(Enum):
+        """Server execution mode."""
+
+        DIRECT = "direct"  # Run directly (Linux)
+        WINE = "wine"  # Run via Wine subprocess
+
+    class State(Enum):
+        """Server lifecycle state."""
+
+        STOPPED = "stopped"
+        STARTING = "starting"
+        RUNNING = "running"
+        RESTARTING = "restarting"
+        STOPPING = "stopping"
+        FAILED = "failed"
+
+    # =========================================================================
+    # NESTED CONFIG
+    # =========================================================================
+
+    @dataclass
+    class Config:
+        """Server configuration."""
+
+        host: str = "0.0.0.0"  # noqa: S104 - Intentional binding to all interfaces
+        port: int = 18812
+        mode: Server.Mode = field(default_factory=lambda: Server.Mode.DIRECT)
+
+        # Wine mode settings
+        wine_cmd: str = "wine"
+        python_exe: str = "python.exe"
+
+        # Threading settings
+        use_thread_pool: bool = True
+        thread_pool_size: int = 10
+
+        # Resilience settings
+        max_restarts: int = 10
+        restart_delay_base: float = 1.0
+        restart_delay_max: float = 60.0
+        restart_delay_multiplier: float = 2.0
+        jitter_factor: float = 0.1
+
+        # RPyC protocol settings
+        sync_request_timeout: int = 300
+        allow_pickle: bool = True
+
+        def get_protocol_config(self) -> dict[str, Any]:
+            return {
+                "allow_public_attrs": True,
+                "allow_pickle": self.allow_pickle,
+                "sync_request_timeout": self.sync_request_timeout,
+            }
+
+    # =========================================================================
+    # NESTED CIRCUIT BREAKER (Server-side)
+    # =========================================================================
+
+    class CircuitBreaker:
+        """Server-side circuit breaker for fault tolerance."""
+
+        class State(IntEnum):
+            """Circuit breaker states."""
+
+            CLOSED = 0
+            OPEN = 1
+            HALF_OPEN = 2
+
+        @dataclass
+        class Config:
+            """Circuit breaker configuration."""
+
+            failure_threshold: int = 5
+            success_threshold: int = 2
+            timeout: float = 30.0
+            excluded_exceptions: tuple[type[Exception], ...] = ()
+
+        class OpenError(Exception):
+            """Raised when circuit breaker is open."""
+
+        def __init__(self, config: Server.CircuitBreaker.Config | None = None) -> None:
+            self.config = config or Server.CircuitBreaker.Config()
+            self._state = Server.CircuitBreaker.State.CLOSED
+            self._failure_count = 0
+            self._success_count = 0
+            self._last_failure_time: float | None = None
+            self._lock = threading.RLock()
+
+        @property
+        def state(self) -> Server.CircuitBreaker.State:
+            """Current circuit state."""
+            with self._lock:
+                if (
+                    self._state == Server.CircuitBreaker.State.OPEN
+                    and self._last_failure_time
+                    and time.time() - self._last_failure_time >= self.config.timeout
+                ):
+                    self._state = Server.CircuitBreaker.State.HALF_OPEN
+                    self._success_count = 0
+                return self._state
+
+        def _record_success(self) -> None:
+            with self._lock:
+                if self._state == Server.CircuitBreaker.State.HALF_OPEN:
+                    self._success_count += 1
+                    if self._success_count >= self.config.success_threshold:
+                        self._state = Server.CircuitBreaker.State.CLOSED
+                        self._failure_count = 0
+                elif self._state == Server.CircuitBreaker.State.CLOSED:
+                    self._failure_count = 0
+
+        def _record_failure(self) -> None:
+            with self._lock:
+                self._failure_count += 1
+                self._last_failure_time = time.time()
+                if self._state == Server.CircuitBreaker.State.HALF_OPEN or (
+                    self._state == Server.CircuitBreaker.State.CLOSED
+                    and self._failure_count >= self.config.failure_threshold
+                ):
+                    self._state = Server.CircuitBreaker.State.OPEN
+
+        def reset(self) -> None:
+            """Reset circuit breaker."""
+            with self._lock:
+                self._state = Server.CircuitBreaker.State.CLOSED
+                self._failure_count = 0
+                self._success_count = 0
+                self._last_failure_time = None
+
+        def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
+            @wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                if self.state == Server.CircuitBreaker.State.OPEN:
+                    msg = f"Circuit breaker open, call to {func.__name__} blocked"
+                    raise Server.CircuitBreaker.OpenError(msg)
+                try:
+                    result = func(*args, **kwargs)
+                except self.config.excluded_exceptions:
+                    raise
+                except Exception:
+                    self._record_failure()
+                    raise
+                else:
+                    self._record_success()
+                    return result
+
+            return wrapper
+
+    # =========================================================================
+    # NESTED RATE LIMITER
+    # =========================================================================
+
+    class RateLimiter:
+        """Token bucket rate limiter."""
+
+        def __init__(self, rate: float, capacity: float) -> None:
+            self._rate = rate
+            self._capacity = capacity
+            self._tokens = capacity
+            self._last_update = time.monotonic()
+            self._lock = threading.Lock()
+
+        def _refill(self) -> None:
+            now = time.monotonic()
+            elapsed = now - self._last_update
+            self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
+            self._last_update = now
+
+        def acquire(self, tokens: float = 1.0) -> bool:
+            with self._lock:
+                self._refill()
+                if self._tokens >= tokens:
+                    self._tokens -= tokens
+                    return True
+                return False
+
+    # =========================================================================
+    # NESTED HEALTH MONITOR
+    # =========================================================================
+
+    class HealthMonitor:
+        """Health monitoring for the server."""
+
+        @dataclass
+        class Status:
+            """Server health status."""
+
+            healthy: bool
+            uptime_seconds: float
+            connections_total: int
+            connections_active: int
+            requests_total: int
+            requests_failed: int
+            last_error: str | None = None
+            environment: str = ""
+            mt5_available: bool = False
+            circuit_state: str = "closed"
+
+        def __init__(self) -> None:
+            self._start_time = time.time()
+            self._connections_total = 0
+            self._connections_active = 0
+            self._requests_total = 0
+            self._requests_failed = 0
+            self._last_error: str | None = None
+            self._lock = threading.Lock()
+            self._environment = detect_environment()
+
+        def record_connection(self) -> None:
+            with self._lock:
+                self._connections_total += 1
+                self._connections_active += 1
+
+        def record_disconnection(self) -> None:
+            with self._lock:
+                self._connections_active = max(0, self._connections_active - 1)
+
+        def record_request(self, success: bool = True) -> None:
+            with self._lock:
+                self._requests_total += 1
+                if not success:
+                    self._requests_failed += 1
+
+        def record_error(self, error: str) -> None:
+            with self._lock:
+                self._last_error = error
+                self._requests_failed += 1
+
+        def clear_error(self) -> None:
+            with self._lock:
+                self._last_error = None
+
+        def get_status(
+            self, circuit_state: str = "closed"
+        ) -> Server.HealthMonitor.Status:
+            with self._lock:
+                return Server.HealthMonitor.Status(
+                    healthy=self._last_error is None,
+                    uptime_seconds=time.time() - self._start_time,
+                    connections_total=self._connections_total,
+                    connections_active=self._connections_active,
+                    requests_total=self._requests_total,
+                    requests_failed=self._requests_failed,
+                    last_error=self._last_error,
+                    environment=self._environment.name,
+                    mt5_available=is_mt5_available(),
+                    circuit_state=circuit_state,
+                )
+
+    # =========================================================================
+    # MAIN SERVER IMPLEMENTATION
+    # =========================================================================
+
+    def __init__(self, config: Config | None = None) -> None:
+        self.config = config or Server.Config()
+        self._state = Server.State.STOPPED
+        self._restart_count = 0
+        self._shutdown_event = threading.Event()
+        self._process: subprocess.Popen[str] | None = None
+        self._server: ThreadedServer | ThreadPoolServer | None = None
+        self._server_thread: threading.Thread | None = None
+        self._log = log.bind(
+            host=self.config.host,
+            port=self.config.port,
+            mode=self.config.mode.value,
+        )
+
+    @property
+    def state(self) -> State:
+        return self._state
+
+    @property
+    def restart_count(self) -> int:
+        return self._restart_count
+
+    def _set_state(self, state: State) -> None:
+        old_state = self._state
+        self._state = state
+        self._log.debug(
+            "state_changed", old_state=old_state.value, new_state=state.value
+        )
+
+    def _calculate_restart_delay(self) -> float:
+        return exponential_backoff_with_jitter(
+            self._restart_count,
+            base_delay=self.config.restart_delay_base,
+            max_delay=self.config.restart_delay_max,
+            multiplier=self.config.restart_delay_multiplier,
+            jitter_factor=self.config.jitter_factor,
+        )
+
+    def _setup_signal_handlers(self) -> None:
+        def signal_handler(signum: int, _frame: FrameType | None) -> None:
+            sig_name = signal.Signals(signum).name
+            self._log.info("signal_received", signal=sig_name)
+            self.stop()
+
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+
+    def _run_wine_server(self) -> int:
+        """Run RPyC server via Wine subprocess using mt5linux.bridge module."""
+        cmd = [
+            self.config.wine_cmd,
+            self.config.python_exe,
+            "-m",
+            "mt5linux.bridge",
+            "--host",
+            self.config.host,
+            "-p",
+            str(self.config.port),
+        ]
+
+        self._log.info("starting_wine_bridge", command=" ".join(cmd))
+
+        self._process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        if self._process.stdout:
+            for raw_line in self._process.stdout:
+                output = raw_line.rstrip()
+                if output:
+                    if "error" in output.lower():
+                        self._log.error("wine_output", message=output)
+                    elif "warning" in output.lower():
+                        self._log.warning("wine_output", message=output)
+                    else:
+                        self._log.info("wine_output", message=output)
+
+                if self._shutdown_event.is_set():
+                    break
+
+        return self._process.wait()
+
+    def _run_direct_server(self) -> int:
+        """Run RPyC server directly (Linux mode)."""
+        self._log.info(
+            "starting_direct_server",
+            use_thread_pool=self.config.use_thread_pool,
+            mt5_available=is_mt5_available(),
+        )
+
+        server_class: type[ThreadedServer | ThreadPoolServer]
+        kwargs: dict[str, Any] = {
+            "service": MT5Service,
+            "hostname": self.config.host,
+            "port": self.config.port,
+            "reuse_addr": True,
+            "protocol_config": self.config.get_protocol_config(),
+        }
+
+        if self.config.use_thread_pool:
+            server_class = ThreadPoolServer
+            kwargs["nbThreads"] = self.config.thread_pool_size
+        else:
+            server_class = ThreadedServer
+
+        self._server = server_class(**kwargs)
+
+        try:
+            self._server.start()
+        except KeyboardInterrupt:
+            self._log.info("server_interrupted")
+        except Exception as e:
+            _health_monitor.record_error(str(e))
+            raise
+        finally:
+            if self._server:
+                self._server.close()
+
+        return 0
+
+    def _server_loop(self) -> None:
+        self._set_state(Server.State.RUNNING)
+
+        while not self._shutdown_event.is_set():
+            self._set_state(Server.State.STARTING)
+
+            try:
+                if self.config.mode == Server.Mode.WINE:
+                    exit_code = self._run_wine_server()
+                else:
+                    exit_code = self._run_direct_server()
+
+                if self._shutdown_event.is_set():
+                    self._log.info("server_shutdown_requested")
+                    break
+
+                if exit_code == 0:
+                    self._log.info("server_exited_normally", exit_code=exit_code)
+                    self._restart_count = 0
+                    break
+
+                self._restart_count += 1
+                if self._restart_count > self.config.max_restarts:
+                    self._log.error(
+                        "max_restarts_exceeded", max_restarts=self.config.max_restarts
+                    )
+                    self._set_state(Server.State.FAILED)
+                    break
+
+                delay = self._calculate_restart_delay()
+                self._log.warning(
+                    "server_crashed",
+                    exit_code=exit_code,
+                    restart_count=self._restart_count,
+                    restart_delay=f"{delay:.2f}s",
+                )
+
+                self._set_state(Server.State.RESTARTING)
+
+                if self._shutdown_event.wait(delay):
+                    break
+
+            except Exception:  # noqa: BLE001 - Server resilience requires broad catch
+                self._log.exception("server_error")
+                self._restart_count += 1
+
+                if self._restart_count > self.config.max_restarts:
+                    self._set_state(Server.State.FAILED)
+                    break
+
+                delay = self._calculate_restart_delay()
+                self._set_state(Server.State.RESTARTING)
+
+                if self._shutdown_event.wait(delay):
+                    break
+
+        self._set_state(Server.State.STOPPED)
+
+    def run(self, *, blocking: bool = True) -> None:
+        self._shutdown_event.clear()
+        self._setup_signal_handlers()
+
+        self._log.info(
+            "server_starting",
+            blocking=blocking,
+            max_restarts=self.config.max_restarts,
+            use_thread_pool=self.config.use_thread_pool,
+        )
+
+        if blocking:
+            self._server_loop()
+        else:
+            self._server_thread = threading.Thread(
+                target=self._server_loop,
+                name="mt5linux-server",
+                daemon=True,
+            )
+            self._server_thread.start()
+
+    def stop(self, timeout: float = 10.0) -> None:
+        self._log.info("stopping_server")
+        self._set_state(Server.State.STOPPING)
+        self._shutdown_event.set()
+
+        if self._process and self._process.poll() is None:
+            self._log.debug("terminating_wine_process")
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._log.warning("killing_wine_process")
+                self._process.kill()
+
+        if self._server:
+            self._log.debug("closing_rpyc_server")
+            self._server.close()
+
+        if self._server_thread and self._server_thread.is_alive():
+            self._server_thread.join(timeout=timeout)
+
+        self._set_state(Server.State.STOPPED)
+        self._log.info("server_stopped")
+
+    def check_health(self) -> bool:
+        """Check if server is healthy using modern rpyc.connect()."""
+        try:
+            # S104: Comparing against 0.0.0.0 to substitute with localhost
+            host = "localhost" if self.config.host == "0.0.0.0" else self.config.host  # noqa: S104
+            conn = rpyc.connect(
+                host, self.config.port, config={"sync_request_timeout": 5}
+            )
+            status = conn.root.health_check()
+            conn.close()
+            healthy_value = status.get("healthy", False)
+            return _validate_bool(healthy_value)
+        except Exception:  # noqa: BLE001 - Catch all for health check resilience
+            return False
+
+    @contextmanager
+    def managed(self) -> Iterator[Server]:
+        self.run(blocking=False)
+        try:
+            yield self
+        finally:
+            self.stop()
+
+
+# =============================================================================
+# Global Instances (used by MT5Service)
+# =============================================================================
+
+_health_monitor = Server.HealthMonitor()
+_mt5_circuit_breaker = Server.CircuitBreaker(
+    Server.CircuitBreaker.Config(failure_threshold=5)
+)
+
+
 # =============================================================================
 # MT5Service - Modern RPyC Service (NO STUBS)
 # =============================================================================
@@ -435,7 +762,7 @@ class MT5Service(rpyc.Service):
     # Module is dynamically imported - use Any since it's a third-party module
     _mt5_module: Any = None
     _mt5_lock = threading.RLock()
-    _rate_limiter = TokenBucketRateLimiter(rate=100, capacity=200)
+    _rate_limiter = Server.RateLimiter(rate=100, capacity=200)
 
     def on_connect(self, conn: rpyc.Connection) -> None:  # noqa: ARG002
         """Initialize MT5 module on connection.
@@ -498,7 +825,7 @@ class MT5Service(rpyc.Service):
 
     def exposed_health_check(self) -> dict[str, Any]:
         """Get server health status."""
-        status = _health_monitor.get_status(_mt5_circuit_breaker.state.value)
+        status = _health_monitor.get_status(str(_mt5_circuit_breaker.state.value))
         return {
             "healthy": status.healthy,
             "uptime_seconds": status.uptime_seconds,
@@ -791,320 +1118,19 @@ class MT5Service(rpyc.Service):
 
 
 # =============================================================================
-# Server Configuration
+# Backward Compatibility Aliases
 # =============================================================================
 
-
-class ServerMode(Enum):
-    """Server execution mode."""
-
-    DIRECT = "direct"  # Run directly (Linux)
-    WINE = "wine"  # Run via Wine subprocess
-
-
-class ServerState(Enum):
-    """Server lifecycle state."""
-
-    STOPPED = "stopped"
-    STARTING = "starting"
-    RUNNING = "running"
-    RESTARTING = "restarting"
-    STOPPING = "stopping"
-    FAILED = "failed"
-
-
-@dataclass
-class ServerConfig:
-    """Server configuration."""
-
-    host: str = "0.0.0.0"  # noqa: S104 - Intentional binding to all interfaces
-    port: int = 18812
-    mode: ServerMode = ServerMode.DIRECT
-
-    # Wine mode settings
-    wine_cmd: str = "wine"
-    python_exe: str = "python.exe"
-
-    # Threading settings
-    use_thread_pool: bool = True
-    thread_pool_size: int = 10
-
-    # Resilience settings
-    max_restarts: int = 10
-    restart_delay_base: float = 1.0
-    restart_delay_max: float = 60.0
-    restart_delay_multiplier: float = 2.0
-    jitter_factor: float = 0.1
-
-    # RPyC protocol settings
-    sync_request_timeout: int = 300
-    allow_pickle: bool = True
-
-    def get_protocol_config(self) -> dict[str, Any]:
-        return {
-            "allow_public_attrs": True,
-            "allow_pickle": self.allow_pickle,
-            "sync_request_timeout": self.sync_request_timeout,
-        }
-
-
-# =============================================================================
-# Server Class
-# =============================================================================
-
-
-class Server:
-    """Production-grade RPyC server with automatic recovery."""
-
-    def __init__(self, config: ServerConfig | None = None) -> None:
-        self.config = config or ServerConfig()
-        self._state = ServerState.STOPPED
-        self._restart_count = 0
-        self._shutdown_event = threading.Event()
-        self._process: subprocess.Popen[str] | None = None
-        self._server: ThreadedServer | ThreadPoolServer | None = None
-        self._server_thread: threading.Thread | None = None
-        self._log = log.bind(
-            host=self.config.host,
-            port=self.config.port,
-            mode=self.config.mode.value,
-        )
-
-    @property
-    def state(self) -> ServerState:
-        return self._state
-
-    @property
-    def restart_count(self) -> int:
-        return self._restart_count
-
-    def _set_state(self, state: ServerState) -> None:
-        old_state = self._state
-        self._state = state
-        self._log.debug(
-            "state_changed", old_state=old_state.value, new_state=state.value
-        )
-
-    def _calculate_restart_delay(self) -> float:
-        return exponential_backoff_with_jitter(
-            self._restart_count,
-            base_delay=self.config.restart_delay_base,
-            max_delay=self.config.restart_delay_max,
-            multiplier=self.config.restart_delay_multiplier,
-            jitter_factor=self.config.jitter_factor,
-        )
-
-    def _setup_signal_handlers(self) -> None:
-        def signal_handler(signum: int, _frame: FrameType | None) -> None:
-            sig_name = signal.Signals(signum).name
-            self._log.info("signal_received", signal=sig_name)
-            self.stop()
-
-        signal.signal(signal.SIGTERM, signal_handler)
-        signal.signal(signal.SIGINT, signal_handler)
-
-    def _run_wine_server(self) -> int:
-        """Run RPyC server via Wine subprocess using mt5linux.bridge module."""
-        cmd = [
-            self.config.wine_cmd,
-            self.config.python_exe,
-            "-m",
-            "mt5linux.bridge",
-            "--host",
-            self.config.host,
-            "-p",
-            str(self.config.port),
-        ]
-
-        self._log.info("starting_wine_bridge", command=" ".join(cmd))
-
-        self._process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-
-        if self._process.stdout:
-            for raw_line in self._process.stdout:
-                output = raw_line.rstrip()
-                if output:
-                    if "error" in output.lower():
-                        self._log.error("wine_output", message=output)
-                    elif "warning" in output.lower():
-                        self._log.warning("wine_output", message=output)
-                    else:
-                        self._log.info("wine_output", message=output)
-
-                if self._shutdown_event.is_set():
-                    break
-
-        return self._process.wait()
-
-    def _run_direct_server(self) -> int:
-        """Run RPyC server directly (Linux mode)."""
-        self._log.info(
-            "starting_direct_server",
-            use_thread_pool=self.config.use_thread_pool,
-            mt5_available=is_mt5_available(),
-        )
-
-        server_class: type[ThreadedServer | ThreadPoolServer]
-        kwargs: dict[str, Any] = {
-            "service": MT5Service,
-            "hostname": self.config.host,
-            "port": self.config.port,
-            "reuse_addr": True,
-            "protocol_config": self.config.get_protocol_config(),
-        }
-
-        if self.config.use_thread_pool:
-            server_class = ThreadPoolServer
-            kwargs["nbThreads"] = self.config.thread_pool_size
-        else:
-            server_class = ThreadedServer
-
-        self._server = server_class(**kwargs)
-
-        try:
-            self._server.start()
-        except KeyboardInterrupt:
-            self._log.info("server_interrupted")
-        except Exception as e:
-            _health_monitor.record_error(str(e))
-            raise
-        finally:
-            if self._server:
-                self._server.close()
-
-        return 0
-
-    def _server_loop(self) -> None:
-        self._set_state(ServerState.RUNNING)
-
-        while not self._shutdown_event.is_set():
-            self._set_state(ServerState.STARTING)
-
-            try:
-                if self.config.mode == ServerMode.WINE:
-                    exit_code = self._run_wine_server()
-                else:
-                    exit_code = self._run_direct_server()
-
-                if self._shutdown_event.is_set():
-                    self._log.info("server_shutdown_requested")
-                    break
-
-                if exit_code == 0:
-                    self._log.info("server_exited_normally", exit_code=exit_code)
-                    self._restart_count = 0
-                    break
-
-                self._restart_count += 1
-                if self._restart_count > self.config.max_restarts:
-                    self._log.error(
-                        "max_restarts_exceeded", max_restarts=self.config.max_restarts
-                    )
-                    self._set_state(ServerState.FAILED)
-                    break
-
-                delay = self._calculate_restart_delay()
-                self._log.warning(
-                    "server_crashed",
-                    exit_code=exit_code,
-                    restart_count=self._restart_count,
-                    restart_delay=f"{delay:.2f}s",
-                )
-
-                self._set_state(ServerState.RESTARTING)
-
-                if self._shutdown_event.wait(delay):
-                    break
-
-            except Exception:  # noqa: BLE001 - Server resilience requires broad catch
-                self._log.exception("server_error")
-                self._restart_count += 1
-
-                if self._restart_count > self.config.max_restarts:
-                    self._set_state(ServerState.FAILED)
-                    break
-
-                delay = self._calculate_restart_delay()
-                self._set_state(ServerState.RESTARTING)
-
-                if self._shutdown_event.wait(delay):
-                    break
-
-        self._set_state(ServerState.STOPPED)
-
-    def run(self, *, blocking: bool = True) -> None:
-        self._shutdown_event.clear()
-        self._setup_signal_handlers()
-
-        self._log.info(
-            "server_starting",
-            blocking=blocking,
-            max_restarts=self.config.max_restarts,
-            use_thread_pool=self.config.use_thread_pool,
-        )
-
-        if blocking:
-            self._server_loop()
-        else:
-            self._server_thread = threading.Thread(
-                target=self._server_loop,
-                name="mt5linux-server",
-                daemon=True,
-            )
-            self._server_thread.start()
-
-    def stop(self, timeout: float = 10.0) -> None:
-        self._log.info("stopping_server")
-        self._set_state(ServerState.STOPPING)
-        self._shutdown_event.set()
-
-        if self._process and self._process.poll() is None:
-            self._log.debug("terminating_wine_process")
-            self._process.terminate()
-            try:
-                self._process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self._log.warning("killing_wine_process")
-                self._process.kill()
-
-        if self._server:
-            self._log.debug("closing_rpyc_server")
-            self._server.close()
-
-        if self._server_thread and self._server_thread.is_alive():
-            self._server_thread.join(timeout=timeout)
-
-        self._set_state(ServerState.STOPPED)
-        self._log.info("server_stopped")
-
-    def check_health(self) -> bool:
-        """Check if server is healthy using modern rpyc.connect()."""
-        try:
-            # S104: Comparing against 0.0.0.0 to substitute with localhost
-            host = "localhost" if self.config.host == "0.0.0.0" else self.config.host  # noqa: S104
-            conn = rpyc.connect(
-                host, self.config.port, config={"sync_request_timeout": 5}
-            )
-            status = conn.root.health_check()
-            conn.close()
-            healthy_value = status.get("healthy", False)
-            return _validate_bool(healthy_value)
-        except Exception:  # noqa: BLE001 - Catch all for health check resilience
-            return False
-
-    @contextmanager
-    def managed(self) -> Iterator[Server]:
-        self.run(blocking=False)
-        try:
-            yield self
-        finally:
-            self.stop()
+# Old names that tests/external code may use
+ServerMode = Server.Mode
+ServerState = Server.State
+ServerConfig = Server.Config
+CircuitState = Server.CircuitBreaker.State
+CircuitBreakerConfig = Server.CircuitBreaker.Config
+CircuitBreakerOpenError = Server.CircuitBreaker.OpenError
+TokenBucketRateLimiter = Server.RateLimiter
+HealthStatus = Server.HealthMonitor.Status
+HealthMonitor = Server.HealthMonitor
 
 
 # =============================================================================
@@ -1112,7 +1138,7 @@ class Server:
 # =============================================================================
 
 
-def parse_args(argv: list[str] | None = None) -> ServerConfig:
+def parse_args(argv: list[str] | None = None) -> Server.Config:
     parser = argparse.ArgumentParser(
         description="Modern RPyC server for MetaTrader5 (NO STUBS)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -1149,9 +1175,9 @@ def parse_args(argv: list[str] | None = None) -> ServerConfig:
 
     args = parser.parse_args(argv)
 
-    mode = ServerMode.WINE if args.wine_cmd else ServerMode.DIRECT
+    mode = Server.Mode.WINE if args.wine_cmd else Server.Mode.DIRECT
 
-    return ServerConfig(
+    return Server.Config(
         host=args.host,
         port=args.port,
         mode=mode,
@@ -1172,10 +1198,10 @@ def run_server(
     python_exe: str = "python.exe",
     max_restarts: int = 10,
 ) -> None:
-    config = ServerConfig(
+    config = Server.Config(
         host=host,
         port=port,
-        mode=ServerMode.WINE if wine_cmd else ServerMode.DIRECT,
+        mode=Server.Mode.WINE if wine_cmd else Server.Mode.DIRECT,
         wine_cmd=wine_cmd or "wine",
         python_exe=python_exe,
         max_restarts=max_restarts,
@@ -1197,7 +1223,7 @@ def main() -> int:
     if is_positional_mode:
         host = sys.argv[1]
         port = int(sys.argv[2])
-        config = ServerConfig(host=host, port=port, mode=ServerMode.DIRECT)
+        config = Server.Config(host=host, port=port, mode=Server.Mode.DIRECT)
     else:
         config = parse_args()
 
@@ -1222,7 +1248,7 @@ def main() -> int:
         log.exception("mt5_not_available", error=str(e))
         return 1
     else:
-        return 0 if server.state != ServerState.FAILED else 1
+        return 0 if server.state != Server.State.FAILED else 1
 
 
 if __name__ == "__main__":

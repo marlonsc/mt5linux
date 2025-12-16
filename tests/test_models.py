@@ -8,13 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-from mt5linux.enums import (
-    OrderFilling,
-    OrderTime,
-    OrderType,
-    TradeAction,
-    TradeRetcode,
-)
+from mt5linux.constants import MT5
 from mt5linux.models import (
     AccountInfo,
     OrderRequest,
@@ -31,29 +25,29 @@ class TestOrderRequest:
     def test_valid_market_order(self) -> None:
         """Test valid market buy order."""
         request = OrderRequest(
-            action=TradeAction.DEAL,
+            action=MT5.TradeAction.DEAL,
             symbol="EURUSD",
             volume=0.1,
-            type=OrderType.BUY,
+            type=MT5.OrderType.BUY,
         )
-        assert request.action == TradeAction.DEAL
+        assert request.action == MT5.TradeAction.DEAL
         assert request.symbol == "EURUSD"
         assert request.volume == 0.1
-        assert request.type == OrderType.BUY
+        assert request.type == MT5.OrderType.BUY
         assert request.is_market_order is True
 
     def test_valid_limit_order(self) -> None:
         """Test valid limit order."""
         request = OrderRequest(
-            action=TradeAction.DEAL,
+            action=MT5.TradeAction.DEAL,
             symbol="EURUSD",
             volume=0.5,
-            type=OrderType.BUY_LIMIT,
+            type=MT5.OrderType.BUY_LIMIT,
             price=1.0900,
             sl=1.0850,
             tp=1.1000,
         )
-        assert request.type == OrderType.BUY_LIMIT
+        assert request.type == MT5.OrderType.BUY_LIMIT
         assert request.price == 1.0900
         assert request.is_market_order is False
 
@@ -61,10 +55,10 @@ class TestOrderRequest:
         """Test validation rejects zero volume."""
         with pytest.raises(ValidationError) as exc_info:
             OrderRequest(
-                action=TradeAction.DEAL,
+                action=MT5.TradeAction.DEAL,
                 symbol="EURUSD",
                 volume=0,
-                type=OrderType.BUY,
+                type=MT5.OrderType.BUY,
             )
         assert "volume" in str(exc_info.value)
 
@@ -72,37 +66,37 @@ class TestOrderRequest:
         """Test validation rejects negative volume."""
         with pytest.raises(ValidationError):
             OrderRequest(
-                action=TradeAction.DEAL,
+                action=MT5.TradeAction.DEAL,
                 symbol="EURUSD",
                 volume=-0.1,
-                type=OrderType.BUY,
+                type=MT5.OrderType.BUY,
             )
 
     def test_invalid_volume_too_large(self) -> None:
         """Test validation rejects volume > 1000."""
         with pytest.raises(ValidationError):
             OrderRequest(
-                action=TradeAction.DEAL,
+                action=MT5.TradeAction.DEAL,
                 symbol="EURUSD",
                 volume=1001,
-                type=OrderType.BUY,
+                type=MT5.OrderType.BUY,
             )
 
     def test_to_dict_basic(self) -> None:
         """Test to_dict produces valid MT5 request."""
         request = OrderRequest(
-            action=TradeAction.DEAL,
+            action=MT5.TradeAction.DEAL,
             symbol="EURUSD",
             volume=0.1,
-            type=OrderType.BUY,
+            type=MT5.OrderType.BUY,
             deviation=20,
         )
         d = request.to_dict()
 
-        assert d["action"] == 1  # TradeAction.DEAL
+        assert d["action"] == 1  # MT5.TradeAction.DEAL
         assert d["symbol"] == "EURUSD"
         assert d["volume"] == 0.1
-        assert d["type"] == 0  # OrderType.BUY
+        assert d["type"] == 0  # MT5.OrderType.BUY
         assert d["deviation"] == 20
         assert "sl" not in d  # Zero values excluded
         assert "tp" not in d
@@ -110,10 +104,10 @@ class TestOrderRequest:
     def test_to_dict_with_sl_tp(self) -> None:
         """Test to_dict includes sl/tp when set."""
         request = OrderRequest(
-            action=TradeAction.DEAL,
+            action=MT5.TradeAction.DEAL,
             symbol="EURUSD",
             volume=0.1,
-            type=OrderType.BUY,
+            type=MT5.OrderType.BUY,
             sl=1.0900,
             tp=1.1100,
         )
@@ -126,12 +120,12 @@ class TestOrderRequest:
         """Test to_dict converts expiration to timestamp."""
         exp = datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
         request = OrderRequest(
-            action=TradeAction.DEAL,
+            action=MT5.TradeAction.DEAL,
             symbol="EURUSD",
             volume=0.1,
-            type=OrderType.BUY_LIMIT,
+            type=MT5.OrderType.BUY_LIMIT,
             price=1.0900,
-            type_time=OrderTime.SPECIFIED,
+            type_time=MT5.OrderTime.SPECIFIED,
             expiration=exp,
         )
         d = request.to_dict()
@@ -142,10 +136,10 @@ class TestOrderRequest:
     def test_frozen_model(self) -> None:
         """Test model is frozen (immutable)."""
         request = OrderRequest(
-            action=TradeAction.DEAL,
+            action=MT5.TradeAction.DEAL,
             symbol="EURUSD",
             volume=0.1,
-            type=OrderType.BUY,
+            type=MT5.OrderType.BUY,
         )
         with pytest.raises(ValidationError):
             request.volume = 0.2
@@ -157,7 +151,7 @@ class TestOrderResult:
     def test_success_result(self) -> None:
         """Test successful order result."""
         result = OrderResult(
-            retcode=TradeRetcode.DONE,
+            retcode=MT5.TradeRetcode.DONE,
             deal=12345,
             order=67890,
             volume=0.1,
@@ -171,7 +165,7 @@ class TestOrderResult:
     def test_partial_result(self) -> None:
         """Test partial fill result."""
         result = OrderResult(
-            retcode=TradeRetcode.DONE_PARTIAL,
+            retcode=MT5.TradeRetcode.DONE_PARTIAL,
             volume=0.05,
         )
         assert result.is_success is False
@@ -180,7 +174,7 @@ class TestOrderResult:
     def test_error_result(self) -> None:
         """Test error result."""
         result = OrderResult(
-            retcode=TradeRetcode.NO_MONEY,
+            retcode=MT5.TradeRetcode.NO_MONEY,
             comment="Not enough money",
         )
         assert result.is_success is False
@@ -209,7 +203,7 @@ class TestOrderResult:
         """Test from_mt5 with None returns error result."""
         result = OrderResult.from_mt5(None)
 
-        assert result.retcode == TradeRetcode.ERROR
+        assert result.retcode == MT5.TradeRetcode.ERROR
         assert "No result" in result.comment
 
 
@@ -364,25 +358,25 @@ class TestEnums:
 
     def test_trade_action_values(self) -> None:
         """Test TradeAction enum values match MT5."""
-        assert TradeAction.DEAL.value == 1
-        assert TradeAction.PENDING.value == 5
-        assert TradeAction.CLOSE_BY.value == 10
+        assert MT5.TradeAction.DEAL.value == 1
+        assert MT5.TradeAction.PENDING.value == 5
+        assert MT5.TradeAction.CLOSE_BY.value == 10
 
     def test_order_type_values(self) -> None:
         """Test OrderType enum values match MT5."""
-        assert OrderType.BUY.value == 0
-        assert OrderType.SELL.value == 1
-        assert OrderType.BUY_LIMIT.value == 2
-        assert OrderType.SELL_LIMIT.value == 3
+        assert MT5.OrderType.BUY.value == 0
+        assert MT5.OrderType.SELL.value == 1
+        assert MT5.OrderType.BUY_LIMIT.value == 2
+        assert MT5.OrderType.SELL_LIMIT.value == 3
 
     def test_order_filling_values(self) -> None:
         """Test OrderFilling enum values match MT5."""
-        assert OrderFilling.FOK.value == 0
-        assert OrderFilling.IOC.value == 1
-        assert OrderFilling.RETURN.value == 2
+        assert MT5.OrderFilling.FOK.value == 0
+        assert MT5.OrderFilling.IOC.value == 1
+        assert MT5.OrderFilling.RETURN.value == 2
 
     def test_trade_retcode_values(self) -> None:
         """Test TradeRetcode enum values match MT5."""
-        assert TradeRetcode.DONE.value == 10009
-        assert TradeRetcode.REQUOTE.value == 10004
-        assert TradeRetcode.NO_MONEY.value == 10019
+        assert MT5.TradeRetcode.DONE.value == 10009
+        assert MT5.TradeRetcode.REQUOTE.value == 10004
+        assert MT5.TradeRetcode.NO_MONEY.value == 10019

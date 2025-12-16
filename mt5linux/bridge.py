@@ -45,7 +45,7 @@ class MT5Service(rpyc.Service):
                 MT5Service._mt5_module = MetaTrader5
                 print("[mt5bridge] MT5 module loaded")  # noqa: T201
 
-    def on_disconnect(self, _conn: rpyc.Connection) -> None:
+    def on_disconnect(self, conn: rpyc.Connection) -> None:
         pass
 
     def exposed_get_mt5(self) -> Any:
