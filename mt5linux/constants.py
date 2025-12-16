@@ -1,19 +1,22 @@
 """MT5 constants organized in a single container class.
 
-All MetaTrader5 constants are nested inside the MT5 class for:
+All MetaTrader5 constants are nested inside the MT5Constants class for:
 - Clean namespace (no loose code)
 - Logical grouping by category
 - Easy discovery via IDE autocomplete
-- Single import: `from mt5linux.constants import MT5`
+- Single import: `from mt5linux.constants import MT5Constants`
 
 Usage:
-    >>> from mt5linux.constants import MT5
-    >>> MT5.TimeFrame.H1
+    >>> from mt5linux.constants import MT5Constants
+    >>> MT5Constants.TimeFrame.H1
     16385
-    >>> MT5.TradeAction.DEAL
+    >>> MT5Constants.TradeAction.DEAL
     1
-    >>> MT5.OrderType.BUY
+    >>> MT5Constants.OrderType.BUY
     0
+
+Backward compatibility:
+    >>> from mt5linux.constants import MT5  # alias for MT5Constants
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ from __future__ import annotations
 from enum import IntEnum
 
 
-class MT5:
+class MT5Constants:
     """MetaTrader5 constants container.
 
     All MT5 constants organized by category as nested IntEnum classes.
@@ -389,4 +392,7 @@ class MT5:
         FRIDAY = 5
         SATURDAY = 6
 
+
+# Backward compatibility alias (to be removed in next major version)
+MT5 = MT5Constants
 

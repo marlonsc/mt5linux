@@ -20,7 +20,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from mt5linux.constants import MT5
+from mt5linux.constants import MT5Constants
 
 
 class MT5Models:
@@ -85,26 +85,27 @@ class MT5Models:
 
         model_config = ConfigDict(frozen=True, use_enum_values=True)
 
-        action: MT5.TradeAction
+        action: MT5Constants.TradeAction
         symbol: str
         volume: float = Field(gt=0, le=1000)
-        type: MT5.OrderType
+        type: MT5Constants.OrderType
         price: float = Field(ge=0, default=0.0)
         sl: float = Field(ge=0, default=0.0)
         tp: float = Field(ge=0, default=0.0)
         deviation: int = Field(ge=0, default=20)
         magic: int = Field(ge=0, default=0)
         comment: str = Field(max_length=31, default="")
-        type_time: MT5.OrderTime = MT5.OrderTime.GTC
+        type_time: MT5Constants.OrderTime = MT5Constants.OrderTime.GTC
         expiration: datetime | None = None
-        type_filling: MT5.OrderFilling = MT5.OrderFilling.FOK
+        type_filling: MT5Constants.OrderFilling = MT5Constants.OrderFilling.FOK
         position: int = Field(ge=0, default=0)
         position_by: int = Field(ge=0, default=0)
 
         @property
         def is_market_order(self) -> bool:
             """Check if this is a market order."""
-            return self.type in {MT5.OrderType.BUY, MT5.OrderType.SELL}
+            market_types = {MT5Constants.OrderType.BUY, MT5Constants.OrderType.SELL}
+            return self.type in market_types
 
         def to_dict(self) -> dict[str, Any]:
             """Convert to MT5 API request dict."""
@@ -156,12 +157,12 @@ class MT5Models:
         @property
         def is_success(self) -> bool:
             """Check if order was successful."""
-            return self.retcode == MT5.TradeRetcode.DONE
+            return self.retcode == MT5Constants.TradeRetcode.DONE
 
         @property
         def is_partial(self) -> bool:
             """Check if order was partially filled."""
-            return self.retcode == MT5.TradeRetcode.DONE_PARTIAL
+            return self.retcode == MT5Constants.TradeRetcode.DONE_PARTIAL
 
         @classmethod
         def from_mt5(cls, result: Any) -> Self | None:
@@ -171,7 +172,8 @@ class MT5Models:
             """
             if result is None:
                 return cls(
-                    retcode=MT5.TradeRetcode.ERROR, comment="No result from MT5"
+                    retcode=MT5Constants.TradeRetcode.ERROR,
+                    comment="No result from MT5",
                 )
             return super().from_mt5(result)
 
