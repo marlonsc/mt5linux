@@ -18,6 +18,7 @@ import rpyc
 from dotenv import load_dotenv
 
 from mt5linux import AsyncMetaTrader5, MetaTrader5
+from mt5linux.config import Defaults
 
 
 def is_docker_available() -> bool:
@@ -118,8 +119,8 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)  # Credentials override
 # Test container configuration
 # Default ports match mt5linux/docker-compose.yaml defaults
 TEST_RPYC_HOST = os.getenv("MT5_HOST", "localhost")
-TEST_RPYC_PORT = int(os.getenv("MT5_RPYC_PORT", "38812"))
-TEST_VNC_PORT = int(os.getenv("MT5_VNC_PORT", "33000"))
+TEST_RPYC_PORT = int(os.getenv("MT5_RPYC_PORT", str(Defaults.PORT_DOCKER_MAPPED)))
+TEST_VNC_PORT = int(os.getenv("MT5_VNC_PORT", str(Defaults.PORT_VNC)))
 TEST_CONTAINER_NAME = os.getenv("MT5_CONTAINER_NAME", "mt5linux-unit")
 
 # MT5 credentials for integration tests (MUST come from .env, no defaults)

@@ -1,6 +1,6 @@
 """Resilient server module tests (no MT5 credentials required).
 
-Tests for ServerConfig, ResilientServer, and argument parsing.
+Tests for Server.Config, ResilientServer, and argument parsing.
 """
 
 from __future__ import annotations
@@ -13,22 +13,19 @@ import pytest
 from mt5linux.__main__ import main
 from mt5linux.server import (
     Server,
-    ServerConfig,
-    ServerMode,
-    ServerState,
     parse_args,
 )
 
 
 class TestServerConfig:
-    """ServerConfig dataclass tests."""
+    """Server.Config dataclass tests."""
 
     def test_default_config(self) -> None:
         """Test default configuration values."""
-        config = ServerConfig()
+        config = Server.Config()
         assert config.host == "0.0.0.0"
         assert config.port == 18812
-        assert config.mode == ServerMode.DIRECT
+        assert config.mode == Server.Mode.DIRECT
         assert config.wine_cmd == "wine"
         assert config.python_exe == "python.exe"
         assert config.max_restarts == 10
@@ -37,17 +34,17 @@ class TestServerConfig:
 
     def test_custom_config(self) -> None:
         """Test custom configuration."""
-        config = ServerConfig(
+        config = Server.Config(
             host="127.0.0.1",
             port=8001,
-            mode=ServerMode.WINE,
+            mode=Server.Mode.WINE,
             wine_cmd="wine64",
             python_exe="python3.exe",
             max_restarts=5,
         )
         assert config.host == "127.0.0.1"
         assert config.port == 8001
-        assert config.mode == ServerMode.WINE
+        assert config.mode == Server.Mode.WINE
         assert config.wine_cmd == "wine64"
         assert config.python_exe == "python3.exe"
         assert config.max_restarts == 5
@@ -60,7 +57,7 @@ class TestParseArgs:
         config = parse_args([])
         assert config.host == "0.0.0.0"
         assert config.port == 18812
-        assert config.mode == ServerMode.DIRECT
+        assert config.mode == Server.Mode.DIRECT
 
     def test_custom_host(self) -> None:
         """Test custom host."""
@@ -80,13 +77,13 @@ class TestParseArgs:
     def test_wine_mode(self) -> None:
         """Test Wine mode activation."""
         config = parse_args(["--wine", "wine64"])
-        assert config.mode == ServerMode.WINE
+        assert config.mode == Server.Mode.WINE
         assert config.wine_cmd == "wine64"
 
     def test_wine_short_flag(self) -> None:
         """Test short Wine flag."""
         config = parse_args(["-w", "wine"])
-        assert config.mode == ServerMode.WINE
+        assert config.mode == Server.Mode.WINE
 
     def test_python_exe(self) -> None:
         """Test Python executable option."""
@@ -116,7 +113,7 @@ class TestParseArgs:
         )
         assert config.host == "0.0.0.0"
         assert config.port == 8001
-        assert config.mode == ServerMode.WINE
+        assert config.mode == Server.Mode.WINE
         assert config.wine_cmd == "wine64"
         assert config.python_exe == "python.exe"
         assert config.max_restarts == 15
@@ -128,19 +125,19 @@ class TestServer:
     def test_server_creation(self) -> None:
         """Test server instantiation."""
         server = Server()
-        assert server.state == ServerState.STOPPED
+        assert server.state == Server.State.STOPPED
         assert server.restart_count == 0
 
     def test_server_with_config(self) -> None:
         """Test server with custom config."""
-        config = ServerConfig(port=9999, max_restarts=3)
+        config = Server.Config(port=9999, max_restarts=3)
         server = Server(config)
         assert server.config.port == 9999
         assert server.config.max_restarts == 3
 
     def test_restart_delay_calculation(self) -> None:
         """Test exponential backoff calculation."""
-        config = ServerConfig(
+        config = Server.Config(
             restart_delay_base=1.0,
             restart_delay_multiplier=2.0,
             restart_delay_max=60.0,
@@ -168,7 +165,7 @@ class TestServer:
 
     def test_health_check_no_server(self) -> None:
         """Test health check when no server is running."""
-        server = Server(ServerConfig(port=59999))
+        server = Server(Server.Config(port=59999))
         assert server.check_health() is False
 
 
@@ -177,13 +174,13 @@ class TestServerModes:
 
     def test_mode_values(self) -> None:
         """Test mode enum values."""
-        assert ServerMode.DIRECT.value == "direct"
-        assert ServerMode.WINE.value == "wine"
+        assert Server.Mode.DIRECT.value == "direct"
+        assert Server.Mode.WINE.value == "wine"
 
     def test_mode_from_string(self) -> None:
         """Test mode enum from string."""
-        assert ServerMode("direct") == ServerMode.DIRECT
-        assert ServerMode("wine") == ServerMode.WINE
+        assert Server.Mode("direct") == Server.Mode.DIRECT
+        assert Server.Mode("wine") == Server.Mode.WINE
 
 
 class TestServerState:
@@ -191,12 +188,12 @@ class TestServerState:
 
     def test_state_values(self) -> None:
         """Test state enum values."""
-        assert ServerState.STOPPED.value == "stopped"
-        assert ServerState.STARTING.value == "starting"
-        assert ServerState.RUNNING.value == "running"
-        assert ServerState.RESTARTING.value == "restarting"
-        assert ServerState.STOPPING.value == "stopping"
-        assert ServerState.FAILED.value == "failed"
+        assert Server.State.STOPPED.value == "stopped"
+        assert Server.State.STARTING.value == "starting"
+        assert Server.State.RUNNING.value == "running"
+        assert Server.State.RESTARTING.value == "restarting"
+        assert Server.State.STOPPING.value == "stopping"
+        assert Server.State.FAILED.value == "failed"
 
 
 class TestMainModule:

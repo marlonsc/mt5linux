@@ -28,17 +28,9 @@ from functools import cache
 from typing import TYPE_CHECKING, Any, Self
 
 import rpyc
-import rpyc.core.channel
-import rpyc.core.stream
 from rpyc.utils.classic import obtain
 
 from mt5linux.config import config
-
-# =============================================================================
-# RPyC Performance Optimization for Large Data Transfers
-# =============================================================================
-RPYC_MAX_IO_CHUNK = 65355 * 10  # ~650KB chunks
-RPYC_COMPRESSION_LEVEL = 0  # Disable compression for speed
 
 log = logging.getLogger(__name__)
 
@@ -502,8 +494,8 @@ class MetaTrader5:
                 "sync_request_timeout": self._timeout,
                 "allow_public_attrs": True,
                 "allow_pickle": True,
-                "max_io_chunk": RPYC_MAX_IO_CHUNK,
-                "compression_level": RPYC_COMPRESSION_LEVEL,
+                "max_io_chunk": config.RPYC_MAX_IO_CHUNK,
+                "compression_level": config.RPYC_COMPRESSION_LEVEL,
             },
         )
         if self._conn is None:

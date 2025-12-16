@@ -38,6 +38,8 @@ from pathlib import Path
 import rpyc
 from rpyc.core.service import VoidService
 
+from mt5linux.config import Defaults
+
 # Mapping of MT5 constant prefixes to enum class names
 PREFIX_TO_CLASS: dict[str, str] = {
     "TIMEFRAME_": "TimeFrame",
@@ -71,7 +73,10 @@ PREFIX_TO_CLASS: dict[str, str] = {
 }
 
 
-def is_rpyc_available(host: str = "localhost", port: int = 38812) -> bool:
+def is_rpyc_available(
+    host: str = "localhost",
+    port: int = Defaults.PORT_DOCKER_MAPPED,
+) -> bool:
     """Check if rpyc server is available on test container port."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -83,7 +88,10 @@ def is_rpyc_available(host: str = "localhost", port: int = 38812) -> bool:
         return False
 
 
-def extract_from_rpyc(host: str = "localhost", port: int = 38812) -> dict[str, int]:
+def extract_from_rpyc(
+    host: str = "localhost",
+    port: int = Defaults.PORT_DOCKER_MAPPED,
+) -> dict[str, int]:
     """Extract constants from MT5 via rpyc 6.x native API."""
     # rpyc 6.x native API - connect to SlaveService
     conn = rpyc.connect(host, port, service=VoidService)
@@ -282,18 +290,18 @@ def generate_enums(  # noqa: PLR0911 - Complex codegen needs multiple return pat
     output_path: Path | None = None,
     check_only: bool = False,
     host: str = "localhost",
-    port: int = 38812,
+    port: int = Defaults.PORT_DOCKER_MAPPED,
 ) -> bool:
     """Generate constants.py from MT5 constants.
 
-    REQUIRES Docker test container running on port 38812.
+    REQUIRES Docker test container running on PORT_DOCKER_MAPPED (38812).
     No fallback - fails if Docker not available.
 
     Args:
         output_path: Output file path (default: mt5linux/constants.py)
         check_only: Only check if file needs commit (don't regenerate)
         host: rpyc server host
-        port: rpyc server port (default: 38812 for test container)
+        port: rpyc server port (default: Defaults.PORT_DOCKER_MAPPED)
 
     Returns:
         True if generation successful (or check passed)
@@ -373,8 +381,11 @@ def main() -> int:
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("MT5_RPYC_PORT", "38812")),
-        help="rpyc server port (default: 38812 or MT5_RPYC_PORT env)",
+        default=int(os.getenv("MT5_RPYC_PORT", str(Defaults.PORT_DOCKER_MAPPED))),
+        help=(
+            f"rpyc server port "
+            f"(default: {Defaults.PORT_DOCKER_MAPPED} or MT5_RPYC_PORT env)"
+        ),
     )
     args = parser.parse_args()
 

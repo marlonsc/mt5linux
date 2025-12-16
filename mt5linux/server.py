@@ -45,6 +45,8 @@ import rpyc
 import structlog
 from rpyc.utils.server import ThreadedServer, ThreadPoolServer
 
+from mt5linux.config import config
+
 # Configure structlog for clean output
 structlog.configure(
     processors=[
@@ -1116,23 +1118,6 @@ class MT5Service(rpyc.Service):
             return self._call_mt5(MT5Service._mt5_module.history_deals_get, **kwargs)
         return self._call_mt5(MT5Service._mt5_module.history_deals_get)
 
-
-# =============================================================================
-# Backward Compatibility Aliases
-# =============================================================================
-
-# Old names that tests/external code may use
-ServerMode = Server.Mode
-ServerState = Server.State
-ServerConfig = Server.Config
-CircuitState = Server.CircuitBreaker.State
-CircuitBreakerConfig = Server.CircuitBreaker.Config
-CircuitBreakerOpenError = Server.CircuitBreaker.OpenError
-TokenBucketRateLimiter = Server.RateLimiter
-HealthStatus = Server.HealthMonitor.Status
-HealthMonitor = Server.HealthMonitor
-
-
 # =============================================================================
 # CLI
 # =============================================================================
@@ -1147,7 +1132,7 @@ def parse_args(argv: list[str] | None = None) -> Server.Config:
     # S104: Default binding to all interfaces is intentional for server
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")  # noqa: S104
     parser.add_argument(
-        "-p", "--port", type=int, default=18812, help="Port to listen on"
+        "-p", "--port", type=int, default=config.PORT_RPYC, help="Port to listen on"
     )
     parser.add_argument(
         "--wine",
@@ -1163,14 +1148,22 @@ def parse_args(argv: list[str] | None = None) -> Server.Config:
         help="Python executable (Wine mode)",
     )
     parser.add_argument(
-        "--max-restarts", type=int, default=10, help="Maximum restart attempts"
+        "--max-restarts",
+        type=int,
+        default=config.MAX_RESTARTS,
+        help="Maximum restart attempts",
     )
     parser.add_argument(
         "--no-thread-pool", action="store_true", help="Disable ThreadPoolServer"
     )
-    parser.add_argument("--threads", type=int, default=10, help="Worker threads")
     parser.add_argument(
-        "--timeout", type=int, default=300, help="Request timeout (seconds)"
+        "--threads", type=int, default=config.THREAD_POOL_SIZE, help="Worker threads"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=config.TIMEOUT_SYNC_REQUEST,
+        help="Request timeout (seconds)",
     )
 
     args = parser.parse_args(argv)
@@ -1192,13 +1185,13 @@ def parse_args(argv: list[str] | None = None) -> Server.Config:
 
 def run_server(
     host: str = "0.0.0.0",  # noqa: S104 - Intentional binding to all interfaces
-    port: int = 18812,
+    port: int = config.PORT_RPYC,
     *,
     wine_cmd: str | None = None,
     python_exe: str = "python.exe",
-    max_restarts: int = 10,
+    max_restarts: int = config.MAX_RESTARTS,
 ) -> None:
-    config = Server.Config(
+    server_config = Server.Config(
         host=host,
         port=port,
         mode=Server.Mode.WINE if wine_cmd else Server.Mode.DIRECT,
@@ -1206,7 +1199,7 @@ def run_server(
         python_exe=python_exe,
         max_restarts=max_restarts,
     )
-    Server(config).run(blocking=True)
+    Server(server_config).run(blocking=True)
 
 
 _MIN_POSITIONAL_ARGS = 3  # wine python.exe server.py HOST PORT

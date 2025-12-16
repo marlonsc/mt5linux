@@ -21,7 +21,6 @@ import structlog
 
 from mt5linux.server import (
     Server,
-    ServerConfig,
     parse_args,
 )
 
@@ -30,6 +29,40 @@ log = structlog.get_logger("mt5linux.main")
 
 def _print_help() -> None:
     """Print usage help."""
+    help_text = """\
+mt5linux - MetaTrader5 RPyC Bridge for Linux
+
+Usage:
+    python -m mt5linux [OPTIONS]
+    python -m mt5linux server [OPTIONS]        (legacy)
+    python -m mt5linux python.exe [OPTIONS]    (legacy Wine)
+
+Server Modes:
+    Direct (Linux):
+        python -m mt5linux --port 18812
+        python -m mt5linux --host 0.0.0.0 --port 18812
+
+    Wine (for mt5docker):
+        python -m mt5linux --wine wine --python python.exe -p 8001
+        python -m mt5linux -w wine python.exe -p 8001
+
+Options:
+    --host HOST         Host to bind (default: 0.0.0.0)
+    -p, --port PORT     Port to listen on (default: 18812)
+    --wine CMD          Wine command (enables Wine mode)
+    --python EXE        Python executable for Wine (default: python.exe)
+    --max-restarts N    Max restart attempts (default: 10)
+    --threads N         Worker threads (default: 10)
+    --timeout SECS      Request timeout (default: 300)
+    -h, --help          Show this help
+
+Environment Variables:
+    MT5_HOST            Override default host
+    MT5_RPYC_PORT       Override default port
+
+For more information: https://github.com/lucas-campagna/mt5linux
+"""
+    print(help_text)  # noqa: T201
 
 
 def _find_python_exe(argv: list[str]) -> str | None:
@@ -73,7 +106,7 @@ def _convert_legacy_wine_args(argv: list[str], python_exe: str) -> list[str]:
     return new_argv
 
 
-def _parse_legacy_args(argv: list[str]) -> ServerConfig | None:
+def _parse_legacy_args(argv: list[str]) -> Server.Config | None:
     """Parse legacy command line format for backwards compatibility.
 
     Supports:
@@ -81,7 +114,7 @@ def _parse_legacy_args(argv: list[str]) -> ServerConfig | None:
         python -m mt5linux server --host 0.0.0.0 --port 18812
 
     Returns:
-        ServerConfig if parsed successfully, None otherwise.
+        Server.Config if parsed successfully, None otherwise.
     """
     if not argv:
         return None
