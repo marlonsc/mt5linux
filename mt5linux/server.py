@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import random
 import signal
 import subprocess
 import sys
@@ -37,7 +36,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 from functools import wraps
-from pathlib import Path
 from types import FrameType
 from typing import Any
 
@@ -46,6 +44,7 @@ import structlog
 from rpyc.utils.server import ThreadedServer, ThreadPoolServer
 
 from mt5linux.config import config
+from mt5linux.utilities import RetryHelper, Validators
 
 # Configure structlog for clean output
 structlog.configure(
@@ -109,106 +108,6 @@ def is_mt5_available() -> bool:
 
 class MT5NotAvailableError(Exception):
     """Raised when MetaTrader5 module is not available. NO STUBS."""
-
-
-# =============================================================================
-# Type Validation Helpers - Convert RPyC's Any to Concrete Types
-# =============================================================================
-
-# Constants for tuple length validation
-_VERSION_TUPLE_LEN = 3  # (version, build, version_string)
-_ERROR_TUPLE_LEN = 2  # (error_code, error_description)
-
-
-def _validate_bool(value: object) -> bool:
-    """Validate and convert Any to bool.
-
-    RPyC returns Any from remote calls. This validates the actual type
-    and converts to bool, ensuring type safety without type: ignore.
-    """
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return bool(value)
-    msg = f"Expected bool, got {type(value).__name__}"
-    raise TypeError(msg)
-
-
-def _validate_int(value: object) -> int:
-    """Validate and convert Any to int."""
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    msg = f"Expected int, got {type(value).__name__}"
-    raise TypeError(msg)
-
-
-def _validate_int_optional(value: object) -> int | None:
-    """Validate and convert Any to int | None."""
-    if value is None:
-        return None
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    msg = f"Expected int | None, got {type(value).__name__}"
-    raise TypeError(msg)
-
-
-def _validate_float_optional(value: object) -> float | None:
-    """Validate and convert Any to float | None."""
-    if value is None:
-        return None
-    if isinstance(value, int | float) and not isinstance(value, bool):
-        return float(value)
-    msg = f"Expected float | None, got {type(value).__name__}"
-    raise TypeError(msg)
-
-
-def _validate_version(value: object) -> tuple[int, int, str] | None:
-    """Validate and convert Any to version tuple."""
-    if value is None:
-        return None
-    if not isinstance(value, tuple) or len(value) != _VERSION_TUPLE_LEN:
-        msg = f"Expected tuple[int, int, str] | None, got {type(value).__name__}"
-        raise TypeError(msg)
-    try:
-        return (int(value[0]), int(value[1]), str(value[2]))
-    except (ValueError, IndexError, TypeError) as e:
-        msg = f"Invalid version tuple: {e}"
-        raise TypeError(msg) from e
-
-
-def _validate_last_error(value: object) -> tuple[int, str]:
-    """Validate and convert Any to last_error tuple."""
-    if not isinstance(value, tuple) or len(value) != _ERROR_TUPLE_LEN:
-        msg = f"Expected tuple[int, str], got {type(value).__name__}"
-        raise TypeError(msg)
-    try:
-        return (int(value[0]), str(value[1]))
-    except (ValueError, IndexError, TypeError) as e:
-        msg = f"Invalid error tuple: {e}"
-        raise TypeError(msg) from e
-
-
-def _validate_dict(value: object) -> dict[str, object]:
-    """Validate and convert Any to dict."""
-    if isinstance(value, dict):
-        return value
-    msg = f"Expected dict, got {type(value).__name__}"
-    raise TypeError(msg)
-
-
-def exponential_backoff_with_jitter(
-    attempt: int,
-    base_delay: float = 1.0,
-    max_delay: float = 60.0,
-    multiplier: float = 2.0,
-    jitter_factor: float = 0.1,
-) -> float:
-    """Calculate delay with exponential backoff and jitter."""
-    delay = base_delay * (multiplier**attempt)
-    delay = min(delay, max_delay)
-    # S311: random is fine for jitter - not cryptographic
-    jitter = delay * jitter_factor * (2 * random.random() - 1)  # noqa: S311
-    return max(0.0, delay + jitter)
 
 
 # =============================================================================
@@ -515,7 +414,7 @@ class Server:
         )
 
     def _calculate_restart_delay(self) -> float:
-        return exponential_backoff_with_jitter(
+        return RetryHelper.backoff_with_jitter(
             self._restart_count,
             base_delay=self.config.restart_delay_base,
             max_delay=self.config.restart_delay_max,
@@ -723,7 +622,7 @@ class Server:
             status = conn.root.health_check()
             conn.close()
             healthy_value = status.get("healthy", False)
-            return _validate_bool(healthy_value)
+            return Validators.bool_value(healthy_value)
         except Exception:  # noqa: BLE001 - Catch all for health check resilience
             return False
 
@@ -868,7 +767,7 @@ class MT5Service(rpyc.Service):
             timeout,
             portable,
         )
-        return _validate_bool(result)
+        return Validators.bool_value(result)
 
     def exposed_login(
         self, login: int, password: str, server: str, timeout: int = 60000
@@ -876,19 +775,19 @@ class MT5Service(rpyc.Service):
         result = self._call_mt5(
             MT5Service._mt5_module.login, login, password, server, timeout
         )
-        return _validate_bool(result)
+        return Validators.bool_value(result)
 
     def exposed_shutdown(self) -> None:
         self._call_mt5(MT5Service._mt5_module.shutdown)
 
     def exposed_version(self) -> tuple[int, int, str] | None:
         result = self._call_mt5(MT5Service._mt5_module.version)
-        return _validate_version(result)
+        return Validators.version(result)
 
     def exposed_last_error(self) -> tuple[int, str]:
         with MT5Service._mt5_lock:
             result = MT5Service._mt5_module.last_error()
-            return _validate_last_error(result)
+            return Validators.last_error(result)
 
     def exposed_terminal_info(self) -> Any:
         return self._call_mt5(MT5Service._mt5_module.terminal_info)
@@ -902,7 +801,7 @@ class MT5Service(rpyc.Service):
 
     def exposed_symbols_total(self) -> int:
         result = self._call_mt5(MT5Service._mt5_module.symbols_total)
-        return _validate_int(result)
+        return Validators.int_value(result)
 
     def exposed_symbols_get(self, group: str | None = None) -> Any:
         if group:
@@ -917,7 +816,7 @@ class MT5Service(rpyc.Service):
 
     def exposed_symbol_select(self, symbol: str, enable: bool = True) -> bool:
         result = self._call_mt5(MT5Service._mt5_module.symbol_select, symbol, enable)
-        return _validate_bool(result)
+        return Validators.bool_value(result)
 
     # =========================================================================
     # Market Data Operations
@@ -976,7 +875,7 @@ class MT5Service(rpyc.Service):
         result = self._call_mt5(
             MT5Service._mt5_module.order_calc_margin, action, symbol, volume, price
         )
-        return _validate_float_optional(result)
+        return Validators.float_optional(result)
 
     def exposed_order_calc_profit(
         self,
@@ -994,7 +893,7 @@ class MT5Service(rpyc.Service):
             price_open,
             price_close,
         )
-        return _validate_float_optional(result)
+        return Validators.float_optional(result)
 
     def exposed_order_check(self, request: dict[str, Any]) -> Any:
         # Convert netref dict to regular dict for MT5 compatibility
@@ -1012,7 +911,7 @@ class MT5Service(rpyc.Service):
 
     def exposed_positions_total(self) -> int:
         result = self._call_mt5(MT5Service._mt5_module.positions_total)
-        return _validate_int(result)
+        return Validators.int_value(result)
 
     def exposed_positions_get(
         self,
@@ -1037,7 +936,7 @@ class MT5Service(rpyc.Service):
 
     def exposed_orders_total(self) -> int:
         result = self._call_mt5(MT5Service._mt5_module.orders_total)
-        return _validate_int(result)
+        return Validators.int_value(result)
 
     def exposed_orders_get(
         self,
@@ -1064,7 +963,7 @@ class MT5Service(rpyc.Service):
         result = self._call_mt5(
             MT5Service._mt5_module.history_orders_total, date_from, date_to
         )
-        return _validate_int_optional(result)
+        return Validators.int_optional(result)
 
     def exposed_history_orders_get(
         self,
@@ -1093,7 +992,7 @@ class MT5Service(rpyc.Service):
         result = self._call_mt5(
             MT5Service._mt5_module.history_deals_total, date_from, date_to
         )
-        return _validate_int_optional(result)
+        return Validators.int_optional(result)
 
     def exposed_history_deals_get(
         self,

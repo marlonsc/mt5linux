@@ -18,19 +18,18 @@ Compatible with rpyc 6.x and Python 3.12+.
 from __future__ import annotations
 
 import logging
-import random
 import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
-from functools import cache
 from typing import TYPE_CHECKING, Any, Self
 
 import rpyc
 from rpyc.utils.classic import obtain
 
 from mt5linux.config import config
+from mt5linux.utilities import DataTransformer, DateTimeUtils, RetryHelper, Validators
 
 log = logging.getLogger(__name__)
 
@@ -59,146 +58,6 @@ RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
     ConnectionRefusedError,
     OSError,
 )
-
-
-# =============================================================================
-# Shared Utilities
-# =============================================================================
-
-
-@cache
-def _calculate_retry_delay(
-    attempt: int,
-    initial_delay: float = 0.5,
-    max_delay: float = 10.0,
-    exponential_base: float = 2.0,
-) -> float:
-    """Calculate exponential backoff delay."""
-    delay = min(initial_delay * (exponential_base**attempt), max_delay)
-    delay *= 0.5 + random.random()  # noqa: S311
-    return delay
-
-
-def _to_timestamp(dt: datetime | int | None) -> int | None:
-    """Convert datetime to Unix timestamp for MT5 API."""
-    if dt is None:
-        return None
-    if isinstance(dt, datetime):
-        return int(dt.timestamp())
-    return dt
-
-
-# =============================================================================
-# Type Validation Helpers
-# =============================================================================
-
-_VERSION_TUPLE_LEN = 3
-_ERROR_TUPLE_LEN = 2
-
-
-def _validate_version(value: object) -> tuple[int, int, str] | None:
-    """Validate and convert Any to version tuple."""
-    if value is None:
-        return None
-    if not isinstance(value, tuple) or len(value) != _VERSION_TUPLE_LEN:
-        msg = f"Expected tuple[int, int, str] | None, got {type(value).__name__}"
-        raise TypeError(msg)
-    try:
-        return (int(value[0]), int(value[1]), str(value[2]))
-    except (ValueError, IndexError, TypeError) as e:
-        msg = f"Invalid version tuple: {e}"
-        raise TypeError(msg) from e
-
-
-def _validate_last_error(value: object) -> tuple[int, str]:
-    """Validate and convert Any to last_error tuple."""
-    if not isinstance(value, tuple) or len(value) != _ERROR_TUPLE_LEN:
-        msg = f"Expected tuple[int, str], got {type(value).__name__}"
-        raise TypeError(msg)
-    try:
-        return (int(value[0]), str(value[1]))
-    except (ValueError, IndexError, TypeError) as e:
-        msg = f"Invalid error tuple: {e}"
-        raise TypeError(msg) from e
-
-
-def _validate_float_optional(value: object) -> float | None:
-    """Validate and convert Any to float | None."""
-    if value is None:
-        return None
-    if isinstance(value, int | float) and not isinstance(value, bool):
-        return float(value)
-    msg = f"Expected float | None, got {type(value).__name__}"
-    raise TypeError(msg)
-
-
-def _validate_int_optional(value: object) -> int | None:
-    """Validate and convert Any to int | None."""
-    if value is None:
-        return None
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    msg = f"Expected int | None, got {type(value).__name__}"
-    raise TypeError(msg)
-
-
-# =============================================================================
-# Dict-to-Object Wrappers for MT5 Data
-# =============================================================================
-
-
-class _MT5Object:
-    """Wrapper for MT5 data dict with attribute access."""
-
-    __slots__ = ("_data",)
-
-    def __init__(self, data: dict[str, Any]) -> None:
-        object.__setattr__(self, "_data", data)
-
-    def __getattr__(self, name: str) -> Any:
-        try:
-            return self._data[name]
-        except KeyError:
-            msg = f"'{type(self).__name__}' has no attribute '{name}'"
-            raise AttributeError(msg) from None
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}({self._data})"
-
-    def _asdict(self) -> dict[str, Any]:
-        """Return underlying dict (compatibility with named tuples)."""
-        return self._data
-
-
-def _wrap_dict(d: dict[str, Any] | Any) -> _MT5Object | Any:
-    """Convert dict to object with attribute access."""
-    if isinstance(d, dict):
-        return _MT5Object(d)
-    return d
-
-
-def _wrap_dicts(items: tuple | list | None) -> tuple | None:
-    """Convert tuple/list of dicts to tuple of objects."""
-    if items is None:
-        return None
-    return tuple(_wrap_dict(d) for d in items)
-
-
-def _unwrap_chunks(result: dict[str, Any] | None) -> tuple | None:
-    """Reassemble chunked response from server into tuple of objects."""
-    if result is None:
-        return None
-
-    if isinstance(result, dict) and "chunks" in result:
-        all_items: list[_MT5Object] = []
-        for chunk in result["chunks"]:
-            all_items.extend(_MT5Object(d) for d in chunk)
-        return tuple(all_items)
-
-    if isinstance(result, tuple | list):
-        return _wrap_dicts(result)
-
-    return None
 
 
 # =============================================================================
@@ -555,7 +414,7 @@ class MetaTrader5:
             except RETRYABLE_EXCEPTIONS as e:
                 last_error = e
                 if attempt < self._max_reconnect_attempts - 1:
-                    delay = _calculate_retry_delay(attempt)
+                    delay = RetryHelper.calculate_delay(attempt)
                     log.warning(
                         "Reconnection attempt %d failed: %s, retrying in %.2fs",
                         attempt + 1,
@@ -638,7 +497,7 @@ class MetaTrader5:
 
                 # Handle None results - retry if configured
                 if retry_on_none and result is None and attempt < max_attempts - 1:
-                    delay = _calculate_retry_delay(attempt)
+                    delay = RetryHelper.calculate_delay(attempt)
                     log.warning(
                         "%s returned None (attempt %d/%d), retrying in %.2fs",
                         method_name,
@@ -658,7 +517,7 @@ class MetaTrader5:
                 last_exception = e
                 self._circuit_breaker.record_failure()
                 if attempt < max_attempts - 1:
-                    delay = _calculate_retry_delay(attempt)
+                    delay = RetryHelper.calculate_delay(attempt)
                     log.warning(
                         "%s failed (attempt %d/%d): %s, retrying in %.2fs",
                         method_name,
@@ -761,22 +620,22 @@ class MetaTrader5:
     def version(self) -> tuple[int, int, str] | None:
         """Get MT5 terminal version."""
         result = self._safe_rpc_call("version")
-        return _validate_version(result)
+        return Validators.version(result)
 
     def last_error(self) -> tuple[int, str]:
         """Get last MT5 error."""
         result = self._safe_rpc_call("last_error")
-        return _validate_last_error(result)
+        return Validators.last_error(result)
 
     def terminal_info(self) -> Any:
         """Get terminal info."""
         result = self._safe_rpc_call("terminal_info")
-        return _wrap_dict(result)
+        return DataTransformer.wrap_dict(result)
 
     def account_info(self) -> Any:
         """Get account info."""
         result = self._safe_rpc_call("account_info")
-        return _wrap_dict(result)
+        return DataTransformer.wrap_dict(result)
 
     # =========================================================================
     # Symbol operations
@@ -790,17 +649,17 @@ class MetaTrader5:
     def symbols_get(self, group: str | None = None) -> tuple | None:
         """Get available symbols."""
         result = self._safe_rpc_call("symbols_get", group)
-        return _unwrap_chunks(result)
+        return DataTransformer.unwrap_chunks(result)
 
     def symbol_info(self, symbol: str) -> Any:
         """Get symbol info."""
         result = self._safe_rpc_call("symbol_info", symbol)
-        return _wrap_dict(result) if result else None
+        return DataTransformer.wrap_dict(result) if result else None
 
     def symbol_info_tick(self, symbol: str) -> Any:
         """Get symbol tick info."""
         result = self._safe_rpc_call("symbol_info_tick", symbol)
-        return _wrap_dict(result) if result else None
+        return DataTransformer.wrap_dict(result) if result else None
 
     def symbol_select(self, symbol: str, enable: bool = True) -> bool:
         """Select symbol in Market Watch."""
@@ -822,7 +681,7 @@ class MetaTrader5:
             "copy_rates_from",
             symbol,
             timeframe,
-            _to_timestamp(date_from),
+            DateTimeUtils.to_timestamp(date_from),
             count,
         )
         return obtain(result) if result is not None else None
@@ -856,8 +715,8 @@ class MetaTrader5:
             "copy_rates_range",
             symbol,
             timeframe,
-            _to_timestamp(date_from),
-            _to_timestamp(date_to),
+            DateTimeUtils.to_timestamp(date_from),
+            DateTimeUtils.to_timestamp(date_to),
         )
         return obtain(result) if result is not None else None
 
@@ -872,7 +731,7 @@ class MetaTrader5:
         result = self._safe_rpc_call(
             "copy_ticks_from",
             symbol,
-            _to_timestamp(date_from),
+            DateTimeUtils.to_timestamp(date_from),
             count,
             flags,
         )
@@ -889,8 +748,8 @@ class MetaTrader5:
         result = self._safe_rpc_call(
             "copy_ticks_range",
             symbol,
-            _to_timestamp(date_from),
-            _to_timestamp(date_to),
+            DateTimeUtils.to_timestamp(date_from),
+            DateTimeUtils.to_timestamp(date_to),
             flags,
         )
         return obtain(result) if result is not None else None
@@ -908,7 +767,7 @@ class MetaTrader5:
     ) -> float | None:
         """Calculate margin for order."""
         result = self._safe_rpc_call("order_calc_margin", action, symbol, volume, price)
-        return _validate_float_optional(result)
+        return Validators.float_optional(result)
 
     def order_calc_profit(
         self,
@@ -927,17 +786,17 @@ class MetaTrader5:
             price_open,
             price_close,
         )
-        return _validate_float_optional(result)
+        return Validators.float_optional(result)
 
     def order_check(self, request: dict[str, Any]) -> Any:
         """Check order parameters without sending."""
         result = self._safe_rpc_call("order_check", request)
-        return _wrap_dict(result) if result else None
+        return DataTransformer.wrap_dict(result) if result else None
 
     def order_send(self, request: dict[str, Any]) -> Any:
         """Send trading order to MT5."""
         result = self._safe_rpc_call("order_send", request)
-        return _wrap_dict(result) if result else None
+        return DataTransformer.wrap_dict(result) if result else None
 
     # =========================================================================
     # Position operations
@@ -956,7 +815,7 @@ class MetaTrader5:
     ) -> tuple | None:
         """Get open positions."""
         result = self._safe_rpc_call("positions_get", symbol, group, ticket)
-        return _wrap_dicts(result)
+        return DataTransformer.wrap_dicts(result)
 
     # =========================================================================
     # Order operations
@@ -975,7 +834,7 @@ class MetaTrader5:
     ) -> tuple | None:
         """Get pending orders."""
         result = self._safe_rpc_call("orders_get", symbol, group, ticket)
-        return _wrap_dicts(result)
+        return DataTransformer.wrap_dicts(result)
 
     # =========================================================================
     # History operations
@@ -987,10 +846,10 @@ class MetaTrader5:
         """Get total number of historical orders."""
         result = self._safe_rpc_call(
             "history_orders_total",
-            _to_timestamp(date_from),
-            _to_timestamp(date_to),
+            DateTimeUtils.to_timestamp(date_from),
+            DateTimeUtils.to_timestamp(date_to),
         )
-        return _validate_int_optional(result)
+        return Validators.int_optional(result)
 
     def history_orders_get(
         self,
@@ -1003,13 +862,13 @@ class MetaTrader5:
         """Get historical orders."""
         result = self._safe_rpc_call(
             "history_orders_get",
-            _to_timestamp(date_from),
-            _to_timestamp(date_to),
+            DateTimeUtils.to_timestamp(date_from),
+            DateTimeUtils.to_timestamp(date_to),
             group,
             ticket,
             position,
         )
-        return _wrap_dicts(result)
+        return DataTransformer.wrap_dicts(result)
 
     def history_deals_total(
         self, date_from: datetime | int, date_to: datetime | int
@@ -1017,10 +876,10 @@ class MetaTrader5:
         """Get total number of historical deals."""
         result = self._safe_rpc_call(
             "history_deals_total",
-            _to_timestamp(date_from),
-            _to_timestamp(date_to),
+            DateTimeUtils.to_timestamp(date_from),
+            DateTimeUtils.to_timestamp(date_to),
         )
-        return _validate_int_optional(result)
+        return Validators.int_optional(result)
 
     def history_deals_get(
         self,
@@ -1033,23 +892,10 @@ class MetaTrader5:
         """Get historical deals."""
         result = self._safe_rpc_call(
             "history_deals_get",
-            _to_timestamp(date_from),
-            _to_timestamp(date_to),
+            DateTimeUtils.to_timestamp(date_from),
+            DateTimeUtils.to_timestamp(date_to),
             group,
             ticket,
             position,
         )
-        return _wrap_dicts(result)
-
-
-# =============================================================================
-# Backward Compatibility Aliases
-# =============================================================================
-
-# For imports that expect these at module level
-CircuitBreaker = MetaTrader5.CircuitBreaker
-CircuitOpenError = MetaTrader5.CircuitBreaker.OpenError
-MT5Error = MetaTrader5.Error
-MT5RetryableError = MetaTrader5.RetryableError
-MT5PermanentError = MetaTrader5.PermanentError
-MaxRetriesExceededError = MetaTrader5.MaxRetriesError
+        return DataTransformer.wrap_dicts(result)
