@@ -38,7 +38,7 @@ from pathlib import Path
 import rpyc
 from rpyc.core.service import VoidService
 
-from mt5linux.config import Defaults
+from mt5linux.config import MT5Config
 
 # Mapping of MT5 constant prefixes to enum class names
 PREFIX_TO_CLASS: dict[str, str] = {
@@ -75,7 +75,7 @@ PREFIX_TO_CLASS: dict[str, str] = {
 
 def is_rpyc_available(
     host: str = "localhost",
-    port: int = Defaults.PORT_DOCKER_MAPPED,
+    port: int = MT5Config.Defaults.PORT_DOCKER_MAPPED,
 ) -> bool:
     """Check if rpyc server is available on test container port."""
     try:
@@ -90,7 +90,7 @@ def is_rpyc_available(
 
 def extract_from_rpyc(
     host: str = "localhost",
-    port: int = Defaults.PORT_DOCKER_MAPPED,
+    port: int = MT5Config.Defaults.PORT_DOCKER_MAPPED,
 ) -> dict[str, int]:
     """Extract constants from MT5 via rpyc 6.x native API."""
     # rpyc 6.x native API - connect to SlaveService
@@ -290,7 +290,7 @@ def generate_enums(  # noqa: PLR0911 - Complex codegen needs multiple return pat
     output_path: Path | None = None,
     check_only: bool = False,
     host: str = "localhost",
-    port: int = Defaults.PORT_DOCKER_MAPPED,
+    port: int = MT5Config.Defaults.PORT_DOCKER_MAPPED,
 ) -> bool:
     """Generate constants.py from MT5 constants.
 
@@ -301,7 +301,7 @@ def generate_enums(  # noqa: PLR0911 - Complex codegen needs multiple return pat
         output_path: Output file path (default: mt5linux/constants.py)
         check_only: Only check if file needs commit (don't regenerate)
         host: rpyc server host
-        port: rpyc server port (default: Defaults.PORT_DOCKER_MAPPED)
+        port: rpyc server port (default: MT5Config.Defaults.PORT_DOCKER_MAPPED)
 
     Returns:
         True if generation successful (or check passed)
@@ -378,14 +378,12 @@ def main() -> int:
         default=os.getenv("MT5_HOST", "localhost"),
         help="rpyc server host (default: localhost or MT5_HOST env)",
     )
+    default_port = MT5Config.Defaults.PORT_DOCKER_MAPPED
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("MT5_RPYC_PORT", str(Defaults.PORT_DOCKER_MAPPED))),
-        help=(
-            f"rpyc server port "
-            f"(default: {Defaults.PORT_DOCKER_MAPPED} or MT5_RPYC_PORT env)"
-        ),
+        default=int(os.getenv("MT5_RPYC_PORT", str(default_port))),
+        help=f"rpyc server port (default: {default_port} or MT5_RPYC_PORT env)",
     )
     args = parser.parse_args()
 

@@ -22,33 +22,44 @@ For MT5 method documentation, see:
 
 from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.client import MetaTrader5
-from mt5linux.config import Defaults, config
+from mt5linux.config import MT5Config, config
 from mt5linux.constants import MT5
-from mt5linux.models import (
-    AccountInfo,
-    MT5Model,
-    OrderRequest,
-    OrderResult,
-    Position,
-    SymbolInfo,
-    Tick,
-)
-from mt5linux.server import Server
+from mt5linux.models import MT5Models
+from mt5linux.server import MT5Server
 from mt5linux.types import MT5Types
+from mt5linux.utilities import MT5Utilities
+
+# Backward compatibility aliases (to be removed in next major version)
+Defaults = MT5Config.Defaults
+Server = MT5Server
+MT5Model = MT5Models.Base
+OrderRequest = MT5Models.OrderRequest
+OrderResult = MT5Models.OrderResult
+AccountInfo = MT5Models.AccountInfo
+SymbolInfo = MT5Models.SymbolInfo
+Position = MT5Models.Position
+Tick = MT5Models.Tick
 
 __all__ = [
     # Core clients
     "MetaTrader5",
     "AsyncMetaTrader5",
-    "Server",
+    # Server
+    "MT5Server",
+    "Server",  # backward compat
     # Configuration
+    "MT5Config",
     "config",
-    "Defaults",
+    "Defaults",  # backward compat
     # Constants container
     "MT5",
     # Types container
     "MT5Types",
-    # Pydantic models
+    # Utilities container
+    "MT5Utilities",
+    # Models container
+    "MT5Models",
+    # Pydantic models (backward compat aliases)
     "MT5Model",
     "OrderRequest",
     "OrderResult",

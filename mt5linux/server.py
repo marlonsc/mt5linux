@@ -115,7 +115,7 @@ class MT5NotAvailableError(Exception):
 # =============================================================================
 
 
-class Server:
+class MT5Server:
     """Production-grade RPyC server with automatic recovery.
 
     Contains all server-related nested classes:
@@ -157,7 +157,7 @@ class Server:
 
         host: str = "0.0.0.0"  # noqa: S104 - Intentional binding to all interfaces
         port: int = 18812
-        mode: Server.Mode = field(default_factory=lambda: Server.Mode.DIRECT)
+        mode: MT5Server.Mode = field(default_factory=lambda: MT5Server.Mode.DIRECT)
 
         # Wine mode settings
         wine_cmd: str = "wine"
@@ -211,51 +211,53 @@ class Server:
         class OpenError(Exception):
             """Raised when circuit breaker is open."""
 
-        def __init__(self, config: Server.CircuitBreaker.Config | None = None) -> None:
-            self.config = config or Server.CircuitBreaker.Config()
-            self._state = Server.CircuitBreaker.State.CLOSED
+        def __init__(
+            self, config: MT5Server.CircuitBreaker.Config | None = None
+        ) -> None:
+            self.config = config or MT5Server.CircuitBreaker.Config()
+            self._state = MT5Server.CircuitBreaker.State.CLOSED
             self._failure_count = 0
             self._success_count = 0
             self._last_failure_time: float | None = None
             self._lock = threading.RLock()
 
         @property
-        def state(self) -> Server.CircuitBreaker.State:
+        def state(self) -> MT5Server.CircuitBreaker.State:
             """Current circuit state."""
             with self._lock:
                 if (
-                    self._state == Server.CircuitBreaker.State.OPEN
+                    self._state == MT5Server.CircuitBreaker.State.OPEN
                     and self._last_failure_time
                     and time.time() - self._last_failure_time >= self.config.timeout
                 ):
-                    self._state = Server.CircuitBreaker.State.HALF_OPEN
+                    self._state = MT5Server.CircuitBreaker.State.HALF_OPEN
                     self._success_count = 0
                 return self._state
 
         def _record_success(self) -> None:
             with self._lock:
-                if self._state == Server.CircuitBreaker.State.HALF_OPEN:
+                if self._state == MT5Server.CircuitBreaker.State.HALF_OPEN:
                     self._success_count += 1
                     if self._success_count >= self.config.success_threshold:
-                        self._state = Server.CircuitBreaker.State.CLOSED
+                        self._state = MT5Server.CircuitBreaker.State.CLOSED
                         self._failure_count = 0
-                elif self._state == Server.CircuitBreaker.State.CLOSED:
+                elif self._state == MT5Server.CircuitBreaker.State.CLOSED:
                     self._failure_count = 0
 
         def _record_failure(self) -> None:
             with self._lock:
                 self._failure_count += 1
                 self._last_failure_time = time.time()
-                if self._state == Server.CircuitBreaker.State.HALF_OPEN or (
-                    self._state == Server.CircuitBreaker.State.CLOSED
+                if self._state == MT5Server.CircuitBreaker.State.HALF_OPEN or (
+                    self._state == MT5Server.CircuitBreaker.State.CLOSED
                     and self._failure_count >= self.config.failure_threshold
                 ):
-                    self._state = Server.CircuitBreaker.State.OPEN
+                    self._state = MT5Server.CircuitBreaker.State.OPEN
 
         def reset(self) -> None:
             """Reset circuit breaker."""
             with self._lock:
-                self._state = Server.CircuitBreaker.State.CLOSED
+                self._state = MT5Server.CircuitBreaker.State.CLOSED
                 self._failure_count = 0
                 self._success_count = 0
                 self._last_failure_time = None
@@ -263,9 +265,9 @@ class Server:
         def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
             @wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
-                if self.state == Server.CircuitBreaker.State.OPEN:
+                if self.state == MT5Server.CircuitBreaker.State.OPEN:
                     msg = f"Circuit breaker open, call to {func.__name__} blocked"
-                    raise Server.CircuitBreaker.OpenError(msg)
+                    raise MT5Server.CircuitBreaker.OpenError(msg)
                 try:
                     result = func(*args, **kwargs)
                 except self.config.excluded_exceptions:
@@ -365,9 +367,9 @@ class Server:
 
         def get_status(
             self, circuit_state: str = "closed"
-        ) -> Server.HealthMonitor.Status:
+        ) -> MT5Server.HealthMonitor.Status:
             with self._lock:
-                return Server.HealthMonitor.Status(
+                return MT5Server.HealthMonitor.Status(
                     healthy=self._last_error is None,
                     uptime_seconds=time.time() - self._start_time,
                     connections_total=self._connections_total,
@@ -385,8 +387,8 @@ class Server:
     # =========================================================================
 
     def __init__(self, config: Config | None = None) -> None:
-        self.config = config or Server.Config()
-        self._state = Server.State.STOPPED
+        self.config = config or MT5Server.Config()
+        self._state = MT5Server.State.STOPPED
         self._restart_count = 0
         self._shutdown_event = threading.Event()
         self._process: subprocess.Popen[str] | None = None
@@ -509,13 +511,13 @@ class Server:
         return 0
 
     def _server_loop(self) -> None:
-        self._set_state(Server.State.RUNNING)
+        self._set_state(MT5Server.State.RUNNING)
 
         while not self._shutdown_event.is_set():
-            self._set_state(Server.State.STARTING)
+            self._set_state(MT5Server.State.STARTING)
 
             try:
-                if self.config.mode == Server.Mode.WINE:
+                if self.config.mode == MT5Server.Mode.WINE:
                     exit_code = self._run_wine_server()
                 else:
                     exit_code = self._run_direct_server()
@@ -534,7 +536,7 @@ class Server:
                     self._log.error(
                         "max_restarts_exceeded", max_restarts=self.config.max_restarts
                     )
-                    self._set_state(Server.State.FAILED)
+                    self._set_state(MT5Server.State.FAILED)
                     break
 
                 delay = self._calculate_restart_delay()
@@ -545,7 +547,7 @@ class Server:
                     restart_delay=f"{delay:.2f}s",
                 )
 
-                self._set_state(Server.State.RESTARTING)
+                self._set_state(MT5Server.State.RESTARTING)
 
                 if self._shutdown_event.wait(delay):
                     break
@@ -555,16 +557,16 @@ class Server:
                 self._restart_count += 1
 
                 if self._restart_count > self.config.max_restarts:
-                    self._set_state(Server.State.FAILED)
+                    self._set_state(MT5Server.State.FAILED)
                     break
 
                 delay = self._calculate_restart_delay()
-                self._set_state(Server.State.RESTARTING)
+                self._set_state(MT5Server.State.RESTARTING)
 
                 if self._shutdown_event.wait(delay):
                     break
 
-        self._set_state(Server.State.STOPPED)
+        self._set_state(MT5Server.State.STOPPED)
 
     def run(self, *, blocking: bool = True) -> None:
         self._shutdown_event.clear()
@@ -589,7 +591,7 @@ class Server:
 
     def stop(self, timeout: float = 10.0) -> None:
         self._log.info("stopping_server")
-        self._set_state(Server.State.STOPPING)
+        self._set_state(MT5Server.State.STOPPING)
         self._shutdown_event.set()
 
         if self._process and self._process.poll() is None:
@@ -608,7 +610,7 @@ class Server:
         if self._server_thread and self._server_thread.is_alive():
             self._server_thread.join(timeout=timeout)
 
-        self._set_state(Server.State.STOPPED)
+        self._set_state(MT5Server.State.STOPPED)
         self._log.info("server_stopped")
 
     def check_health(self) -> bool:
@@ -639,9 +641,9 @@ class Server:
 # Global Instances (used by MT5Service)
 # =============================================================================
 
-_health_monitor = Server.HealthMonitor()
-_mt5_circuit_breaker = Server.CircuitBreaker(
-    Server.CircuitBreaker.Config(failure_threshold=5)
+_health_monitor = MT5Server.HealthMonitor()
+_mt5_circuit_breaker = MT5Server.CircuitBreaker(
+    MT5Server.CircuitBreaker.Config(failure_threshold=5)
 )
 
 
@@ -663,7 +665,7 @@ class MT5Service(rpyc.Service):
     # Module is dynamically imported - use Any since it's a third-party module
     _mt5_module: Any = None
     _mt5_lock = threading.RLock()
-    _rate_limiter = Server.RateLimiter(rate=100, capacity=200)
+    _rate_limiter = MT5Server.RateLimiter(rate=100, capacity=200)
 
     def on_connect(self, conn: rpyc.Connection) -> None:  # noqa: ARG002
         """Initialize MT5 module on connection.
@@ -1022,7 +1024,7 @@ class MT5Service(rpyc.Service):
 # =============================================================================
 
 
-def parse_args(argv: list[str] | None = None) -> Server.Config:
+def parse_args(argv: list[str] | None = None) -> MT5Server.Config:
     parser = argparse.ArgumentParser(
         description="Modern RPyC server for MetaTrader5 (NO STUBS)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -1067,9 +1069,9 @@ def parse_args(argv: list[str] | None = None) -> Server.Config:
 
     args = parser.parse_args(argv)
 
-    mode = Server.Mode.WINE if args.wine_cmd else Server.Mode.DIRECT
+    mode = MT5Server.Mode.WINE if args.wine_cmd else MT5Server.Mode.DIRECT
 
-    return Server.Config(
+    return MT5Server.Config(
         host=args.host,
         port=args.port,
         mode=mode,
@@ -1090,10 +1092,10 @@ def run_server(
     python_exe: str = "python.exe",
     max_restarts: int = config.MAX_RESTARTS,
 ) -> None:
-    server_config = Server.Config(
+    server_config = MT5Server.Config(
         host=host,
         port=port,
-        mode=Server.Mode.WINE if wine_cmd else Server.Mode.DIRECT,
+        mode=MT5Server.Mode.WINE if wine_cmd else MT5Server.Mode.DIRECT,
         wine_cmd=wine_cmd or "wine",
         python_exe=python_exe,
         max_restarts=max_restarts,
@@ -1115,7 +1117,7 @@ def main() -> int:
     if is_positional_mode:
         host = sys.argv[1]
         port = int(sys.argv[2])
-        config = Server.Config(host=host, port=port, mode=Server.Mode.DIRECT)
+        config = MT5Server.Config(host=host, port=port, mode=MT5Server.Mode.DIRECT)
     else:
         config = parse_args()
 
@@ -1140,7 +1142,11 @@ def main() -> int:
         log.exception("mt5_not_available", error=str(e))
         return 1
     else:
-        return 0 if server.state != Server.State.FAILED else 1
+        return 0 if server.state != MT5Server.State.FAILED else 1
+
+
+# Backward compatibility alias (to be removed in next major version)
+Server = MT5Server
 
 
 if __name__ == "__main__":
