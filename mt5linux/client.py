@@ -29,7 +29,7 @@ import rpyc
 from rpyc.utils.classic import obtain
 
 from mt5linux.config import config
-from mt5linux.utilities import DataTransformer, DateTimeUtils, RetryHelper, Validators
+from mt5linux.utilities import MT5Utilities
 
 log = logging.getLogger(__name__)
 
@@ -414,7 +414,7 @@ class MetaTrader5:
             except RETRYABLE_EXCEPTIONS as e:
                 last_error = e
                 if attempt < self._max_reconnect_attempts - 1:
-                    delay = RetryHelper.calculate_delay(attempt)
+                    delay = MT5Utilities.Retry.calculate_delay(attempt)
                     log.warning(
                         "Reconnection attempt %d failed: %s, retrying in %.2fs",
                         attempt + 1,
@@ -497,7 +497,7 @@ class MetaTrader5:
 
                 # Handle None results - retry if configured
                 if retry_on_none and result is None and attempt < max_attempts - 1:
-                    delay = RetryHelper.calculate_delay(attempt)
+                    delay = MT5Utilities.Retry.calculate_delay(attempt)
                     log.warning(
                         "%s returned None (attempt %d/%d), retrying in %.2fs",
                         method_name,
@@ -517,7 +517,7 @@ class MetaTrader5:
                 last_exception = e
                 self._circuit_breaker.record_failure()
                 if attempt < max_attempts - 1:
-                    delay = RetryHelper.calculate_delay(attempt)
+                    delay = MT5Utilities.Retry.calculate_delay(attempt)
                     log.warning(
                         "%s failed (attempt %d/%d): %s, retrying in %.2fs",
                         method_name,
@@ -620,22 +620,22 @@ class MetaTrader5:
     def version(self) -> tuple[int, int, str] | None:
         """Get MT5 terminal version."""
         result = self._safe_rpc_call("version")
-        return Validators.version(result)
+        return MT5Utilities.Validators.version(result)
 
     def last_error(self) -> tuple[int, str]:
         """Get last MT5 error."""
         result = self._safe_rpc_call("last_error")
-        return Validators.last_error(result)
+        return MT5Utilities.Validators.last_error(result)
 
     def terminal_info(self) -> Any:
         """Get terminal info."""
         result = self._safe_rpc_call("terminal_info")
-        return DataTransformer.wrap_dict(result)
+        return MT5Utilities.Data.wrap_dict(result)
 
     def account_info(self) -> Any:
         """Get account info."""
         result = self._safe_rpc_call("account_info")
-        return DataTransformer.wrap_dict(result)
+        return MT5Utilities.Data.wrap_dict(result)
 
     # =========================================================================
     # Symbol operations
@@ -649,17 +649,17 @@ class MetaTrader5:
     def symbols_get(self, group: str | None = None) -> tuple | None:
         """Get available symbols."""
         result = self._safe_rpc_call("symbols_get", group)
-        return DataTransformer.unwrap_chunks(result)
+        return MT5Utilities.Data.unwrap_chunks(result)
 
     def symbol_info(self, symbol: str) -> Any:
         """Get symbol info."""
         result = self._safe_rpc_call("symbol_info", symbol)
-        return DataTransformer.wrap_dict(result) if result else None
+        return MT5Utilities.Data.wrap_dict(result) if result else None
 
     def symbol_info_tick(self, symbol: str) -> Any:
         """Get symbol tick info."""
         result = self._safe_rpc_call("symbol_info_tick", symbol)
-        return DataTransformer.wrap_dict(result) if result else None
+        return MT5Utilities.Data.wrap_dict(result) if result else None
 
     def symbol_select(self, symbol: str, enable: bool = True) -> bool:
         """Select symbol in Market Watch."""
@@ -681,7 +681,7 @@ class MetaTrader5:
             "copy_rates_from",
             symbol,
             timeframe,
-            DateTimeUtils.to_timestamp(date_from),
+            MT5Utilities.DateTime.to_timestamp(date_from),
             count,
         )
         return obtain(result) if result is not None else None
@@ -715,8 +715,8 @@ class MetaTrader5:
             "copy_rates_range",
             symbol,
             timeframe,
-            DateTimeUtils.to_timestamp(date_from),
-            DateTimeUtils.to_timestamp(date_to),
+            MT5Utilities.DateTime.to_timestamp(date_from),
+            MT5Utilities.DateTime.to_timestamp(date_to),
         )
         return obtain(result) if result is not None else None
 
@@ -731,7 +731,7 @@ class MetaTrader5:
         result = self._safe_rpc_call(
             "copy_ticks_from",
             symbol,
-            DateTimeUtils.to_timestamp(date_from),
+            MT5Utilities.DateTime.to_timestamp(date_from),
             count,
             flags,
         )
@@ -748,8 +748,8 @@ class MetaTrader5:
         result = self._safe_rpc_call(
             "copy_ticks_range",
             symbol,
-            DateTimeUtils.to_timestamp(date_from),
-            DateTimeUtils.to_timestamp(date_to),
+            MT5Utilities.DateTime.to_timestamp(date_from),
+            MT5Utilities.DateTime.to_timestamp(date_to),
             flags,
         )
         return obtain(result) if result is not None else None
@@ -767,7 +767,7 @@ class MetaTrader5:
     ) -> float | None:
         """Calculate margin for order."""
         result = self._safe_rpc_call("order_calc_margin", action, symbol, volume, price)
-        return Validators.float_optional(result)
+        return MT5Utilities.Validators.float_optional(result)
 
     def order_calc_profit(
         self,
@@ -786,17 +786,17 @@ class MetaTrader5:
             price_open,
             price_close,
         )
-        return Validators.float_optional(result)
+        return MT5Utilities.Validators.float_optional(result)
 
     def order_check(self, request: dict[str, Any]) -> Any:
         """Check order parameters without sending."""
         result = self._safe_rpc_call("order_check", request)
-        return DataTransformer.wrap_dict(result) if result else None
+        return MT5Utilities.Data.wrap_dict(result) if result else None
 
     def order_send(self, request: dict[str, Any]) -> Any:
         """Send trading order to MT5."""
         result = self._safe_rpc_call("order_send", request)
-        return DataTransformer.wrap_dict(result) if result else None
+        return MT5Utilities.Data.wrap_dict(result) if result else None
 
     # =========================================================================
     # Position operations
@@ -815,7 +815,7 @@ class MetaTrader5:
     ) -> tuple | None:
         """Get open positions."""
         result = self._safe_rpc_call("positions_get", symbol, group, ticket)
-        return DataTransformer.wrap_dicts(result)
+        return MT5Utilities.Data.wrap_dicts(result)
 
     # =========================================================================
     # Order operations
@@ -834,7 +834,7 @@ class MetaTrader5:
     ) -> tuple | None:
         """Get pending orders."""
         result = self._safe_rpc_call("orders_get", symbol, group, ticket)
-        return DataTransformer.wrap_dicts(result)
+        return MT5Utilities.Data.wrap_dicts(result)
 
     # =========================================================================
     # History operations
@@ -846,10 +846,10 @@ class MetaTrader5:
         """Get total number of historical orders."""
         result = self._safe_rpc_call(
             "history_orders_total",
-            DateTimeUtils.to_timestamp(date_from),
-            DateTimeUtils.to_timestamp(date_to),
+            MT5Utilities.DateTime.to_timestamp(date_from),
+            MT5Utilities.DateTime.to_timestamp(date_to),
         )
-        return Validators.int_optional(result)
+        return MT5Utilities.Validators.int_optional(result)
 
     def history_orders_get(
         self,
@@ -862,13 +862,13 @@ class MetaTrader5:
         """Get historical orders."""
         result = self._safe_rpc_call(
             "history_orders_get",
-            DateTimeUtils.to_timestamp(date_from),
-            DateTimeUtils.to_timestamp(date_to),
+            MT5Utilities.DateTime.to_timestamp(date_from),
+            MT5Utilities.DateTime.to_timestamp(date_to),
             group,
             ticket,
             position,
         )
-        return DataTransformer.wrap_dicts(result)
+        return MT5Utilities.Data.wrap_dicts(result)
 
     def history_deals_total(
         self, date_from: datetime | int, date_to: datetime | int
@@ -876,10 +876,10 @@ class MetaTrader5:
         """Get total number of historical deals."""
         result = self._safe_rpc_call(
             "history_deals_total",
-            DateTimeUtils.to_timestamp(date_from),
-            DateTimeUtils.to_timestamp(date_to),
+            MT5Utilities.DateTime.to_timestamp(date_from),
+            MT5Utilities.DateTime.to_timestamp(date_to),
         )
-        return Validators.int_optional(result)
+        return MT5Utilities.Validators.int_optional(result)
 
     def history_deals_get(
         self,
@@ -892,10 +892,10 @@ class MetaTrader5:
         """Get historical deals."""
         result = self._safe_rpc_call(
             "history_deals_get",
-            DateTimeUtils.to_timestamp(date_from),
-            DateTimeUtils.to_timestamp(date_to),
+            MT5Utilities.DateTime.to_timestamp(date_from),
+            MT5Utilities.DateTime.to_timestamp(date_to),
             group,
             ticket,
             position,
         )
-        return DataTransformer.wrap_dicts(result)
+        return MT5Utilities.Data.wrap_dicts(result)

@@ -44,7 +44,7 @@ import structlog
 from rpyc.utils.server import ThreadedServer, ThreadPoolServer
 
 from mt5linux.config import config
-from mt5linux.utilities import RetryHelper, Validators
+from mt5linux.utilities import MT5Utilities
 
 # Configure structlog for clean output
 structlog.configure(
@@ -414,7 +414,7 @@ class Server:
         )
 
     def _calculate_restart_delay(self) -> float:
-        return RetryHelper.backoff_with_jitter(
+        return MT5Utilities.Retry.backoff_with_jitter(
             self._restart_count,
             base_delay=self.config.restart_delay_base,
             max_delay=self.config.restart_delay_max,
@@ -622,7 +622,7 @@ class Server:
             status = conn.root.health_check()
             conn.close()
             healthy_value = status.get("healthy", False)
-            return Validators.bool_value(healthy_value)
+            return MT5Utilities.Validators.bool_value(healthy_value)
         except Exception:  # noqa: BLE001 - Catch all for health check resilience
             return False
 
@@ -767,7 +767,7 @@ class MT5Service(rpyc.Service):
             timeout,
             portable,
         )
-        return Validators.bool_value(result)
+        return MT5Utilities.Validators.bool_value(result)
 
     def exposed_login(
         self, login: int, password: str, server: str, timeout: int = 60000
@@ -775,19 +775,19 @@ class MT5Service(rpyc.Service):
         result = self._call_mt5(
             MT5Service._mt5_module.login, login, password, server, timeout
         )
-        return Validators.bool_value(result)
+        return MT5Utilities.Validators.bool_value(result)
 
     def exposed_shutdown(self) -> None:
         self._call_mt5(MT5Service._mt5_module.shutdown)
 
     def exposed_version(self) -> tuple[int, int, str] | None:
         result = self._call_mt5(MT5Service._mt5_module.version)
-        return Validators.version(result)
+        return MT5Utilities.Validators.version(result)
 
     def exposed_last_error(self) -> tuple[int, str]:
         with MT5Service._mt5_lock:
             result = MT5Service._mt5_module.last_error()
-            return Validators.last_error(result)
+            return MT5Utilities.Validators.last_error(result)
 
     def exposed_terminal_info(self) -> Any:
         return self._call_mt5(MT5Service._mt5_module.terminal_info)
@@ -801,7 +801,7 @@ class MT5Service(rpyc.Service):
 
     def exposed_symbols_total(self) -> int:
         result = self._call_mt5(MT5Service._mt5_module.symbols_total)
-        return Validators.int_value(result)
+        return MT5Utilities.Validators.int_value(result)
 
     def exposed_symbols_get(self, group: str | None = None) -> Any:
         if group:
@@ -816,7 +816,7 @@ class MT5Service(rpyc.Service):
 
     def exposed_symbol_select(self, symbol: str, enable: bool = True) -> bool:
         result = self._call_mt5(MT5Service._mt5_module.symbol_select, symbol, enable)
-        return Validators.bool_value(result)
+        return MT5Utilities.Validators.bool_value(result)
 
     # =========================================================================
     # Market Data Operations
@@ -875,7 +875,7 @@ class MT5Service(rpyc.Service):
         result = self._call_mt5(
             MT5Service._mt5_module.order_calc_margin, action, symbol, volume, price
         )
-        return Validators.float_optional(result)
+        return MT5Utilities.Validators.float_optional(result)
 
     def exposed_order_calc_profit(
         self,
@@ -893,7 +893,7 @@ class MT5Service(rpyc.Service):
             price_open,
             price_close,
         )
-        return Validators.float_optional(result)
+        return MT5Utilities.Validators.float_optional(result)
 
     def exposed_order_check(self, request: dict[str, Any]) -> Any:
         # Convert netref dict to regular dict for MT5 compatibility
@@ -911,7 +911,7 @@ class MT5Service(rpyc.Service):
 
     def exposed_positions_total(self) -> int:
         result = self._call_mt5(MT5Service._mt5_module.positions_total)
-        return Validators.int_value(result)
+        return MT5Utilities.Validators.int_value(result)
 
     def exposed_positions_get(
         self,
@@ -936,7 +936,7 @@ class MT5Service(rpyc.Service):
 
     def exposed_orders_total(self) -> int:
         result = self._call_mt5(MT5Service._mt5_module.orders_total)
-        return Validators.int_value(result)
+        return MT5Utilities.Validators.int_value(result)
 
     def exposed_orders_get(
         self,
@@ -963,7 +963,7 @@ class MT5Service(rpyc.Service):
         result = self._call_mt5(
             MT5Service._mt5_module.history_orders_total, date_from, date_to
         )
-        return Validators.int_optional(result)
+        return MT5Utilities.Validators.int_optional(result)
 
     def exposed_history_orders_get(
         self,
@@ -992,7 +992,7 @@ class MT5Service(rpyc.Service):
         result = self._call_mt5(
             MT5Service._mt5_module.history_deals_total, date_from, date_to
         )
-        return Validators.int_optional(result)
+        return MT5Utilities.Validators.int_optional(result)
 
     def exposed_history_deals_get(
         self,
