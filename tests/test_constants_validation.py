@@ -13,7 +13,6 @@ import socket
 
 import pytest
 import rpyc
-from rpyc.core.service import VoidService
 
 from mt5linux.config import MT5Config
 from mt5linux.constants import MT5Constants
@@ -66,19 +65,28 @@ def _is_rpyc_available(host: str, port: int) -> bool:
 
 
 def _extract_mt5_constants(host: str, port: int) -> dict[str, int]:
-    """Extract all integer constants from real MetaTrader5 via rpyc."""
-    conn = rpyc.connect(host, port, service=VoidService)
-    mt5 = conn.root.getmodule("MetaTrader5")
+    """Extract all integer constants from real MetaTrader5 via rpyc.
 
-    constants: dict[str, int] = {}
-    for name in dir(mt5):
-        if not name.isupper() or name.startswith("_"):
-            continue
-        if not hasattr(mt5, name):
-            continue
-        value = getattr(mt5, name)
-        if isinstance(value, int):
-            constants[name] = value
+    Uses the modern MT5Service bridge's get_constants() method.
+    """
+    conn = rpyc.connect(
+        host,
+        port,
+        config={
+            "sync_request_timeout": 30,
+            "allow_public_attrs": True,
+            "allow_pickle": True,
+        },
+    )
+
+    # Use our bridge's get_constants() method
+    raw_constants = conn.root.get_constants()
+
+    constants = {
+        name: value
+        for name, value in raw_constants.items()
+        if isinstance(value, int) and name.isupper() and not name.startswith("_")
+    }
 
     conn.close()
     return constants

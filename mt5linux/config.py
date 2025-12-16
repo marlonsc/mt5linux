@@ -11,7 +11,10 @@ Usage:
     >>> from mt5linux.config import MT5Config
     >>> config = MT5Config()  # loads from env
     >>> print(config.rpyc_port)  # 18812 or env override
+    >>> delay = config.calculate_retry_delay(attempt=2)
 """
+
+import random
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -79,3 +82,40 @@ class MT5Config(BaseSettings):
     order_time: int = MT5Constants.OrderTime.GTC
     order_deviation: int = 20
     order_magic: int = 0
+
+    # =========================================================================
+    # CALCULATION METHODS
+    # =========================================================================
+
+    def calculate_retry_delay(self, attempt: int) -> float:
+        """Calculate exponential backoff delay with optional jitter.
+
+        Args:
+            attempt: Current attempt number (0-indexed).
+
+        Returns:
+            Delay in seconds before next retry.
+        """
+        delay = min(
+            self.retry_initial_delay * (self.retry_exponential_base**attempt),
+            self.retry_max_delay,
+        )
+        if self.retry_jitter:
+            # Add 0-100% jitter (S311: random is fine for jitter - not cryptographic)
+            delay *= 0.5 + random.random()  # noqa: S311
+        return delay
+
+    def calculate_backoff_delay(self, attempt: int) -> float:
+        """Calculate server restart backoff delay with jitter.
+
+        Args:
+            attempt: Current attempt number (0-indexed).
+
+        Returns:
+            Delay in seconds with jitter applied.
+        """
+        delay = self.restart_delay_base * (self.restart_delay_multiplier**attempt)
+        delay = min(delay, self.restart_delay_max)
+        # S311: random is fine for jitter - not cryptographic
+        jitter = delay * self.jitter_factor * (2 * random.random() - 1)  # noqa: S311
+        return max(0, delay + jitter)

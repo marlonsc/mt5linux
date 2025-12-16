@@ -114,7 +114,7 @@ class AsyncMetaTrader5:
                 raise AttributeError(msg)
 
             # Methods (lowercase) - return wrapper that raises ConnectionError
-            async def not_connected_wrapper(*args: Any, **kwargs: Any) -> Any:
+            async def not_connected_wrapper(*_args: Any, **_kwargs: Any) -> Any:
                 raise ConnectionError(_NOT_CONNECTED_MSG)
 
             return not_connected_wrapper
@@ -196,6 +196,18 @@ class AsyncMetaTrader5:
         if self._sync_client is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
         return self._sync_client
+
+    # =========================================================================
+    # Public connection methods
+    # =========================================================================
+
+    async def connect(self) -> None:
+        """Connect to RPyC server (public API)."""
+        await self._connect()
+
+    async def disconnect(self) -> None:
+        """Disconnect from RPyC server (public API)."""
+        await self._disconnect()
 
     # =========================================================================
     # Special methods that need custom handling

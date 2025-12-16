@@ -249,3 +249,134 @@ class TestMetaTrader5History:
         total = mt5.history_orders_total(date_from, date_to)
         # May return None if no history available
         assert total is None or (isinstance(total, int) and total >= 0)
+
+
+class TestMetaTrader5Login:
+    """Tests for explicit login functionality."""
+
+    @pytest.mark.integration
+    def test_login_with_valid_credentials(self, mt5_raw: MetaTrader5) -> None:
+        """Test login with valid credentials."""
+        import os
+
+        login = int(os.getenv("MT5_LOGIN", "0"))
+        password = os.getenv("MT5_PASSWORD", "")
+        server = os.getenv("MT5_SERVER", "")
+
+        if not all([login, password, server]):
+            pytest.skip("MT5 credentials not configured")
+
+        # Initialize first (required before login)
+        init_result = mt5_raw.initialize()
+        if not init_result:
+            pytest.skip("MT5 initialize failed")
+
+        result = mt5_raw.login(login, password, server)
+        assert result is True
+
+        # Verify logged in
+        account = mt5_raw.account_info()
+        assert account is not None
+        assert account.login == login
+
+    @pytest.mark.integration
+    def test_login_with_invalid_credentials(self, mt5_raw: MetaTrader5) -> None:
+        """Test login with invalid credentials returns False."""
+        # Initialize first
+        init_result = mt5_raw.initialize()
+        if not init_result:
+            pytest.skip("MT5 initialize failed")
+
+        result = mt5_raw.login(99999999, "wrong_password", "InvalidServer")
+        assert result is False
+
+    @pytest.mark.integration
+    def test_login_after_initialize(self, mt5: MetaTrader5) -> None:
+        """Test that login works after initialize."""
+        import os
+
+        login = int(os.getenv("MT5_LOGIN", "0"))
+        password = os.getenv("MT5_PASSWORD", "")
+        server = os.getenv("MT5_SERVER", "")
+
+        if not all([login, password, server]):
+            pytest.skip("MT5 credentials not configured")
+
+        # Already initialized via fixture, login should work
+        result = mt5.login(login, password, server)
+        assert result is True
+
+
+class TestMetaTrader5HealthCheck:
+    """Tests for health_check functionality."""
+
+    @pytest.mark.integration
+    def test_health_check_connected(self, mt5: MetaTrader5) -> None:
+        """Test health_check returns healthy status when connected."""
+        health = mt5.health_check()
+
+        assert isinstance(health, dict)
+        assert "healthy" in health
+        assert "mt5_available" in health
+        assert health["healthy"] is True
+        assert health["mt5_available"] is True
+        assert health["connected"] is True
+
+    @pytest.mark.integration
+    def test_health_check_fields(self, mt5: MetaTrader5) -> None:
+        """Test health_check returns expected fields."""
+        health = mt5.health_check()
+
+        # Verify expected fields
+        expected_fields = ["healthy", "mt5_available", "connected"]
+        for field in expected_fields:
+            assert field in health, f"Missing field: {field}"
+
+    @pytest.mark.integration
+    def test_health_check_raw_connection(self, mt5_raw: MetaTrader5) -> None:
+        """Test health_check on raw connection (not initialized)."""
+        health = mt5_raw.health_check()
+
+        assert isinstance(health, dict)
+        # Raw connection - MT5 may not be fully initialized
+        assert "healthy" in health
+
+
+class TestMetaTrader5Resilience:
+    """Tests for resilience features (retry, circuit breaker)."""
+
+    @pytest.mark.integration
+    @pytest.mark.slow
+    def test_connection_recovery_after_close(self, mt5: MetaTrader5) -> None:
+        """Test that client handles connection issues gracefully."""
+        # Get initial data
+        account1 = mt5.account_info()
+        assert account1 is not None
+
+        # Force close and verify error on next call
+        mt5._close()
+
+        # This should raise since connection is closed
+        with pytest.raises((ConnectionError, RuntimeError, AttributeError)):
+            mt5.account_info()
+
+    @pytest.mark.integration
+    def test_close_is_idempotent(self, mt5_raw: MetaTrader5) -> None:
+        """Test that _close() can be called multiple times safely."""
+        mt5_raw._close()
+        mt5_raw._close()  # Should not raise
+        mt5_raw._close()  # Should not raise
+
+    @pytest.mark.integration
+    def test_multiple_operations_same_connection(self, mt5: MetaTrader5) -> None:
+        """Test multiple sequential operations on same connection."""
+        # Perform multiple operations
+        for _ in range(5):
+            account = mt5.account_info()
+            assert account is not None
+
+            symbols = mt5.symbols_total()
+            assert symbols > 0
+
+            terminal = mt5.terminal_info()
+            assert terminal is not None

@@ -56,7 +56,8 @@ def is_rpyc_service_ready(host: str = "localhost", port: int | None = None) -> b
                 "sync_request_timeout": 60,
                 "allow_public_attrs": True,
                 "allow_pickle": True,
-            },
+                "max_io_chunk": _config.rpyc_max_io_chunk,
+                "compression_level": _config.rpyc_compression_level            },
         )
         # Verify connection works by calling exposed_version (official MT5 method)
         _ = conn.root.exposed_version()

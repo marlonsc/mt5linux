@@ -40,17 +40,9 @@ services:
     volumes:
       # Isolated volumes (not shared with production or neptor)
       - mt5_config:/config:uid=911,gid=911
-      - mt5_downloads:/downloads:uid=911,gid=911
-      - mt5_cache:/cache:uid=911,gid=911
     env_file:
       - ${ENV_FILE:-.env}
     environment:
-      # MT5 credentials (from environment/conftest)
-      - MT5_LOGIN=${MT5_LOGIN}
-      - MT5_PASSWORD=${MT5_PASSWORD}
-      - MT5_SERVER=${MT5_SERVER}
-      # Container settings
-      - ENABLE_WIN_DOTNET=1
       - TZ=UTC
     restart: "no"
     cap_add:
@@ -70,11 +62,3 @@ volumes:
     name: ${MT5_CONTAINER_NAME:-mt5linux-unit}_config
     labels:
       description: "MT5 test configuration (isolated)"
-  mt5_downloads:
-    name: ${MT5_CONTAINER_NAME:-mt5linux-unit}_downloads
-    labels:
-      description: "MT5 test downloads (isolated)"
-  mt5_cache:
-    name: ${MT5_CONTAINER_NAME:-mt5linux-unit}_cache
-    labels:
-      description: "MT5 test cache (isolated)"

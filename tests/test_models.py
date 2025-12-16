@@ -381,3 +381,124 @@ class TestEnums:
         assert MT5Constants.TradeRetcode.DONE.value == 10009
         assert MT5Constants.TradeRetcode.REQUOTE.value == 10004
         assert MT5Constants.TradeRetcode.NO_MONEY.value == 10019
+
+
+class TestOrder:
+    """Tests for Order model."""
+
+    def test_from_mt5(self) -> None:
+        """Test creating Order from MT5 data."""
+        from mt5linux.models import MT5Models
+
+        mock_order = MagicMock()
+        mock_order.ticket = 12345678
+        mock_order.time_setup = 1702000000
+        mock_order.time_setup_msc = 1702000000123
+        mock_order.time_done = 0
+        mock_order.time_done_msc = 0
+        mock_order.time_expiration = 0
+        mock_order.type = 2  # BUY_LIMIT
+        mock_order.type_time = 0  # GTC
+        mock_order.type_filling = 0  # FOK
+        mock_order.state = 1  # PLACED
+        mock_order.magic = 123456
+        mock_order.position_id = 0
+        mock_order.position_by_id = 0
+        mock_order.reason = 0  # CLIENT
+        mock_order.volume_initial = 0.1
+        mock_order.volume_current = 0.1
+        mock_order.price_open = 1.0900
+        mock_order.sl = 1.0850
+        mock_order.tp = 1.1000
+        mock_order.price_current = 1.0895
+        mock_order.price_stoplimit = 0.0
+        mock_order.symbol = "EURUSD"
+        mock_order.comment = "test order"
+        mock_order.external_id = ""
+
+        order = MT5Models.Order.from_mt5(mock_order)
+
+        assert order is not None
+        assert order.ticket == 12345678
+        assert order.type == 2
+        assert order.volume_initial == 0.1
+        assert order.symbol == "EURUSD"
+
+    def test_from_mt5_none(self) -> None:
+        """Test Order.from_mt5 with None returns None."""
+        from mt5linux.models import MT5Models
+
+        result = MT5Models.Order.from_mt5(None)
+        assert result is None
+
+
+class TestDeal:
+    """Tests for Deal model."""
+
+    def test_from_mt5(self) -> None:
+        """Test creating Deal from MT5 data."""
+        from mt5linux.models import MT5Models
+
+        mock_deal = MagicMock()
+        mock_deal.ticket = 87654321
+        mock_deal.order = 12345678
+        mock_deal.time = 1702000000
+        mock_deal.time_msc = 1702000000123
+        mock_deal.type = 0  # BUY
+        mock_deal.entry = 0  # IN
+        mock_deal.magic = 123456
+        mock_deal.position_id = 99999
+        mock_deal.reason = 0  # CLIENT
+        mock_deal.volume = 0.1
+        mock_deal.price = 1.0900
+        mock_deal.commission = -0.50
+        mock_deal.swap = 0.0
+        mock_deal.profit = 10.0
+        mock_deal.fee = 0.0
+        mock_deal.symbol = "EURUSD"
+        mock_deal.comment = "test deal"
+        mock_deal.external_id = ""
+
+        deal = MT5Models.Deal.from_mt5(mock_deal)
+
+        assert deal is not None
+        assert deal.ticket == 87654321
+        assert deal.order == 12345678
+        assert deal.volume == 0.1
+        assert deal.profit == 10.0
+        assert deal.symbol == "EURUSD"
+
+    def test_from_mt5_none(self) -> None:
+        """Test Deal.from_mt5 with None returns None."""
+        from mt5linux.models import MT5Models
+
+        result = MT5Models.Deal.from_mt5(None)
+        assert result is None
+
+
+class TestBookEntry:
+    """Tests for BookEntry model."""
+
+    def test_from_mt5(self) -> None:
+        """Test creating BookEntry from MT5 data."""
+        from mt5linux.models import MT5Models
+
+        mock_entry = MagicMock()
+        mock_entry.type = 2  # BUY
+        mock_entry.price = 1.0900
+        mock_entry.volume = 100.0
+        mock_entry.volume_real = 100.0
+
+        entry = MT5Models.BookEntry.from_mt5(mock_entry)
+
+        assert entry is not None
+        assert entry.type == 2
+        assert entry.price == 1.0900
+        assert entry.volume == 100.0
+
+    def test_from_mt5_none(self) -> None:
+        """Test BookEntry.from_mt5 with None returns None."""
+        from mt5linux.models import MT5Models
+
+        result = MT5Models.BookEntry.from_mt5(None)
+        assert result is None

@@ -286,3 +286,101 @@ class MT5Models:
         time_msc: int = 0
         flags: int = 0
         volume_real: float = 0.0
+
+    class Order(Base):
+        """MT5 pending order information.
+
+        Represents orders in the pending state (not yet executed).
+        Also used for historical orders via history_orders_get().
+        """
+
+        ticket: int
+        time_setup: int = 0
+        time_setup_msc: int = 0
+        time_done: int = 0
+        time_done_msc: int = 0
+        time_expiration: int = 0
+        type: int = 0
+        type_time: int = 0
+        type_filling: int = 0
+        state: int = 0
+        magic: int = 0
+        position_id: int = 0
+        position_by_id: int = 0
+        reason: int = 0
+        volume_initial: float = 0.0
+        volume_current: float = 0.0
+        price_open: float = 0.0
+        sl: float = 0.0
+        tp: float = 0.0
+        price_current: float = 0.0
+        price_stoplimit: float = 0.0
+        symbol: str = ""
+        comment: str = ""
+        external_id: str = ""
+
+    class Deal(Base):
+        """MT5 historical deal information.
+
+        Represents executed trades from history_deals_get().
+        """
+
+        ticket: int
+        order: int = 0
+        time: int = 0
+        time_msc: int = 0
+        type: int = 0
+        entry: int = 0
+        magic: int = 0
+        position_id: int = 0
+        reason: int = 0
+        volume: float = 0.0
+        price: float = 0.0
+        commission: float = 0.0
+        swap: float = 0.0
+        profit: float = 0.0
+        fee: float = 0.0
+        symbol: str = ""
+        comment: str = ""
+        external_id: str = ""
+
+    class BookEntry(Base):
+        """MT5 market depth (DOM) entry.
+
+        Represents a single entry from market_book_get().
+        """
+
+        type: int
+        price: float = 0.0
+        volume: float = 0.0
+        volume_real: float = 0.0
+
+    class TerminalInfo(Base):
+        """MT5 terminal information.
+
+        Represents terminal state from terminal_info().
+        Contains connection status, permissions, and path information.
+        """
+
+        community_account: bool = False
+        community_connection: bool = False
+        connected: bool = False
+        dlls_allowed: bool = False
+        trade_allowed: bool = False
+        tradeapi_disabled: bool = False
+        email_enabled: bool = False
+        ftp_enabled: bool = False
+        notifications_enabled: bool = False
+        mqid: bool = False
+        build: int = 0
+        maxbars: int = 0
+        codepage: int = 0
+        ping_last: int = 0
+        community_balance: float = 0.0
+        retransmission: float = 0.0
+        company: str = ""
+        name: str = ""
+        language: str = ""
+        path: str = ""
+        data_path: str = ""
+        commondata_path: str = ""

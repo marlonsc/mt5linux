@@ -390,4 +390,20 @@ class MT5Constants:
         FRIDAY = 5
         SATURDAY = 6
 
+    # =========================================================================
+    # CIRCUIT BREAKER CONSTANTS
+    # =========================================================================
+
+    class CircuitBreakerState(IntEnum):
+        """Circuit breaker state.
+
+        CLOSED: Normal operation, requests pass through
+        OPEN: Too many failures, requests blocked
+        HALF_OPEN: Testing recovery, limited requests allowed
+        """
+
+        CLOSED = 0
+        OPEN = 1
+        HALF_OPEN = 2
+
 

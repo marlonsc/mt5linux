@@ -504,3 +504,54 @@ class TestAsyncMetaTrader5Concurrent:
         # At least one should succeed, or skip if all failed
         if success_count == 0:
             pytest.skip("Market data not available (market may be closed)")
+
+
+class TestAsyncMetaTrader5Login:
+    """Tests for async login functionality."""
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_async_login_with_valid_credentials(
+        self, async_mt5_raw: AsyncMetaTrader5
+    ) -> None:
+        """Test async login with valid credentials."""
+        import os
+
+        login = int(os.getenv("MT5_LOGIN", "0"))
+        password = os.getenv("MT5_PASSWORD", "")
+        server = os.getenv("MT5_SERVER", "")
+
+        if not all([login, password, server]):
+            pytest.skip("MT5 credentials not configured")
+
+        # Initialize first
+        init_result = await async_mt5_raw.initialize()
+        if not init_result:
+            pytest.skip("MT5 initialize failed")
+
+        result = await async_mt5_raw.login(login, password, server)
+        assert result is True
+
+
+class TestAsyncMetaTrader5HealthCheck:
+    """Tests for async health_check functionality."""
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_async_health_check(self, async_mt5: AsyncMetaTrader5) -> None:
+        """Test async health_check returns healthy status."""
+        health = await async_mt5.health_check()
+
+        assert isinstance(health, dict)
+        assert health.get("healthy") is True
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_async_health_check_fields(self, async_mt5: AsyncMetaTrader5) -> None:
+        """Test async health_check returns expected fields."""
+        health = await async_mt5.health_check()
+
+        assert isinstance(health, dict)
+        expected_fields = ["healthy", "mt5_available"]
+        for field in expected_fields:
+            assert field in health, f"Missing field: {field}"
