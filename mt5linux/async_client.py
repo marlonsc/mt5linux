@@ -30,7 +30,7 @@ import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self
 
-from mt5linux.client import MetaTrader5
+from mt5linux.client import _NOT_CONNECTED_MSG, MetaTrader5
 
 if TYPE_CHECKING:
     from mt5linux.types import MT5Types
@@ -43,8 +43,7 @@ log = logging.getLogger(__name__)
 # Default health check interval in seconds
 DEFAULT_HEALTH_CHECK_INTERVAL = 60
 
-# Error message for not connected state
-_NOT_CONNECTED_MSG = "MT5 connection not established - call connect() first"
+# _NOT_CONNECTED_MSG imported from client.py (DRY)
 
 
 class AsyncMetaTrader5:
@@ -74,8 +73,6 @@ class AsyncMetaTrader5:
         port: int = 18812,
         timeout: int = 300,
         *,
-        circuit_breaker_threshold: int = 5,
-        circuit_breaker_recovery: float = 60.0,
         health_check_interval: int = DEFAULT_HEALTH_CHECK_INTERVAL,
         max_reconnect_attempts: int = 3,
     ) -> None:
@@ -85,16 +82,12 @@ class AsyncMetaTrader5:
             host: RPyC server address.
             port: RPyC server port.
             timeout: Timeout in seconds for MT5 operations.
-            circuit_breaker_threshold: Failures before circuit opens.
-            circuit_breaker_recovery: Seconds to wait before recovery attempt.
             health_check_interval: Seconds between connection health checks.
             max_reconnect_attempts: Max attempts for reconnection.
         """
         self._host = host
         self._port = port
         self._timeout = timeout
-        self._circuit_breaker_threshold = circuit_breaker_threshold
-        self._circuit_breaker_recovery = circuit_breaker_recovery
         self._health_check_interval = health_check_interval
         self._max_reconnect_attempts = max_reconnect_attempts
         self._sync_client: MetaTrader5 | None = None
@@ -156,8 +149,6 @@ class AsyncMetaTrader5:
                     self._host,
                     self._port,
                     self._timeout,
-                    circuit_breaker_threshold=self._circuit_breaker_threshold,
-                    circuit_breaker_recovery=self._circuit_breaker_recovery,
                     health_check_interval=self._health_check_interval,
                     max_reconnect_attempts=self._max_reconnect_attempts,
                 )

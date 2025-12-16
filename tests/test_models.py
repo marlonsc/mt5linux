@@ -250,9 +250,9 @@ class TestAccountInfo:
         assert account.currency == "USD"
 
     def test_from_mt5_none(self) -> None:
-        """Test from_mt5 with None returns default AccountInfo."""
+        """Test from_mt5 with None returns None."""
         account = AccountInfo.from_mt5(None)
-        assert account.login == 0
+        assert account is None
 
 
 class TestSymbolInfo:

@@ -39,8 +39,12 @@ class MT5Model(BaseModel):
         """
         if obj is None:
             return None
-        if hasattr(obj, "_asdict"):
-            return cls.model_validate(obj._asdict())
+        # Check for real namedtuple (_asdict returns actual dict, not MagicMock)
+        if hasattr(obj, "_asdict") and callable(getattr(obj, "_asdict", None)):
+            result = obj._asdict()
+            if isinstance(result, dict):
+                return cls.model_validate(result)
+        # Use from_attributes for objects with direct attribute access
         return cls.model_validate(obj)
 
 
@@ -137,7 +141,7 @@ class OrderResult(MT5Model):
     @property
     def is_partial(self) -> bool:
         """Check if order was partially filled."""
-        return self.retcode == MT5.MT5.TradeRetcode.DONE_PARTIAL
+        return self.retcode == MT5.TradeRetcode.DONE_PARTIAL
 
     @classmethod
     def from_mt5(cls, result: Any) -> Self | None:

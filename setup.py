@@ -12,7 +12,7 @@ from setuptools import find_packages, setup
 setup(
     name="mt5linux",
     packages=find_packages(include=["mt5linux"]),
-    version="0.2.1",
+    version="0.3.0",
     description="MetaTrader5 for linux users",
     long_description=Path("README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",

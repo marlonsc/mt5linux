@@ -365,7 +365,7 @@ class MetaTrader5:
 
                 if self._state == MetaTrader5.CircuitBreaker.State.HALF_OPEN:
                     log.warning(
-                        "Circuit breaker '%s' failed during recovery: HALF_OPEN -> OPEN",
+                        "Circuit breaker '%s' failed during recovery",
                         self.name,
                     )
                     self._state = MetaTrader5.CircuitBreaker.State.OPEN
@@ -443,7 +443,7 @@ class MetaTrader5:
     # CLASS CONSTANTS
     # =========================================================================
 
-    DEFAULT_HEALTH_CHECK_INTERVAL: int = 30
+    DEFAULT_HEALTH_CHECK_INTERVAL: int = 60
 
     # =========================================================================
     # INSTANCE ATTRIBUTES
@@ -648,25 +648,23 @@ class MetaTrader5:
             try:
                 result = self._execute_operation(method_name, *args, **kwargs)
 
-                # Handle None results
-                if retry_on_none and result is None:
-                    if attempt < max_attempts - 1:
-                        delay = _calculate_retry_delay(attempt)
-                        log.warning(
-                            "%s returned None (attempt %d/%d), retrying in %.2fs",
-                            method_name,
-                            attempt + 1,
-                            max_attempts,
-                            delay,
-                        )
-                        time.sleep(delay)
-                        continue
+                # Handle None results - retry if configured
+                if retry_on_none and result is None and attempt < max_attempts - 1:
+                    delay = _calculate_retry_delay(attempt)
+                    log.warning(
+                        "%s returned None (attempt %d/%d), retrying in %.2fs",
+                        method_name,
+                        attempt + 1,
+                        max_attempts,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    continue
 
                 # Success
                 self._circuit_breaker.record_success()
                 if attempt > 0:
                     log.info("%s succeeded on attempt %d", method_name, attempt + 1)
-                return result
 
             except RETRYABLE_EXCEPTIONS as e:
                 last_exception = e
@@ -683,8 +681,13 @@ class MetaTrader5:
                     )
                     time.sleep(delay)
                 else:
-                    log.exception("%s failed after %d attempts", method_name, max_attempts)
+                    log.exception(
+                        "%s failed after %d attempts", method_name, max_attempts
+                    )
                     raise
+
+            else:
+                return result
 
         if last_exception:
             raise MetaTrader5.MaxRetriesError(
