@@ -14,7 +14,7 @@ repository = "https://github.com/lucas-campagna/mt5linux"
 packages = [{ include = "mt5linux" }]
 
 [tool.poetry.dependencies]
-python = "^3.13"
+python = "^3.12"  # 3.12+ for Wine Python compatibility
 numpy = ">=1.26.4,<2.0"
 rpyc = "^6.0.2"
 pydantic = "^2.10.0"
@@ -81,7 +81,7 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -98,7 +98,7 @@ ignore_errors = true
 # Pyright config for MetaTrader5 module (Wine-only)
 include = ["mt5linux"]
 exclude = ["tests", "typings", ".venv"]
-pythonVersion = "3.13"
+pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingImports = false
 reportMissingTypeStubs = false

@@ -343,7 +343,7 @@ class MetaTrader5:
             except RETRYABLE_EXCEPTIONS as e:
                 last_error = e
                 if attempt < self._max_reconnect_attempts - 1:
-                    delay = min(0.5 * (2 ** attempt), 10.0)
+                    delay = min(0.5 * (2**attempt), 10.0)
                     delay *= 0.5 + random.random()  # noqa: S311
                     log.warning(
                         "Reconnection attempt %d failed: %s, retrying in %.2fs",
@@ -461,6 +461,30 @@ class MetaTrader5:
         last_exception: Exception | None = None
 
         for attempt in range(max_attempts):
+            # Ensure connection is valid before each attempt
+            if self._service_root is None:
+                try:
+                    self._reconnect()
+                except Exception as reconnect_err:  # noqa: BLE001
+                    last_exception = reconnect_err
+                    if attempt < max_attempts - 1:
+                        delay = min(initial_delay * (2**attempt), max_delay)
+                        delay *= 0.5 + random.random()  # noqa: S311
+                        log.warning(
+                            "%s reconnect failed (attempt %d/%d): %s, retrying in %.2fs",
+                            method_name,
+                            attempt + 1,
+                            max_attempts,
+                            reconnect_err,
+                            delay,
+                        )
+                        time.sleep(delay)
+                        continue
+                    else:
+                        raise ConnectionError(
+                            f"Connection failed after {max_attempts} attempts"
+                        ) from reconnect_err
+
             try:
                 method = getattr(self._service_root, method_name)
                 result = method(*args, **kwargs)
@@ -468,7 +492,7 @@ class MetaTrader5:
                 # Retry on None if enabled
                 if retry_on_none and result is None:
                     if attempt < max_attempts - 1:
-                        delay = min(initial_delay * (2 ** attempt), max_delay)
+                        delay = min(initial_delay * (2**attempt), max_delay)
                         delay *= 0.5 + random.random()  # noqa: S311
                         log.warning(
                             "%s returned None (attempt %d/%d), retrying in %.2fs",
@@ -495,7 +519,7 @@ class MetaTrader5:
                 last_exception = e
                 self._circuit_breaker.record_failure()
                 if attempt < max_attempts - 1:
-                    delay = min(initial_delay * (2 ** attempt), max_delay)
+                    delay = min(initial_delay * (2**attempt), max_delay)
                     delay *= 0.5 + random.random()  # noqa: S311
                     log.warning(
                         "%s failed (attempt %d/%d): %s, retrying in %.2fs",
