@@ -1,6 +1,11 @@
-"""Async MetaTrader5 client for mt5linux.
+"""Async MetaTrader5 client for mt5linux with resilience.
 
 Non-blocking wrapper using asyncio.to_thread for MT5 operations.
+
+Resilience features:
+- Inherits circuit breaker and health monitoring from sync client
+- Async-compatible error handling
+- Thread-safe connection management
 
 Example:
     >>> async with AsyncMetaTrader5(host="localhost", port=8001) as mt5:
@@ -25,13 +30,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self
 
+from mt5linux._resilience import (
+    DEFAULT_HEALTH_CHECK_INTERVAL,
+    RETRYABLE_EXCEPTIONS,
+)
 from mt5linux.client import MetaTrader5
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from mt5linux._types import RatesArray, TicksArray
 
 log = logging.getLogger(__name__)
@@ -66,6 +78,11 @@ class AsyncMetaTrader5:
         host: str = "localhost",
         port: int = 18812,
         timeout: int = 300,
+        *,
+        circuit_breaker_threshold: int = 5,
+        circuit_breaker_recovery: float = 60.0,
+        health_check_interval: int = DEFAULT_HEALTH_CHECK_INTERVAL,
+        max_reconnect_attempts: int = 3,
     ) -> None:
         """Initialize async MT5 client.
 
@@ -73,10 +90,18 @@ class AsyncMetaTrader5:
             host: RPyC server address.
             port: RPyC server port.
             timeout: Timeout in seconds for MT5 operations.
+            circuit_breaker_threshold: Failures before circuit opens.
+            circuit_breaker_recovery: Seconds to wait before recovery attempt.
+            health_check_interval: Seconds between connection health checks.
+            max_reconnect_attempts: Max attempts for reconnection.
         """
         self._host = host
         self._port = port
         self._timeout = timeout
+        self._circuit_breaker_threshold = circuit_breaker_threshold
+        self._circuit_breaker_recovery = circuit_breaker_recovery
+        self._health_check_interval = health_check_interval
+        self._max_reconnect_attempts = max_reconnect_attempts
         self._sync_client: MetaTrader5 | None = None
         self._connect_lock: asyncio.Lock | None = None
 
@@ -133,7 +158,15 @@ class AsyncMetaTrader5:
                 return
 
             def _connect() -> MetaTrader5:
-                return MetaTrader5(self._host, self._port, self._timeout)
+                return MetaTrader5(
+                    self._host,
+                    self._port,
+                    self._timeout,
+                    circuit_breaker_threshold=self._circuit_breaker_threshold,
+                    circuit_breaker_recovery=self._circuit_breaker_recovery,
+                    health_check_interval=self._health_check_interval,
+                    max_reconnect_attempts=self._max_reconnect_attempts,
+                )
 
             self._sync_client = await asyncio.to_thread(_connect)
             log.debug("Connected to MT5 at %s:%s", self._host, self._port)
@@ -180,6 +213,84 @@ class AsyncMetaTrader5:
             raise ConnectionError(_NOT_CONNECTED_MSG)
         return self._sync_client
 
+    async def _resilient_call(
+        self,
+        func: Callable[..., Any],
+        *args: Any,
+        retry_on_none: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute sync function with automatic retry and resilience.
+
+        Resilience is automatic and transparent:
+        - Retries on connection errors with exponential backoff
+        - Retries on None returns (transient MT5 failures)
+        - Works with underlying sync client's resilience
+
+        Args:
+            func: Sync function to call via asyncio.to_thread.
+            *args: Positional arguments for the function.
+            retry_on_none: If True (default), retry when function returns None.
+            **kwargs: Keyword arguments for the function.
+
+        Returns:
+            Result from the function call.
+        """
+        max_attempts = 3
+        initial_delay = 0.5
+        max_delay = 10.0
+
+        for attempt in range(max_attempts):
+            try:
+                result = await asyncio.to_thread(func, *args, **kwargs)
+
+                # Retry on None if enabled
+                if retry_on_none and result is None:
+                    if attempt < max_attempts - 1:
+                        delay = min(initial_delay * (2 ** attempt), max_delay)
+                        delay *= 0.5 + random.random()  # noqa: S311
+                        log.warning(
+                            "%s returned None (attempt %d/%d), retrying in %.2fs",
+                            func.__name__,
+                            attempt + 1,
+                            max_attempts,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    else:
+                        log.warning(
+                            "%s returned None after %d attempts",
+                            func.__name__,
+                            max_attempts,
+                        )
+
+                # Success
+                if attempt > 0:
+                    log.info("%s succeeded on attempt %d", func.__name__, attempt + 1)
+                return result
+
+            except RETRYABLE_EXCEPTIONS as e:
+                if attempt < max_attempts - 1:
+                    delay = min(initial_delay * (2 ** attempt), max_delay)
+                    delay *= 0.5 + random.random()  # noqa: S311
+                    log.warning(
+                        "%s failed (attempt %d/%d): %s, retrying in %.2fs",
+                        func.__name__,
+                        attempt + 1,
+                        max_attempts,
+                        e,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    log.exception(
+                        "%s failed after %d attempts", func.__name__, max_attempts
+                    )
+                    raise
+
+        return None  # Should not reach here
+
     # ========================================
     # Health & Diagnostics
     # ========================================
@@ -194,7 +305,7 @@ class AsyncMetaTrader5:
             ConnectionError: If not connected.
         """
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.health_check)
+        return await self._resilient_call(client.health_check)
 
     async def reset_circuit_breaker(self) -> bool:
         """Reset server circuit breaker.
@@ -206,7 +317,28 @@ class AsyncMetaTrader5:
             ConnectionError: If not connected.
         """
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.reset_circuit_breaker)
+        return await self._resilient_call(client.reset_circuit_breaker)
+
+    async def get_circuit_breaker_status(self) -> dict[str, Any]:
+        """Get client circuit breaker status for monitoring.
+
+        Returns:
+            Dict with circuit breaker state and metrics.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+        client = self._ensure_connected()
+        return await self._resilient_call(client.get_circuit_breaker_status)
+
+    async def reset_client_circuit_breaker(self) -> None:
+        """Manually reset the client's circuit breaker.
+
+        Raises:
+            ConnectionError: If not connected.
+        """
+        client = self._ensure_connected()
+        await self._resilient_call(client.reset_client_circuit_breaker)
 
     # ========================================
     # Connection & Terminal
@@ -237,7 +369,7 @@ class AsyncMetaTrader5:
         if self._sync_client is None:
             await self.connect()
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.initialize, path, login, password, server, timeout, portable
         )
 
@@ -250,7 +382,9 @@ class AsyncMetaTrader5:
     ) -> bool:
         """Login to MT5 account."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.login, login, password, server, timeout)
+        return await self._resilient_call(
+            client.login, login, password, server, timeout
+        )
 
     async def shutdown(self) -> None:
         """Shutdown MT5 terminal connection.
@@ -258,27 +392,29 @@ class AsyncMetaTrader5:
         Note: This is a no-op if not connected (graceful degradation).
         """
         if self._sync_client is not None:
-            await asyncio.to_thread(self._sync_client.shutdown)
+            await self._resilient_call(
+                self._sync_client.shutdown, retry_on_none=False
+            )
 
     async def version(self) -> tuple[int, int, str] | None:
         """Get MT5 terminal version."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.version)
+        return await self._resilient_call(client.version)
 
     async def last_error(self) -> tuple[int, str]:
         """Get last error code and description."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.last_error)
+        return await self._resilient_call(client.last_error)
 
     async def terminal_info(self) -> Any:
         """Get terminal info."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.terminal_info)
+        return await self._resilient_call(client.terminal_info)
 
     async def account_info(self) -> Any:
         """Get account info."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.account_info)
+        return await self._resilient_call(client.account_info)
 
     # ========================================
     # Symbols
@@ -287,27 +423,27 @@ class AsyncMetaTrader5:
     async def symbols_total(self) -> int:
         """Get total number of symbols."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.symbols_total)
+        return await self._resilient_call(client.symbols_total)
 
     async def symbols_get(self, group: str | None = None) -> Any:
         """Get symbols matching filter."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.symbols_get, group)
+        return await self._resilient_call(client.symbols_get, group)
 
     async def symbol_info(self, symbol: str) -> Any:
         """Get symbol info."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.symbol_info, symbol)
+        return await self._resilient_call(client.symbol_info, symbol)
 
     async def symbol_info_tick(self, symbol: str) -> Any:
         """Get symbol tick info."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.symbol_info_tick, symbol)
+        return await self._resilient_call(client.symbol_info_tick, symbol)
 
     async def symbol_select(self, symbol: str, enable: bool = True) -> bool:
         """Select/deselect symbol in Market Watch."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.symbol_select, symbol, enable)
+        return await self._resilient_call(client.symbol_select, symbol, enable)
 
     # ========================================
     # Market Data
@@ -322,7 +458,7 @@ class AsyncMetaTrader5:
     ) -> RatesArray | None:
         """Copy OHLCV rates from date."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.copy_rates_from, symbol, timeframe, date_from, count
         )
 
@@ -335,7 +471,7 @@ class AsyncMetaTrader5:
     ) -> RatesArray | None:
         """Copy OHLCV rates from position."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.copy_rates_from_pos, symbol, timeframe, start_pos, count
         )
 
@@ -348,7 +484,7 @@ class AsyncMetaTrader5:
     ) -> RatesArray | None:
         """Copy OHLCV rates in date range."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.copy_rates_range, symbol, timeframe, date_from, date_to
         )
 
@@ -361,7 +497,7 @@ class AsyncMetaTrader5:
     ) -> TicksArray | None:
         """Copy ticks from date."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.copy_ticks_from, symbol, date_from, count, flags
         )
 
@@ -374,7 +510,7 @@ class AsyncMetaTrader5:
     ) -> TicksArray | None:
         """Copy ticks in date range."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.copy_ticks_range, symbol, date_from, date_to, flags
         )
 
@@ -391,7 +527,7 @@ class AsyncMetaTrader5:
     ) -> float | None:
         """Calculate margin for order."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.order_calc_margin, action, symbol, volume, price
         )
 
@@ -405,19 +541,19 @@ class AsyncMetaTrader5:
     ) -> float | None:
         """Calculate profit for order."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(
+        return await self._resilient_call(
             client.order_calc_profit, action, symbol, volume, price_open, price_close
         )
 
     async def order_check(self, request: dict[str, Any]) -> Any:
         """Check order parameters."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.order_check, request)
+        return await self._resilient_call(client.order_check, request)
 
     async def order_send(self, request: dict[str, Any]) -> Any:
         """Send trading order."""
         client = self._ensure_connected()
-        return await asyncio.to_thread(client.order_send, request)
+        return await self._resilient_call(client.order_send, request)
 
     # ========================================
     # Positions

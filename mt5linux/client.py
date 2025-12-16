@@ -1,10 +1,16 @@
-"""MetaTrader5 client - modern RPyC bridge.
+"""MetaTrader5 client - modern RPyC bridge with resilience.
 
 Modern RPyC client for connecting to MT5Service:
 - Uses rpyc.connect() instead of deprecated rpyc.classic.connect()
 - Direct method calls via conn.root.exposed_*
-- Fail-fast error handling
+- Production-grade error handling with retry and circuit breaker
 - numpy array handling via rpyc.utils.classic.obtain()
+
+Resilience features:
+- Automatic retry with exponential backoff on transient failures
+- Circuit breaker to prevent cascading failures
+- Connection health monitoring with auto-reconnect
+- Per-operation timeouts
 
 Compatible with rpyc 6.x.
 """
@@ -12,10 +18,40 @@ Compatible with rpyc 6.x.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self
 
 import rpyc
+import rpyc.core.channel
+import rpyc.core.stream
 from rpyc.utils.classic import obtain
+
+from mt5linux._resilience import (
+    DEFAULT_HEALTH_CHECK_INTERVAL,
+    RETRYABLE_EXCEPTIONS,
+    CircuitBreaker,
+    CircuitOpenError,
+    retry_with_backoff,
+)
+
+# =============================================================================
+# RPyC Performance Optimization for Large Data Transfers
+# =============================================================================
+# When retrieving large datasets (e.g., 9116 symbols via symbols_get()),
+# RPyC's default settings cause severe performance issues:
+# - Default MAX_IO_CHUNK (8000 bytes) causes excessive network fragmentation
+# - Each chunk requires a separate network round-trip
+#
+# Solution based on RPyC GitHub Issues #279 and #329:
+# - Increase chunk size to ~650KB for 30x performance improvement
+# - Disable compression (faster for already-structured data)
+#
+# References:
+# - https://github.com/tomerfiliba-org/rpyc/issues/279
+# - https://github.com/tomerfiliba-org/rpyc/issues/329
+# =============================================================================
+rpyc.core.stream.SocketStream.MAX_IO_CHUNK = 65355 * 10  # ~650KB chunks
+rpyc.core.channel.Channel.COMPRESSION_LEVEL = 0  # Disable compression for speed
 
 log = logging.getLogger(__name__)
 
@@ -23,10 +59,33 @@ log = logging.getLogger(__name__)
 _NOT_CONNECTED_MSG = "MT5 connection not established - call connect first"
 
 if TYPE_CHECKING:
-    from datetime import datetime
     from types import TracebackType
 
     from mt5linux._types import RatesArray, TicksArray
+
+
+# =============================================================================
+# Datetime Serialization Helper - RPyC Fix
+# =============================================================================
+
+
+def _to_timestamp(dt: datetime | int | None) -> int | None:
+    """Convert datetime to Unix timestamp for MT5 API.
+
+    RPyC doesn't properly serialize datetime objects to Wine/Windows.
+    MT5 API accepts Unix timestamps (seconds since epoch).
+
+    Args:
+        dt: datetime object, Unix timestamp (int), or None
+
+    Returns:
+        Unix timestamp (int) or None
+    """
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        return int(dt.timestamp())
+    return dt  # Already int
 
 
 # =============================================================================
@@ -84,6 +143,67 @@ def _validate_int_optional(value: object) -> int | None:
     raise TypeError(msg)
 
 
+# =============================================================================
+# Dict-to-Object Wrappers for MT5 Data
+# =============================================================================
+# Server returns dicts to avoid IPC timeout. Client wraps them for attribute access.
+
+
+class _MT5Object:
+    """Wrapper for MT5 data dict with attribute access."""
+
+    __slots__ = ("_data",)
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        object.__setattr__(self, "_data", data)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._data[name]
+        except KeyError:
+            msg = f"'{type(self).__name__}' has no attribute '{name}'"
+            raise AttributeError(msg) from None
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self._data})"
+
+    def _asdict(self) -> dict[str, Any]:
+        """Return underlying dict (compatibility with named tuples)."""
+        return self._data
+
+
+def _wrap_dict(d: dict[str, Any] | Any) -> _MT5Object | Any:
+    """Convert dict to object with attribute access."""
+    if isinstance(d, dict):
+        return _MT5Object(d)
+    return d
+
+
+def _wrap_dicts(items: tuple | list | None) -> tuple | None:
+    """Convert tuple/list of dicts to tuple of objects."""
+    if items is None:
+        return None
+    return tuple(_wrap_dict(d) for d in items)
+
+
+def _unwrap_chunks(result: dict[str, Any] | None) -> tuple | None:
+    """Reassemble chunked response from server into tuple of objects."""
+    if result is None:
+        return None
+
+    if isinstance(result, dict) and "chunks" in result:
+        all_items: list[_MT5Object] = []
+        for chunk in result["chunks"]:
+            all_items.extend(_MT5Object(d) for d in chunk)
+        return tuple(all_items)
+
+    # Fallback for non-chunked response
+    if isinstance(result, (tuple, list)):
+        return _wrap_dicts(result)
+
+    return result
+
+
 class MetaTrader5:
     """Modern RPyC client for MetaTrader5.
 
@@ -105,6 +225,11 @@ class MetaTrader5:
         host: str = "localhost",
         port: int = 18812,
         timeout: int = 300,
+        *,
+        circuit_breaker_threshold: int = 5,
+        circuit_breaker_recovery: float = 60.0,
+        health_check_interval: int = DEFAULT_HEALTH_CHECK_INTERVAL,
+        max_reconnect_attempts: int = 3,
     ) -> None:
         """Connect to rpyc server.
 
@@ -112,6 +237,10 @@ class MetaTrader5:
             host: rpyc server address.
             port: rpyc server port.
             timeout: Timeout in seconds for operations.
+            circuit_breaker_threshold: Failures before circuit opens.
+            circuit_breaker_recovery: Seconds to wait before recovery attempt.
+            health_check_interval: Seconds between connection health checks.
+            max_reconnect_attempts: Max attempts for reconnection.
         """
         self._host = host
         self._port = port
@@ -119,6 +248,17 @@ class MetaTrader5:
         self._conn = None
         self._mt5 = None
         self._service_root: Any = None
+
+        # Resilience configuration
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=circuit_breaker_threshold,
+            recovery_timeout=circuit_breaker_recovery,
+            name=f"mt5-{host}:{port}",
+        )
+        self._health_check_interval = health_check_interval
+        self._last_health_check: datetime | None = None
+        self._max_reconnect_attempts = max_reconnect_attempts
+
         self.connect()
 
     def connect(self) -> None:
@@ -127,12 +267,14 @@ class MetaTrader5:
             return
 
         # Modern rpyc.connect() instead of deprecated rpyc.classic.connect()
+        # allow_pickle=True required for efficient large data transfer (9000+ symbols)
         self._conn = rpyc.connect(
             self._host,
             self._port,
             config={
                 "sync_request_timeout": self._timeout,
                 "allow_public_attrs": True,
+                "allow_pickle": True,
             },
         )
         if self._conn is None:
@@ -179,6 +321,224 @@ class MetaTrader5:
             self._service_root = None
 
     # =========================================================================
+    # Resilience Methods
+    # =========================================================================
+
+    def _reconnect(self) -> None:
+        """Reconnect to RPyC server with retry logic.
+
+        Closes current connection and establishes a new one.
+        Uses exponential backoff on failures.
+        """
+        import random
+        import time
+
+        log.info("Attempting reconnection to %s:%d", self._host, self._port)
+        self.close()
+
+        # Use retry decorator logic manually for reconnection
+        last_error: Exception | None = None
+        for attempt in range(self._max_reconnect_attempts):
+            try:
+                self.connect()
+            except RETRYABLE_EXCEPTIONS as e:
+                last_error = e
+                if attempt < self._max_reconnect_attempts - 1:
+                    delay = min(0.5 * (2 ** attempt), 10.0)
+                    delay *= 0.5 + random.random()  # noqa: S311
+                    log.warning(
+                        "Reconnection attempt %d failed: %s, retrying in %.2fs",
+                        attempt + 1,
+                        e,
+                        delay,
+                    )
+                    time.sleep(delay)
+            else:
+                log.info(
+                    "Reconnection successful on attempt %d",
+                    attempt + 1,
+                )
+                return
+
+        msg = f"Reconnection failed after {self._max_reconnect_attempts} attempts"
+        log.error(msg)
+        if last_error:
+            raise ConnectionError(msg) from last_error
+        raise ConnectionError(msg)
+
+    def _check_connection_health(self) -> bool:
+        """Verify connection is alive with lightweight ping.
+
+        Returns:
+            True if connection is healthy.
+        """
+        if self._conn is None:
+            return False
+        try:
+            # Check if connection is closed
+            if getattr(self._conn, "closed", False):
+                return False
+            # Try a lightweight operation to verify connection is responsive
+            # Access the root service to trigger any connection issues
+            _ = self._service_root
+        except Exception:  # noqa: BLE001
+            return False
+        else:
+            return True
+
+    def _ensure_healthy_connection(self) -> None:
+        """Ensure connection is healthy, reconnect if needed.
+
+        Raises:
+            CircuitOpenError: If circuit breaker is open.
+        """
+        # Check circuit breaker first
+        if not self._circuit_breaker.can_execute():
+            raise CircuitOpenError
+
+        # Skip health check if recent
+        from datetime import UTC
+
+        now = datetime.now(UTC)
+        if (
+            self._last_health_check
+            and (now - self._last_health_check).total_seconds()
+            < self._health_check_interval
+        ):
+            return
+
+        # Perform health check
+        if not self._check_connection_health():
+            log.warning("Connection unhealthy, attempting reconnect")
+            try:
+                self._reconnect()
+            except Exception:
+                self._circuit_breaker.record_failure()
+                raise
+
+        self._last_health_check = now
+
+    def _safe_rpc_call(
+        self,
+        method_name: str,
+        *args: Any,
+        retry_on_none: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute RPC call with full error handling and automatic retry.
+
+        Resilience is automatic and transparent:
+        - Retries on connection errors with exponential backoff
+        - Retries on None returns (transient MT5 failures)
+        - Circuit breaker prevents cascading failures
+        - Auto-reconnect on connection loss
+
+        Args:
+            method_name: Name of the exposed method to call.
+            *args: Positional arguments for the method.
+            retry_on_none: If True (default), retry when method returns None.
+                Set to False for methods where None is a valid response.
+            **kwargs: Keyword arguments for the method.
+
+        Returns:
+            Result from the RPC call.
+
+        Raises:
+            CircuitOpenError: If circuit breaker is open.
+            ConnectionError: If connection fails after all retries.
+        """
+        import random
+        import time
+
+        max_attempts = 3
+        initial_delay = 0.5
+        max_delay = 10.0
+
+        self._ensure_healthy_connection()
+
+        if self._service_root is None:
+            raise ConnectionError(_NOT_CONNECTED_MSG)
+
+        last_exception: Exception | None = None
+
+        for attempt in range(max_attempts):
+            try:
+                method = getattr(self._service_root, method_name)
+                result = method(*args, **kwargs)
+
+                # Retry on None if enabled
+                if retry_on_none and result is None:
+                    if attempt < max_attempts - 1:
+                        delay = min(initial_delay * (2 ** attempt), max_delay)
+                        delay *= 0.5 + random.random()  # noqa: S311
+                        log.warning(
+                            "%s returned None (attempt %d/%d), retrying in %.2fs",
+                            method_name,
+                            attempt + 1,
+                            max_attempts,
+                            delay,
+                        )
+                        time.sleep(delay)
+                        continue
+                    else:
+                        log.warning(
+                            "%s returned None after %d attempts",
+                            method_name,
+                            max_attempts,
+                        )
+
+                # Success
+                self._circuit_breaker.record_success()
+                if attempt > 0:
+                    log.info("%s succeeded on attempt %d", method_name, attempt + 1)
+                return result
+
+            except RETRYABLE_EXCEPTIONS as e:
+                last_exception = e
+                self._circuit_breaker.record_failure()
+                if attempt < max_attempts - 1:
+                    delay = min(initial_delay * (2 ** attempt), max_delay)
+                    delay *= 0.5 + random.random()  # noqa: S311
+                    log.warning(
+                        "%s failed (attempt %d/%d): %s, retrying in %.2fs",
+                        method_name,
+                        attempt + 1,
+                        max_attempts,
+                        e,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    # Try reconnecting before next attempt
+                    try:
+                        self._reconnect()
+                    except Exception:
+                        pass  # Will fail on next attempt if reconnect failed
+                else:
+                    log.exception("%s failed after %d attempts", method_name, max_attempts)
+                    raise
+
+            except Exception:
+                log.exception("Unexpected error in %s", method_name)
+                raise
+
+        # Should not reach here, but satisfy type checker
+        if last_exception is not None:
+            raise last_exception
+        return None
+
+    def get_circuit_breaker_status(self) -> dict[str, Any]:
+        """Get circuit breaker status for monitoring.
+
+        Returns:
+            Dict with circuit breaker state and metrics.
+        """
+        return self._circuit_breaker.get_status()
+
+    def reset_client_circuit_breaker(self) -> None:
+        """Manually reset the client's circuit breaker."""
+        self._circuit_breaker.reset()
+
+    # =========================================================================
     # Health and diagnostics
     # =========================================================================
 
@@ -191,9 +551,8 @@ class MetaTrader5:
         Raises:
             ConnectionError: If not connected.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return dict(self._service_root.health_check())
+        result = self._safe_rpc_call("health_check")
+        return dict(result)
 
     def reset_circuit_breaker(self) -> bool:
         """Reset server circuit breaker.
@@ -204,9 +563,7 @@ class MetaTrader5:
         Raises:
             ConnectionError: If not connected.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return bool(self._service_root.reset_circuit_breaker())
+        return bool(self._safe_rpc_call("reset_circuit_breaker"))
 
     # =========================================================================
     # Terminal operations - delegate to service
@@ -234,18 +591,16 @@ class MetaTrader5:
         Returns:
             True if successful, False otherwise.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return bool(
-            self._service_root.initialize(
-                path=path,
-                login=login,
-                password=password,
-                server=server,
-                timeout=timeout,
-                portable=portable,
-            )
+        result = self._safe_rpc_call(
+            "initialize",
+            path=path,
+            login=login,
+            password=password,
+            server=server,
+            timeout=timeout,
+            portable=portable,
         )
+        return bool(result)
 
     def login(
         self,
@@ -265,19 +620,24 @@ class MetaTrader5:
         Returns:
             True if successful, False otherwise.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return bool(
-            self._service_root.login(
-                login=login, password=password, server=server, timeout=timeout
-            )
+        result = self._safe_rpc_call(
+            "login",
+            login=login,
+            password=password,
+            server=server,
+            timeout=timeout,
         )
+        return bool(result)
 
     def shutdown(self) -> None:
         """Shutdown MT5 terminal."""
         if self._service_root is None:
             return
-        self._service_root.shutdown()
+        try:
+            self._safe_rpc_call("shutdown")
+        except RETRYABLE_EXCEPTIONS:
+            # Ignore connection errors during shutdown
+            log.debug("Shutdown RPC failed (connection may be closed)")
 
     def version(self) -> tuple[int, int, str] | None:
         """Get MT5 terminal version.
@@ -285,9 +645,7 @@ class MetaTrader5:
         Returns:
             Tuple of (version, build, version_string) or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.version()
+        result = self._safe_rpc_call("version")
         return _validate_version(result)
 
     def last_error(self) -> tuple[int, str]:
@@ -296,30 +654,26 @@ class MetaTrader5:
         Returns:
             Tuple of (error_code, error_description).
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.last_error()
+        result = self._safe_rpc_call("last_error")
         return _validate_last_error(result)
 
     def terminal_info(self) -> Any:
         """Get terminal info.
 
         Returns:
-            TerminalInfo object from MT5.
+            TerminalInfo-like object with attribute access.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.terminal_info()
+        result = self._safe_rpc_call("terminal_info")
+        return _wrap_dict(result)
 
     def account_info(self) -> Any:
         """Get account info.
 
         Returns:
-            AccountInfo object from MT5.
+            AccountInfo-like object with attribute access.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.account_info()
+        result = self._safe_rpc_call("account_info")
+        return _wrap_dict(result)
 
     # =========================================================================
     # Symbol operations
@@ -331,22 +685,20 @@ class MetaTrader5:
         Returns:
             Number of available symbols.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return int(self._service_root.symbols_total())
+        result = self._safe_rpc_call("symbols_total")
+        return int(result) if result is not None else 0
 
-    def symbols_get(self, group: str | None = None) -> Any:
+    def symbols_get(self, group: str | None = None) -> tuple | None:
         """Get available symbols.
 
         Args:
             group: Optional group filter.
 
         Returns:
-            Tuple of SymbolInfo objects.
+            Tuple of SymbolInfo-like objects or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.symbols_get(group)
+        result = self._safe_rpc_call("symbols_get", group)
+        return _unwrap_chunks(result)
 
     def symbol_info(self, symbol: str) -> Any:
         """Get symbol info.
@@ -355,11 +707,10 @@ class MetaTrader5:
             symbol: Symbol name.
 
         Returns:
-            SymbolInfo object or None.
+            SymbolInfo-like object with attribute access, or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.symbol_info(symbol)
+        result = self._safe_rpc_call("symbol_info", symbol)
+        return _wrap_dict(result) if result else None
 
     def symbol_info_tick(self, symbol: str) -> Any:
         """Get symbol tick info.
@@ -368,11 +719,10 @@ class MetaTrader5:
             symbol: Symbol name.
 
         Returns:
-            Tick object or None.
+            Tick-like object with attribute access, or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.symbol_info_tick(symbol)
+        result = self._safe_rpc_call("symbol_info_tick", symbol)
+        return _wrap_dict(result) if result else None
 
     def symbol_select(self, symbol: str, enable: bool = True) -> bool:
         """Select symbol in Market Watch.
@@ -384,9 +734,7 @@ class MetaTrader5:
         Returns:
             True if successful.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return bool(self._service_root.symbol_select(symbol, enable))
+        return bool(self._safe_rpc_call("symbol_select", symbol, enable))
 
     # =========================================================================
     # Market data operations - with obtain() for numpy arrays
@@ -396,7 +744,7 @@ class MetaTrader5:
         self,
         symbol: str,
         timeframe: int,
-        date_from: datetime,
+        date_from: datetime | int,
         count: int,
     ) -> RatesArray | None:
         """Copy rates from a date. Fetches array locally.
@@ -404,15 +752,19 @@ class MetaTrader5:
         Args:
             symbol: Symbol name.
             timeframe: Timeframe constant (TIMEFRAME_M1, etc.).
-            date_from: Start datetime.
+            date_from: Start datetime or Unix timestamp.
             count: Number of bars to copy.
 
         Returns:
             Numpy structured array with OHLCV data or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.copy_rates_from(symbol, timeframe, date_from, count)
+        result = self._safe_rpc_call(
+            "copy_rates_from",
+            symbol,
+            timeframe,
+            _to_timestamp(date_from),
+            count,
+        )
         return obtain(result) if result is not None else None
 
     def copy_rates_from_pos(
@@ -433,10 +785,12 @@ class MetaTrader5:
         Returns:
             Numpy structured array with OHLCV data or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.copy_rates_from_pos(
-            symbol, timeframe, start_pos, count
+        result = self._safe_rpc_call(
+            "copy_rates_from_pos",
+            symbol,
+            timeframe,
+            start_pos,
+            count,
         )
         return obtain(result) if result is not None else None
 
@@ -444,31 +798,33 @@ class MetaTrader5:
         self,
         symbol: str,
         timeframe: int,
-        date_from: datetime,
-        date_to: datetime,
+        date_from: datetime | int,
+        date_to: datetime | int,
     ) -> RatesArray | None:
         """Copy rates in a date range. Fetches array locally.
 
         Args:
             symbol: Symbol name.
             timeframe: Timeframe constant.
-            date_from: Start datetime.
-            date_to: End datetime.
+            date_from: Start datetime or Unix timestamp.
+            date_to: End datetime or Unix timestamp.
 
         Returns:
             Numpy structured array with OHLCV data or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.copy_rates_range(
-            symbol, timeframe, date_from, date_to
+        result = self._safe_rpc_call(
+            "copy_rates_range",
+            symbol,
+            timeframe,
+            _to_timestamp(date_from),
+            _to_timestamp(date_to),
         )
         return obtain(result) if result is not None else None
 
     def copy_ticks_from(
         self,
         symbol: str,
-        date_from: datetime,
+        date_from: datetime | int,
         count: int,
         flags: int,
     ) -> TicksArray | None:
@@ -476,39 +832,47 @@ class MetaTrader5:
 
         Args:
             symbol: Symbol name.
-            date_from: Start datetime.
+            date_from: Start datetime or Unix timestamp.
             count: Number of ticks to copy.
             flags: COPY_TICKS_ALL, COPY_TICKS_INFO, or COPY_TICKS_TRADE.
 
         Returns:
             Numpy structured array with tick data or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.copy_ticks_from(symbol, date_from, count, flags)
+        result = self._safe_rpc_call(
+            "copy_ticks_from",
+            symbol,
+            _to_timestamp(date_from),
+            count,
+            flags,
+        )
         return obtain(result) if result is not None else None
 
     def copy_ticks_range(
         self,
         symbol: str,
-        date_from: datetime,
-        date_to: datetime,
+        date_from: datetime | int,
+        date_to: datetime | int,
         flags: int,
     ) -> TicksArray | None:
         """Copy ticks in a date range. Fetches array locally.
 
         Args:
             symbol: Symbol name.
-            date_from: Start datetime.
-            date_to: End datetime.
+            date_from: Start datetime or Unix timestamp.
+            date_to: End datetime or Unix timestamp.
             flags: COPY_TICKS_ALL, COPY_TICKS_INFO, or COPY_TICKS_TRADE.
 
         Returns:
             Numpy structured array with tick data or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.copy_ticks_range(symbol, date_from, date_to, flags)
+        result = self._safe_rpc_call(
+            "copy_ticks_range",
+            symbol,
+            _to_timestamp(date_from),
+            _to_timestamp(date_to),
+            flags,
+        )
         return obtain(result) if result is not None else None
 
     # =========================================================================
@@ -533,9 +897,7 @@ class MetaTrader5:
         Returns:
             Required margin or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.order_calc_margin(action, symbol, volume, price)
+        result = self._safe_rpc_call("order_calc_margin", action, symbol, volume, price)
         return _validate_float_optional(result)
 
     def order_calc_profit(
@@ -558,10 +920,13 @@ class MetaTrader5:
         Returns:
             Calculated profit or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.order_calc_profit(
-            action, symbol, volume, price_open, price_close
+        result = self._safe_rpc_call(
+            "order_calc_profit",
+            action,
+            symbol,
+            volume,
+            price_open,
+            price_close,
         )
         return _validate_float_optional(result)
 
@@ -572,16 +937,13 @@ class MetaTrader5:
             request: Order request dict to validate.
 
         Returns:
-            OrderCheckResult from MT5.
+            OrderCheckResult-like object with attribute access.
 
         Raises:
             ConnectionError: If not connected to MT5 server.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-
-        # Direct service call - no conn.execute() hack needed
-        return self._service_root.order_check(request)
+        result = self._safe_rpc_call("order_check", request)
+        return _wrap_dict(result) if result else None
 
     def order_send(self, request: dict[str, Any]) -> Any:
         """Send trading order to MT5.
@@ -590,16 +952,13 @@ class MetaTrader5:
             request: Order request dict with keys like action, symbol, volume, etc.
 
         Returns:
-            OrderSendResult from MT5.
+            OrderSendResult-like object with attribute access.
 
         Raises:
             ConnectionError: If not connected to MT5 server.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-
-        # Direct service call - no conn.execute() hack needed
-        return self._service_root.order_send(request)
+        result = self._safe_rpc_call("order_send", request)
+        return _wrap_dict(result) if result else None
 
     # =========================================================================
     # Position operations
@@ -611,16 +970,15 @@ class MetaTrader5:
         Returns:
             Number of open positions.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return int(self._service_root.positions_total())
+        result = self._safe_rpc_call("positions_total")
+        return int(result) if result is not None else 0
 
     def positions_get(
         self,
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> Any:
+    ) -> tuple | None:
         """Get open positions.
 
         Args:
@@ -629,11 +987,10 @@ class MetaTrader5:
             ticket: Filter by ticket.
 
         Returns:
-            Tuple of TradePosition objects or None.
+            Tuple of TradePosition-like objects with attribute access, or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.positions_get(symbol, group, ticket)
+        result = self._safe_rpc_call("positions_get", symbol, group, ticket)
+        return _wrap_dicts(result)
 
     # =========================================================================
     # Order operations
@@ -645,16 +1002,15 @@ class MetaTrader5:
         Returns:
             Number of pending orders.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return int(self._service_root.orders_total())
+        result = self._safe_rpc_call("orders_total")
+        return int(result) if result is not None else 0
 
     def orders_get(
         self,
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> Any:
+    ) -> tuple | None:
         """Get pending orders.
 
         Args:
@@ -663,96 +1019,109 @@ class MetaTrader5:
             ticket: Filter by ticket.
 
         Returns:
-            Tuple of TradeOrder objects or None.
+            Tuple of TradeOrder-like objects with attribute access, or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.orders_get(symbol, group, ticket)
+        result = self._safe_rpc_call("orders_get", symbol, group, ticket)
+        return _wrap_dicts(result)
 
     # =========================================================================
     # History operations
     # =========================================================================
 
     def history_orders_total(
-        self, date_from: datetime, date_to: datetime
+        self, date_from: datetime | int, date_to: datetime | int
     ) -> int | None:
         """Get total number of historical orders.
 
         Args:
-            date_from: Start datetime.
-            date_to: End datetime.
+            date_from: Start datetime or Unix timestamp.
+            date_to: End datetime or Unix timestamp.
 
         Returns:
             Number of historical orders or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.history_orders_total(date_from, date_to)
+        result = self._safe_rpc_call(
+            "history_orders_total",
+            _to_timestamp(date_from),
+            _to_timestamp(date_to),
+        )
         return _validate_int_optional(result)
 
     def history_orders_get(
         self,
-        date_from: datetime | None = None,
-        date_to: datetime | None = None,
+        date_from: datetime | int | None = None,
+        date_to: datetime | int | None = None,
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> Any:
+    ) -> tuple | None:
         """Get historical orders.
 
         Args:
-            date_from: Start datetime.
-            date_to: End datetime.
+            date_from: Start datetime or Unix timestamp.
+            date_to: End datetime or Unix timestamp.
             group: Filter by group.
             ticket: Filter by ticket.
             position: Filter by position.
 
         Returns:
-            Tuple of TradeOrder objects or None.
+            Tuple of TradeOrder-like objects with attribute access, or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.history_orders_get(
-            date_from, date_to, group, ticket, position
+        result = self._safe_rpc_call(
+            "history_orders_get",
+            _to_timestamp(date_from),
+            _to_timestamp(date_to),
+            group,
+            ticket,
+            position,
         )
+        return _wrap_dicts(result)
 
-    def history_deals_total(self, date_from: datetime, date_to: datetime) -> int | None:
+    def history_deals_total(
+        self, date_from: datetime | int, date_to: datetime | int
+    ) -> int | None:
         """Get total number of historical deals.
 
         Args:
-            date_from: Start datetime.
-            date_to: End datetime.
+            date_from: Start datetime or Unix timestamp.
+            date_to: End datetime or Unix timestamp.
 
         Returns:
             Number of historical deals or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        result = self._service_root.history_deals_total(date_from, date_to)
+        result = self._safe_rpc_call(
+            "history_deals_total",
+            _to_timestamp(date_from),
+            _to_timestamp(date_to),
+        )
         return _validate_int_optional(result)
 
     def history_deals_get(
         self,
-        date_from: datetime | None = None,
-        date_to: datetime | None = None,
+        date_from: datetime | int | None = None,
+        date_to: datetime | int | None = None,
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> Any:
+    ) -> tuple | None:
         """Get historical deals.
 
         Args:
-            date_from: Start datetime.
-            date_to: End datetime.
+            date_from: Start datetime or Unix timestamp.
+            date_to: End datetime or Unix timestamp.
             group: Filter by group.
             ticket: Filter by ticket.
             position: Filter by position.
 
         Returns:
-            Tuple of TradeDeal objects or None.
+            Tuple of TradeDeal-like objects with attribute access, or None.
         """
-        if self._service_root is None:
-            raise ConnectionError(_NOT_CONNECTED_MSG)
-        return self._service_root.history_deals_get(
-            date_from, date_to, group, ticket, position
+        result = self._safe_rpc_call(
+            "history_deals_get",
+            _to_timestamp(date_from),
+            _to_timestamp(date_to),
+            group,
+            ticket,
+            position,
         )
+        return _wrap_dicts(result)

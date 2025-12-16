@@ -30,10 +30,8 @@
 
 services:
   mt5:
-    build:
-      context: ../mt5docker
-      dockerfile: Dockerfile
-    image: mt5docker:test
+    # Use pre-built image from mt5docker (no build needed)
+    image: marlonsc/mt5-docker:local
     container_name: ${MT5_CONTAINER_NAME:-mt5linux-unit}
     ports:
       - "${MT5_VNC_PORT:-33000}:3000"     # VNC
@@ -47,31 +45,25 @@ services:
     env_file:
       - ${ENV_FILE:-.env}
     environment:
-      # Force mt5linux installation from GitHub main branch (always)
-      # No local environment dependency - ensures consistent CI/CD behavior
-      - MT5LINUX_REPO=https://github.com/marlonsc/mt5linux
-      - MT5LINUX_BRANCH=master
-      - MT5LINUX_SPEC=https://github.com/marlonsc/mt5linux/archive/refs/heads/master.tar.gz
-      # Use installed package (not local mount)
-      - PYTHONPATH=/opt/mt5linux-pkg
       # MT5 credentials (from environment/conftest)
       - MT5_LOGIN=${MT5_LOGIN}
       - MT5_PASSWORD=${MT5_PASSWORD}
       - MT5_SERVER=${MT5_SERVER}
       # Container settings
       - ENABLE_WIN_DOTNET=1
-      - ENABLE_DATA_SYNC=0
       - TZ=UTC
-      # RPyC settings
-      - RPYC_RESILIENT=1
-      - RPYC_HEALTH_PORT=8002
-      - RPYC_MAX_RESTARTS=5
-      - RPYC_MAX_CONNECTIONS=5
     restart: "no"
     cap_add:
       - SYS_PTRACE
     security_opt:
       - seccomp:unconfined
+    healthcheck:
+      # Check mt5linux RPyC server (primary API) - port 8001
+      test: ["CMD", "bash", "-c", "echo >/dev/tcp/localhost/8001"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
 
 volumes:
   mt5_config:

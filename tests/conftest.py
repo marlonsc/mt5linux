@@ -40,10 +40,36 @@ def has_mt5_credentials() -> bool:
     return bool(os.getenv("MT5_LOGIN") and os.getenv("MT5_PASSWORD") and MT5_LOGIN != 0)
 
 
+def is_rpyc_service_ready(host: str = "localhost", port: int | None = None) -> bool:
+    """Check if RPyC service is ready (actual handshake + health_check).
+
+    Uses rpyc.connect() and calls health_check() to verify MT5Service is ready.
+    Uses a 60 second timeout because Wine/Python RPyC server can be slow.
+    """
+    rpyc_port = port or TEST_RPYC_PORT
+    try:
+        conn = rpyc.connect(
+            host,
+            rpyc_port,
+            config={
+                "sync_request_timeout": 60,
+                "allow_public_attrs": True,
+                "allow_pickle": True,
+            },
+        )
+        # Verify connection works by calling health_check
+        _ = conn.root.health_check()
+        conn.close()
+    except (OSError, ConnectionError, TimeoutError, EOFError):
+        return False
+    else:
+        return True
+
+
 def wait_for_rpyc_service(
     host: str = "localhost", port: int | None = None, timeout: int = 300
 ) -> bool:
-    """Wait for RPyC service to become ready by attempting actual connection.
+    """Wait for RPyC service to become ready.
 
     This function waits until the RPyC service is fully ready to handle requests,
     not just when the port is listening. The MT5 container needs time to:
@@ -58,41 +84,24 @@ def wait_for_rpyc_service(
     Returns:
         True if service is ready, False if timeout reached
     """
-
     rpyc_port = port or TEST_RPYC_PORT
     start = time.time()
     logger = logging.getLogger(__name__)
+    check_interval = 3
 
     while time.time() - start < timeout:
-        try:
-            # Connect same way as MetaTrader5 client (no service specified)
-            conn = rpyc.connect(
-                host,
-                rpyc_port,
-                config={
-                    "sync_request_timeout": 30,
-                    "allow_public_attrs": True,
-                },
-            )
-            # If we can connect successfully, the service is ready
-            # The connection establishment itself verifies the service is available
-            conn.close()
+        if is_rpyc_service_ready(host, rpyc_port):
             return True
-        except Exception as e:
-            elapsed = int(time.time() - start)
-            if elapsed % 30 == 0:  # Log every 30 seconds
-                logger.info(
-                    "Waiting for RPyC service... (%ds elapsed, error: %s)",
-                    elapsed,
-                    type(e).__name__,
-                )
-        time.sleep(5)
+        elapsed = int(time.time() - start)
+        if elapsed % 30 == 0 and elapsed > 0:  # Log every 30 seconds
+            logger.info(
+                "Waiting for RPyC service... (%ds elapsed)",
+                elapsed,
+            )
+        time.sleep(check_interval)
 
     return False
 
-
-# Load .env for test credentials
-load_dotenv()
 
 # Paths
 TESTS_DIR = Path(__file__).parent
@@ -100,7 +109,14 @@ PROJECT_ROOT = TESTS_DIR.parent
 COMPOSE_FILE = PROJECT_ROOT / "docker-compose.yaml"
 CODEGEN_SCRIPT = PROJECT_ROOT / "scripts" / "codegen_enums.py"
 
+# Load environment config from .env.test, then credentials from .env
+# .env.test has test environment settings (ports, container name)
+# .env has credentials (MT5_LOGIN, MT5_PASSWORD, MT5_SERVER)
+load_dotenv(PROJECT_ROOT / ".env.test")  # Environment config first
+load_dotenv(PROJECT_ROOT / ".env", override=True)  # Credentials override
+
 # Test container configuration
+# Default ports match mt5linux/docker-compose.yaml defaults
 TEST_RPYC_HOST = os.getenv("MT5_HOST", "localhost")
 TEST_RPYC_PORT = int(os.getenv("MT5_RPYC_PORT", "38812"))
 TEST_VNC_PORT = int(os.getenv("MT5_VNC_PORT", "33000"))
@@ -131,43 +147,31 @@ def _is_container_running(container_name: str) -> bool:
     return bool(result.stdout.strip())
 
 
-def _cleanup_test_container_and_volumes() -> None:
-    """Clean up test container and volumes for complete isolation."""
-    logger = logging.getLogger(__name__)
-
-    # Force remove container if running
-    if _is_container_running(TEST_CONTAINER_NAME):
-        logger.info("Removing existing test container %s", TEST_CONTAINER_NAME)
-        subprocess.run(
-            ["docker", "rm", "-f", TEST_CONTAINER_NAME],
-            capture_output=True,
-            check=False,
-        )
-
-    # Clean up test volumes to ensure complete isolation
-    # Volumes are parametrized with container name
-    test_volumes = [
-        f"{TEST_CONTAINER_NAME}_config",
-        f"{TEST_CONTAINER_NAME}_downloads",
-        f"{TEST_CONTAINER_NAME}_cache",
-    ]
-    for volume in test_volumes:
-        logger.info("Cleaning test volume: %s", volume)
-        subprocess.run(
-            ["docker", "volume", "rm", volume],
-            capture_output=True,
-            check=False,
-        )
+def _is_container_healthy(container_name: str) -> bool:
+    """Check if container is running and healthy."""
+    result = subprocess.run(
+        [
+            "docker", "inspect", "--format",
+            "{{.State.Health.Status}}",
+            container_name,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "healthy"
 
 
 @pytest.fixture(scope="session", autouse=True)
-def ensure_docker_and_codegen() -> Generator[None]:
+def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
     """Start test Docker container and run codegen before all tests.
 
     This fixture automatically handles Docker availability:
     - If SKIP_DOCKER=1, skips Docker setup entirely
     - If Docker is not available, skips Docker-dependent setup but allows unit tests
-    - If Docker is available, ensures clean container state and runs codegen
+    - If container is already running and healthy, reuses it (no restart)
+    - If container not running, starts it and waits for RPyC service
+    - Container is kept running after tests end (no cleanup)
     """
     logger = logging.getLogger(__name__)
 
@@ -185,14 +189,27 @@ def ensure_docker_and_codegen() -> Generator[None]:
         yield
         return
 
-    logger.info("Ensuring clean Docker test container state...")
-
-    # Always clean up container and volumes for complete test isolation
-    try:
-        _cleanup_test_container_and_volumes()
-        logger.info("Cleaned up existing test containers and volumes")
-    except Exception as e:
-        logger.warning("Error during cleanup (continuing): %s", e)
+    # Check if container is already running and healthy - reuse it
+    if _is_container_running(TEST_CONTAINER_NAME):
+        if _is_container_healthy(TEST_CONTAINER_NAME):
+            logger.info(
+                "Container %s already running and healthy - reusing",
+                TEST_CONTAINER_NAME,
+            )
+            # Still verify RPyC is ready
+            if wait_for_rpyc_service(TEST_RPYC_HOST, TEST_RPYC_PORT, timeout=30):
+                logger.info("RPyC service confirmed ready")
+                yield
+                return
+            else:
+                logger.warning(
+                    "Container healthy but RPyC not responding - will restart"
+                )
+        else:
+            logger.info(
+                "Container %s running but not healthy - will restart",
+                TEST_CONTAINER_NAME,
+            )
 
     # Start fresh test container with parametrized environment
     logger.info("Starting test Docker container with configuration...")
@@ -238,9 +255,6 @@ def ensure_docker_and_codegen() -> Generator[None]:
     except subprocess.TimeoutExpired:
         pytest.fail("Timeout waiting for test container to start")
 
-    # Container started successfully - wait for RPyC service to be ready
-    logger.info("Container started successfully")
-
     # Wait for RPyC service to be ready before running tests/codegen
     logger.info("Waiting for RPyC service to be ready (up to 300s)...")
     if not wait_for_rpyc_service(TEST_RPYC_HOST, TEST_RPYC_PORT, timeout=300):
@@ -274,13 +288,8 @@ def ensure_docker_and_codegen() -> Generator[None]:
 
     yield
 
-    # Teardown: clean up container and volumes completely
-    logger.info("Cleaning up test container and volumes...")
-    try:
-        _cleanup_test_container_and_volumes()
-        logger.info("Test cleanup completed")
-    except Exception as e:
-        logger.warning("Error during test cleanup: %s", e)
+    # No cleanup - container kept running for subsequent test runs
+    logger.info("Tests complete - container %s kept running", TEST_CONTAINER_NAME)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -449,6 +458,102 @@ def cleanup_test_positions(mt5: MetaTrader5) -> Generator[None]:
                 mt5.order_send(request)
     except Exception:
         pass  # Best effort cleanup
+
+
+# =============================================================================
+# HISTORY TEST FIXTURES - Create orders to populate history
+# =============================================================================
+
+# Magic number for history test orders (different from regular test orders)
+HISTORY_TEST_MAGIC = 888888
+
+
+@pytest.fixture
+def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
+    """Create a test order and close it to populate history.
+
+    This fixture places a buy order, immediately closes it, creating
+    historical deals and orders that can be queried in history tests.
+
+    Returns dict with 'deal_ticket', 'order_ticket', 'position_id'.
+    Skips if market is closed or trading disabled.
+    """
+    symbol = "EURUSD"
+    mt5.symbol_select(symbol, True)
+    tick = mt5.symbol_info_tick(symbol)
+
+    if tick is None:
+        pytest.skip("Could not get tick data for history test")
+
+    # Place buy order
+    buy_request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": 0.01,
+        "type": mt5.ORDER_TYPE_BUY,
+        "price": tick.ask,
+        "deviation": 50,
+        "magic": HISTORY_TEST_MAGIC,
+        "comment": "pytest history test",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+
+    result = mt5.order_send(buy_request)
+    if result is None:
+        pytest.skip("order_send returned None (trading not available)")
+
+    if result.retcode != mt5.TRADE_RETCODE_DONE:
+        # Check for market closed
+        if result.retcode == mt5.TRADE_RETCODE_MARKET_CLOSED:
+            pytest.skip("Market closed - cannot create history test data")
+        pytest.skip(f"Could not open position: {result.retcode} - {result.comment}")
+
+    order_ticket = result.order
+    deal_ticket = result.deal
+
+    # Get position to close
+    positions = mt5.positions_get(symbol=symbol)
+    position = None
+    if positions:
+        for pos in positions:
+            if pos.magic == HISTORY_TEST_MAGIC:
+                position = pos
+                break
+
+    if position is None:
+        pytest.skip("Position not found after opening")
+
+    position_id = position.ticket
+
+    # Close the position immediately
+    tick = mt5.symbol_info_tick(symbol)
+    close_request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": position.volume,
+        "type": mt5.ORDER_TYPE_SELL,
+        "position": position.ticket,
+        "price": tick.bid,
+        "deviation": 50,
+        "magic": HISTORY_TEST_MAGIC,
+        "comment": "pytest history close",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+
+    close_result = mt5.order_send(close_request)
+    if close_result is None or close_result.retcode != mt5.TRADE_RETCODE_DONE:
+        # Best effort - still yield what we have
+        pass
+
+    return {
+        "deal_ticket": deal_ticket,
+        "order_ticket": order_ticket,
+        "position_id": position_id,
+        "close_deal_ticket": close_result.deal if close_result else None,
+        "close_order_ticket": close_result.order if close_result else None,
+    }
 
 
 # =============================================================================
