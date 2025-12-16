@@ -14,11 +14,11 @@ Usage:
     python scripts/codegen_enums.py [--output PATH] [--check]
 
 Options:
-    --output PATH   Output file path (default: mt5linux/enums.py)
+    --output PATH   Output file path (default: mt5linux/constants.py)
     --check         Check if file needs commit (for CI/pytest)
 
 This script is run automatically before pytest via conftest.py.
-If --check fails, commit the updated enums.py to the repository.
+If --check fails, commit the updated constants.py to the repository.
 """
 
 from __future__ import annotations
@@ -144,7 +144,7 @@ def generate_enum_code(
         f"Source: {source}",
         "",
         "To regenerate:",
-        "    python scripts/codegen_enums.py",
+        "    python scripts/codegen_enums.py --output mt5linux/constants.py",
         '"""',
         "",
         "from enum import IntEnum",
@@ -257,7 +257,7 @@ def check_git_status(file_path: Path) -> bool:
     )
     if result.returncode != 0:
         print(f"ERROR: {file_path} has uncommitted changes!", file=sys.stderr)
-        print("Run 'git add' and commit the updated enums.py", file=sys.stderr)
+        print("Run 'git add' and commit the updated constants.py", file=sys.stderr)
         return False
 
     # Check for staged but uncommitted changes
@@ -272,7 +272,7 @@ def check_git_status(file_path: Path) -> bool:
             f"ERROR: {file_path} has staged but uncommitted changes!",
             file=sys.stderr,
         )
-        print("Commit the updated enums.py", file=sys.stderr)
+        print("Commit the updated constants.py", file=sys.stderr)
         return False
 
     return True
@@ -284,13 +284,13 @@ def generate_enums(  # noqa: PLR0911 - Complex codegen needs multiple return pat
     host: str = "localhost",
     port: int = 38812,
 ) -> bool:
-    """Generate enums.py from MT5 constants.
+    """Generate constants.py from MT5 constants.
 
     REQUIRES Docker test container running on port 38812.
     No fallback - fails if Docker not available.
 
     Args:
-        output_path: Output file path (default: mt5linux/enums.py)
+        output_path: Output file path (default: mt5linux/constants.py)
         check_only: Only check if file needs commit (don't regenerate)
         host: rpyc server host
         port: rpyc server port (default: 38812 for test container)
@@ -299,7 +299,7 @@ def generate_enums(  # noqa: PLR0911 - Complex codegen needs multiple return pat
         True if generation successful (or check passed)
     """
     if output_path is None:
-        output_path = Path(__file__).parent.parent / "mt5linux" / "enums.py"
+        output_path = Path(__file__).parent.parent / "mt5linux" / "constants.py"
 
     # Check Docker is available - NO FALLBACK
     if not is_rpyc_available(host, port):

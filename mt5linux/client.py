@@ -32,6 +32,8 @@ import rpyc.core.channel
 import rpyc.core.stream
 from rpyc.utils.classic import obtain
 
+from mt5linux.config import config
+
 # =============================================================================
 # RPyC Performance Optimization for Large Data Transfers
 # =============================================================================
@@ -440,12 +442,6 @@ class MetaTrader5:
         retry_on_none: bool = True
 
     # =========================================================================
-    # CLASS CONSTANTS
-    # =========================================================================
-
-    DEFAULT_HEALTH_CHECK_INTERVAL: int = 60
-
-    # =========================================================================
     # INSTANCE ATTRIBUTES
     # =========================================================================
 
@@ -454,14 +450,14 @@ class MetaTrader5:
 
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 18812,
-        timeout: int = 300,
+        host: str = config.HOST,
+        port: int = config.PORT_RPYC,
+        timeout: int = config.TIMEOUT_CONNECTION,
         *,
         circuit_breaker_config: CircuitBreaker.Config | None = None,
         retry_config: RetryConfig | None = None,
-        health_check_interval: int = DEFAULT_HEALTH_CHECK_INTERVAL,
-        max_reconnect_attempts: int = 3,
+        health_check_interval: int = config.TIMEOUT_HEALTH_CHECK,
+        max_reconnect_attempts: int = config.RETRY_MAX_ATTEMPTS,
     ) -> None:
         """Connect to rpyc server.
 

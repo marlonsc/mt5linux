@@ -31,6 +31,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self
 
 from mt5linux.client import _NOT_CONNECTED_MSG, MetaTrader5
+from mt5linux.config import config
 
 if TYPE_CHECKING:
     from mt5linux.types import MT5Types
@@ -39,9 +40,6 @@ if TYPE_CHECKING:
     TicksArray = MT5Types.TicksArray
 
 log = logging.getLogger(__name__)
-
-# Default health check interval in seconds
-DEFAULT_HEALTH_CHECK_INTERVAL = 60
 
 # _NOT_CONNECTED_MSG imported from client.py (DRY)
 
@@ -69,12 +67,12 @@ class AsyncMetaTrader5:
 
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 18812,
-        timeout: int = 300,
+        host: str = config.HOST,
+        port: int = config.PORT_RPYC,
+        timeout: int = config.TIMEOUT_CONNECTION,
         *,
-        health_check_interval: int = DEFAULT_HEALTH_CHECK_INTERVAL,
-        max_reconnect_attempts: int = 3,
+        health_check_interval: int = config.TIMEOUT_HEALTH_CHECK,
+        max_reconnect_attempts: int = config.RETRY_MAX_ATTEMPTS,
     ) -> None:
         """Initialize async MT5 client.
 

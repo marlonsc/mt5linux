@@ -5,14 +5,14 @@ via rpyc 6.x. All methods and constants are delegated to the real MT5.
 
 Example (sync):
     >>> from mt5linux import MetaTrader5, MT5
-    >>> with MetaTrader5(host="localhost", port=8001) as mt5:
+    >>> with MetaTrader5() as mt5:  # Uses config defaults (localhost:18812)
     ...     mt5.initialize(login=12345, password="pass", server="Demo")
     ...     account = mt5.account_info()
     ...     print(MT5.TimeFrame.H1)  # 16385
 
 Example (async):
     >>> from mt5linux import AsyncMetaTrader5, MT5
-    >>> async with AsyncMetaTrader5(host="localhost", port=8001) as mt5:
+    >>> async with AsyncMetaTrader5() as mt5:  # Uses config defaults
     ...     await mt5.initialize(login=12345)
     ...     rates = await mt5.copy_rates_from_pos("EURUSD", MT5.TimeFrame.H1, 0, 100)
 
