@@ -393,6 +393,3 @@ class MT5Constants:
         SATURDAY = 6
 
 
-# Backward compatibility alias (to be removed in next major version)
-MT5 = MT5Constants
-

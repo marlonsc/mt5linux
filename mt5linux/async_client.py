@@ -31,7 +31,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self
 
 from mt5linux.client import _NOT_CONNECTED_MSG, MetaTrader5
-from mt5linux.config import config
+from mt5linux.config import MT5Config
 
 if TYPE_CHECKING:
     from mt5linux.types import MT5Types
@@ -67,12 +67,12 @@ class AsyncMetaTrader5:
 
     def __init__(
         self,
-        host: str = config.HOST,
-        port: int = config.PORT_RPYC,
-        timeout: int = config.TIMEOUT_CONNECTION,
+        host: str = MT5Config.Defaults.HOST,
+        port: int = MT5Config.Defaults.PORT_RPYC,
+        timeout: int = MT5Config.Defaults.TIMEOUT_CONNECTION,
         *,
-        health_check_interval: int = config.TIMEOUT_HEALTH_CHECK,
-        max_reconnect_attempts: int = config.RETRY_MAX_ATTEMPTS,
+        health_check_interval: int = MT5Config.Defaults.TIMEOUT_HEALTH_CHECK,
+        max_reconnect_attempts: int = MT5Config.Defaults.RETRY_MAX_ATTEMPTS,
     ) -> None:
         """Initialize async MT5 client.
 

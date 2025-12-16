@@ -12,6 +12,10 @@ Resilience features:
 - Connection health monitoring with auto-reconnect
 - Per-operation timeouts
 
+Hierarchy Level: 3
+- Imports: MT5Config, MT5Types, MT5Utilities
+- Top-level client module
+
 Compatible with rpyc 6.x and Python 3.12+.
 """
 
@@ -28,7 +32,8 @@ from typing import TYPE_CHECKING, Any, Self
 import rpyc
 from rpyc.utils.classic import obtain
 
-from mt5linux.config import config
+from mt5linux.config import MT5Config
+from mt5linux.types import MT5Types
 from mt5linux.utilities import MT5Utilities
 
 log = logging.getLogger(__name__)
@@ -39,10 +44,9 @@ _NOT_CONNECTED_MSG = "MT5 connection not established - call connect first"
 if TYPE_CHECKING:
     from types import TracebackType
 
-    from mt5linux.types import MT5Types
-
-    RatesArray = MT5Types.RatesArray
-    TicksArray = MT5Types.TicksArray
+# Type aliases from MT5Types for convenience
+RatesArray = MT5Types.RatesArray
+TicksArray = MT5Types.TicksArray
 
 
 # =============================================================================
@@ -301,14 +305,14 @@ class MetaTrader5:
 
     def __init__(
         self,
-        host: str = config.HOST,
-        port: int = config.PORT_RPYC,
-        timeout: int = config.TIMEOUT_CONNECTION,
+        host: str = MT5Config.Defaults.HOST,
+        port: int = MT5Config.Defaults.PORT_RPYC,
+        timeout: int = MT5Config.Defaults.TIMEOUT_CONNECTION,
         *,
         circuit_breaker_config: CircuitBreaker.Config | None = None,
         retry_config: RetryConfig | None = None,
-        health_check_interval: int = config.TIMEOUT_HEALTH_CHECK,
-        max_reconnect_attempts: int = config.RETRY_MAX_ATTEMPTS,
+        health_check_interval: int = MT5Config.Defaults.TIMEOUT_HEALTH_CHECK,
+        max_reconnect_attempts: int = MT5Config.Defaults.RETRY_MAX_ATTEMPTS,
     ) -> None:
         """Connect to rpyc server.
 
@@ -353,8 +357,8 @@ class MetaTrader5:
                 "sync_request_timeout": self._timeout,
                 "allow_public_attrs": True,
                 "allow_pickle": True,
-                "max_io_chunk": config.RPYC_MAX_IO_CHUNK,
-                "compression_level": config.RPYC_COMPRESSION_LEVEL,
+                "max_io_chunk": MT5Config.Defaults.RPYC_MAX_IO_CHUNK,
+                "compression_level": MT5Config.Defaults.RPYC_COMPRESSION_LEVEL,
             },
         )
         if self._conn is None:

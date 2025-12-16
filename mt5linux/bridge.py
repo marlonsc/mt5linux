@@ -580,21 +580,25 @@ def _graceful_shutdown(signum: int, frame: FrameType | None) -> None:  # noqa: A
     sys.exit(0)
 
 
-def main() -> int:
-    """Run the RPyC bridge server."""
+def main(argv: list[str] | None = None) -> int:
+    """Run the RPyC bridge server.
+
+    Args:
+        argv: Command line arguments (defaults to sys.argv[1:]).
+    """
     global _server  # noqa: PLW0603
 
     parser = argparse.ArgumentParser(description="MT5 RPyC Bridge Server")
     parser.add_argument(
         "--host", default="0.0.0.0", help="Host to bind"  # noqa: S104
     )
-    parser.add_argument("-p", "--port", type=int, default=8001, help="Port")
+    parser.add_argument("-p", "--port", type=int, default=18812, help="Port")
     parser.add_argument("--threads", type=int, default=10, help="Worker threads")
     parser.add_argument("--timeout", type=int, default=300, help="Request timeout")
     parser.add_argument(
         "--debug", "-d", action="store_true", help="Enable debug logging"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     _setup_logging(debug=args.debug)
 

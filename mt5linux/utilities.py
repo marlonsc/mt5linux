@@ -2,6 +2,10 @@
 
 All shared utilities organized in a single MT5Utilities class with nested classes.
 
+Hierarchy Level: 2
+- Imports: MT5Config (Level 1)
+- Used by: client.py, server.py
+
 Usage:
     from mt5linux.utilities import MT5Utilities
 
@@ -26,6 +30,8 @@ import random
 from datetime import datetime
 from functools import cache
 from typing import Any
+
+from mt5linux.config import MT5Config
 
 
 class MT5Utilities:
@@ -167,9 +173,9 @@ class MT5Utilities:
         @cache
         def calculate_delay(
             attempt: int,
-            initial_delay: float = 0.5,
-            max_delay: float = 10.0,
-            exponential_base: float = 2.0,
+            initial_delay: float = MT5Config.Defaults.RETRY_INITIAL_DELAY,
+            max_delay: float = MT5Config.Defaults.RETRY_MAX_DELAY,
+            exponential_base: float = MT5Config.Defaults.RETRY_EXPONENTIAL_BASE,
         ) -> float:
             """Calculate exponential backoff delay with jitter."""
             delay = min(initial_delay * (exponential_base**attempt), max_delay)
@@ -179,10 +185,10 @@ class MT5Utilities:
         @staticmethod
         def backoff_with_jitter(
             attempt: int,
-            base_delay: float = 1.0,
-            max_delay: float = 60.0,
-            multiplier: float = 2.0,
-            jitter_factor: float = 0.1,
+            base_delay: float = MT5Config.Defaults.RESTART_DELAY_BASE,
+            max_delay: float = MT5Config.Defaults.RESTART_DELAY_MAX,
+            multiplier: float = MT5Config.Defaults.RESTART_DELAY_MULTIPLIER,
+            jitter_factor: float = MT5Config.Defaults.JITTER_FACTOR,
         ) -> float:
             """Calculate delay with exponential backoff and jitter."""
             delay = base_delay * (multiplier**attempt)

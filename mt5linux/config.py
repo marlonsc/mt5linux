@@ -2,6 +2,10 @@
 
 All runtime defaults are defined here. Environment variables override defaults.
 
+Hierarchy Level: 1
+- Imports: MT5Constants (Level 0)
+- Used by: MT5Models, MT5Utilities, client.py, server.py
+
 Usage:
     >>> from mt5linux.config import MT5Config
     >>> print(MT5Config.Defaults.PORT_RPYC)  # 18812
@@ -13,6 +17,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+
+from mt5linux.constants import MT5Constants
 
 
 class MT5Config:
@@ -72,6 +78,12 @@ class MT5Config:
         # RPyC Protocol settings
         RPYC_MAX_IO_CHUNK: int = 65355 * 10
         RPYC_COMPRESSION_LEVEL: int = 0
+
+        # Order defaults (from MT5Constants)
+        ORDER_FILLING: int = MT5Constants.OrderFilling.FOK
+        ORDER_TIME: int = MT5Constants.OrderTime.GTC
+        ORDER_DEVIATION: int = 20
+        ORDER_MAGIC: int = 0
 
     @staticmethod
     def _get_int(key: str, default: int) -> int:
@@ -155,8 +167,3 @@ class MT5Config:
                 "MT5_RPYC_COMPRESSION", d.RPYC_COMPRESSION_LEVEL
             ),
         )
-
-
-# Backward compatibility aliases (to be removed in next major version)
-Defaults = MT5Config.Defaults
-config = MT5Config.get_config()

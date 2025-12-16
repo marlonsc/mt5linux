@@ -3,126 +3,126 @@ build-backend = "poetry.core.masonry.api"
 requires = ["poetry-core"]
 
 [tool.poetry]
-name = "mt5linux"
-version = "0.3.0"
-description = "MetaTrader5 bridge for Linux via rpyc"
-authors = ["Lucas Prett Campagna"]
-license = "MIT"
-readme = "README.md"
-homepage = "https://github.com/lucas-campagna/mt5linux"
-repository = "https://github.com/lucas-campagna/mt5linux"
-packages = [{ include = "mt5linux" }]
+    name = "mt5linux"
+    version = "0.3.0"
+    description = "MetaTrader5 bridge for Linux via rpyc"
+    authors = ["Lucas Prett Campagna"]
+    license = "MIT"
+    readme = "README.md"
+    homepage = "https://github.com/lucas-campagna/mt5linux"
+    repository = "https://github.com/lucas-campagna/mt5linux"
+    packages = [{ include = "mt5linux" }]
 
-[tool.poetry.dependencies]
-python = "^3.12"  # 3.12+ for Wine Python compatibility
-numpy = ">=1.26.4,<2.0"
-rpyc = "^6.0.2"
-pydantic = "^2.10.0"
-structlog = "^25.5.0"
+    [tool.poetry.dependencies]
+        numpy = ">=1.26.4,<2.0"
+        pydantic = "^2.10.0"
+        python = ">=3.13,<3.14"
+        rpyc = "^6.0.2"
+        structlog = "^25.5.0"
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^9.0.0"
-pytest-cov = "^6.0.0"
-pytest-xdist = "^3.0"
-pytest-asyncio = "^1.0.0"
-hypothesis = "^6.0"
-ruff = "^0.11.0"
-mypy = "^1.15.0"
-python-dotenv = "^1.0.0"
-pyrefly = "^0.46.0"
+    [tool.poetry.group.dev.dependencies]
+        hypothesis = "^6.0"
+        mypy = "^1.15.0"
+        pyrefly = "^0.46.0"
+        pytest = "^9.0.0"
+        pytest-asyncio = "^1.0.0"
+        pytest-cov = "^6.0.0"
+        pytest-xdist = "^3.0"
+        python-dotenv = "^1.0.0"
+        ruff = "^0.11.0"
 
 [tool.ruff]
-line-length = 88
-target-version = "py312"
+    line-length = 88
+    target-version = "py313"
 
 [tool.ruff.lint]
-exclude = ["typings/"]
-select = ["ALL"]
-ignore = [
-    "D",       # pydocstyle - optional docstrings
-    "COM812",  # missing-trailing-comma (conflicts with formatter)
-    "ISC001",  # single-line-implicit-string-concatenation (conflicts with formatter)
-    "ANN401",  # Any type disallowed - required for transparent bridge
-    "TC003",   # typing imports - allow in TYPE_CHECKING
-    "S603",    # subprocess call - needed for docker
-    "S101",    # assert used for runtime type guards in async client
-    "ASYNC109",# timeout param matches MT5 API signature
-    "FBT001",  # boolean positional matches MT5 API
-    "FBT002",  # boolean default matches MT5 API
-    "PLR0913", # many args matches MT5 API
-    "PYI036",  # exc_tb Any type ok in __aexit__
-    "RUF022",  # __all__ sorting - keep grouped by category
-    "UP040",   # TypeAlias syntax - keep for numpy forward refs
-]
+    exclude = ["typings/"]
+    ignore = [
+        "D",       # pydocstyle - optional docstrings
+        "COM812",  # missing-trailing-comma (conflicts with formatter)
+        "ISC001",  # single-line-implicit-string-concatenation (conflicts with formatter)
+        "ANN401",  # Any type disallowed - required for transparent bridge
+        "TC003",   # typing imports - allow in TYPE_CHECKING
+        "S603",    # subprocess call - needed for docker
+        "S101",    # assert used for runtime type guards in async client
+        "ASYNC109",# timeout param matches MT5 API signature
+        "FBT001",  # boolean positional matches MT5 API
+        "FBT002",  # boolean default matches MT5 API
+        "PLR0913", # many args matches MT5 API
+        "PYI036",  # exc_tb Any type ok in __aexit__
+        "RUF022",  # __all__ sorting - keep grouped by category
+        "UP040",   # TypeAlias syntax - keep for numpy forward refs
+    ]
+    select = ["ALL"]
 
-[tool.ruff.lint.per-file-ignores]
-"mt5linux/server.py" = [
-    "F401",    # MetaTrader5 import unused in Linux (Wine-only module)
-    "N814",    # Camelcase alias for MetaTrader5 module (intentional)
-]
-"tests/*" = [
-    "S101",    # assert ok in tests
-    "S104",    # binding to all interfaces ok in tests
-    "S106",    # hardcoded password ok in tests (fixtures)
-    "S607",    # partial path ok in tests (docker)
-    "S110",    # try-except-pass ok in tests
-    "SLF001",  # private member access ok in tests
-    "PLR2004", # magic values ok in tests
-    "ANN",     # annotations optional in tests
-    "FBT001",  # boolean positional ok in fixtures
-    "FBT003",  # boolean positional ok in tests
-    "ARG001",  # unused args ok in fixtures (dependency injection)
-    "ARG002",  # unused method args ok in fixtures
-    "PLW0603", # global statement ok in test config
-    "BLE001",  # blind exception ok in test helpers
-    "TRY300",  # try-return pattern ok in test helpers
-    "UP037",   # quoted annotations ok for forward refs
-    "F401",    # unused imports ok (MagicMock etc)
-    "UP017",   # timezone.utc ok (backward compat)
-]
+    [tool.ruff.lint.per-file-ignores]
+        "mt5linux/server.py" = [
+            "F401",    # MetaTrader5 import unused in Linux (Wine-only module)
+            "N814",    # Camelcase alias for MetaTrader5 module (intentional)
+        ]
+        "tests/*" = [
+            "S101",    # assert ok in tests
+            "S104",    # binding to all interfaces ok in tests
+            "S106",    # hardcoded password ok in tests (fixtures)
+            "S607",    # partial path ok in tests (docker)
+            "S110",    # try-except-pass ok in tests
+            "SLF001",  # private member access ok in tests
+            "PLR2004", # magic values ok in tests
+            "ANN",     # annotations optional in tests
+            "FBT001",  # boolean positional ok in fixtures
+            "FBT003",  # boolean positional ok in tests
+            "ARG001",  # unused args ok in fixtures (dependency injection)
+            "ARG002",  # unused method args ok in fixtures
+            "PLW0603", # global statement ok in test config
+            "BLE001",  # blind exception ok in test helpers
+            "TRY300",  # try-return pattern ok in test helpers
+            "UP037",   # quoted annotations ok for forward refs
+            "F401",    # unused imports ok (MagicMock etc)
+            "UP017",   # timezone.utc ok (backward compat)
+        ]
 
 [tool.mypy]
-python_version = "3.12"
-strict = true
-warn_return_any = true
-warn_unused_configs = true
-ignore_missing_imports = true
-exclude = ["typings/"]
-mypy_path = "typings"
+    exclude = ["typings/"]
+    ignore_missing_imports = true
+    mypy_path = "typings"
+    python_version = "3.12"
+    strict = true
+    warn_return_any = true
+    warn_unused_configs = true
 
-[[tool.mypy.overrides]]
-# MetaTrader5 only available in Wine, not Linux - ignore import errors
-module = "mt5linux.server"
-ignore_errors = true
+    [[tool.mypy.overrides]]
+        # MetaTrader5 only available in Wine, not Linux - ignore import errors
+        ignore_errors = true
+        module = "mt5linux.server"
 
 [tool.pyright]
-# Pyright config for MetaTrader5 module (Wine-only)
-include = ["mt5linux"]
-exclude = ["tests", "typings", ".venv"]
-pythonVersion = "3.12"
-typeCheckingMode = "strict"
-reportMissingImports = false
-reportMissingTypeStubs = false
+    # Pyright config for MetaTrader5 module (Wine-only)
+    exclude = ["tests", "typings", ".venv"]
+    include = ["mt5linux"]
+    pythonVersion = "3.12"
+    reportMissingImports = false
+    reportMissingTypeStubs = false
+    typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-v --tb=short"
-asyncio_mode = "auto"
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "trading: marks tests that place real orders",
-    "market_depth: marks tests requiring market depth subscription",
-    "integration: marks tests requiring MT5 server",
-    "unit: marks pure unit tests (no server needed)",
-]
-
-[tool.coverage.run]
-source = ["mt5linux"]
-branch = true
+    addopts = "-v --tb=short"
+    asyncio_mode = "auto"
+    markers = [
+        "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+        "trading: marks tests that place real orders",
+        "market_depth: marks tests requiring market depth subscription",
+        "integration: marks tests requiring MT5 server",
+        "unit: marks pure unit tests (no server needed)",
+    ]
+    testpaths = ["tests"]
 
 [tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "raise NotImplementedError",
-]
+    exclude_lines = [
+        "pragma: no cover",
+        "if TYPE_CHECKING:",
+        "raise NotImplementedError",
+    ]
+
+[tool.coverage.run]
+    branch = true
+    source = ["mt5linux"]

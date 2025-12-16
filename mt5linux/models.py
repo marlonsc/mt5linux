@@ -3,6 +3,10 @@
 Type-safe models for MetaTrader5 trading data structures.
 Compatible with neptor's MT5Bridge models.
 
+Hierarchy Level: 2
+- Imports: MT5Constants (Level 0), MT5Config (Level 1)
+- Used by: client.py, server.py (optional)
+
 Usage:
     from mt5linux.models import MT5Models
 
@@ -20,6 +24,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from mt5linux.config import MT5Config
 from mt5linux.constants import MT5Constants
 
 
@@ -92,12 +97,12 @@ class MT5Models:
         price: float = Field(ge=0, default=0.0)
         sl: float = Field(ge=0, default=0.0)
         tp: float = Field(ge=0, default=0.0)
-        deviation: int = Field(ge=0, default=20)
-        magic: int = Field(ge=0, default=0)
+        deviation: int = Field(ge=0, default=MT5Config.Defaults.ORDER_DEVIATION)
+        magic: int = Field(ge=0, default=MT5Config.Defaults.ORDER_MAGIC)
         comment: str = Field(max_length=31, default="")
-        type_time: MT5Constants.OrderTime = MT5Constants.OrderTime.GTC
+        type_time: MT5Constants.OrderTime = MT5Config.Defaults.ORDER_TIME
         expiration: datetime | None = None
-        type_filling: MT5Constants.OrderFilling = MT5Constants.OrderFilling.FOK
+        type_filling: MT5Constants.OrderFilling = MT5Config.Defaults.ORDER_FILLING
         position: int = Field(ge=0, default=0)
         position_by: int = Field(ge=0, default=0)
 
@@ -276,11 +281,3 @@ class MT5Models:
         volume_real: float = 0.0
 
 
-# Backward compatibility aliases (to be removed in next major version)
-MT5Model = MT5Models.Base
-OrderRequest = MT5Models.OrderRequest
-OrderResult = MT5Models.OrderResult
-AccountInfo = MT5Models.AccountInfo
-SymbolInfo = MT5Models.SymbolInfo
-Position = MT5Models.Position
-Tick = MT5Models.Tick

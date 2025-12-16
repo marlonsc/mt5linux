@@ -1,12 +1,13 @@
 # MetaTrader 5 for Linux
 
-A Python package that uses [rpyc](https://github.com/tomerfiliba-org/rpyc) to bridge [MetaTrader5](https://pypi.org/project/MetaTrader5) to
-Linux systems.
+A Python client/server library that uses [rpyc](https://github.com/tomerfiliba-org/rpyc) to connect to
+[MetaTrader5](https://pypi.org/project/MetaTrader5) from Linux systems.
 
 ## Features
 
 - **Sync Client**: `MetaTrader5` - Traditional blocking client
 - **Async Client**: `AsyncMetaTrader5` - Non-blocking client for asyncio
+- **Bridge Server**: Standalone RPyC server for Windows with MT5
 - **Pydantic Models**: Type-safe models for trading data
 - **Python 3.13+**: Modern type hints and features
 - **rpyc 6.x**: Latest rpyc with security fixes
@@ -113,30 +114,46 @@ else:
 
 ## Server Setup
 
-### Option 1: Docker (Recommended)
+### Option 1: Standalone (Windows with MT5)
 
-Use [mt5docker](https://github.com/marlonsc/mt5docker) for a complete containerized setup:
+Run the RPyC bridge server directly on Windows with MetaTrader5 installed:
 
 ```bash
+# Install mt5linux on Windows
+pip install mt5linux
+
+# Start server (default port 18812)
+python -m mt5linux --server
+
+# With custom options
+python -m mt5linux --server --host 0.0.0.0 --port 18812 --debug
+```
+
+Server options:
+- `--host HOST` - Bind address (default: 0.0.0.0)
+- `-p, --port PORT` - Listen port (default: 18812)
+- `--threads N` - Worker threads (default: 10)
+- `--timeout SECS` - Request timeout (default: 300)
+- `-d, --debug` - Enable debug logging
+
+Or programmatically:
+
+```python
+from mt5linux import run_server
+run_server(host="0.0.0.0", port=18812, debug=True)
+```
+
+### Option 2: Docker (mt5docker)
+
+Use [mt5docker](https://github.com/marlonsc/mt5docker) for a containerized setup:
+
+```bash
+git clone https://github.com/marlonsc/mt5docker.git
+cd mt5docker
 docker compose up -d
 ```
 
-The container runs rpyc server on port 8001.
-
-### Option 2: Manual Wine Setup
-
-1. Install Wine and Python for Windows
-2. Install MetaTrader5 package in Wine Python:
-
-   ```bash
-   wine pip install MetaTrader5
-   ```
-
-3. Start rpyc server:
-
-   ```bash
-   python -m mt5linux.server --wine wine --python python.exe -p 8001
-   ```
+See the [mt5docker README](https://github.com/marlonsc/mt5docker) for configuration.
 
 ## API Reference
 
@@ -265,6 +282,9 @@ Tests use isolated ports to avoid conflicts:
 
 ## Version History
 
+- **0.5.1**: Restored standalone bridge server for Windows
+- **0.5.0**: Client-only library (server moved to mt5docker)
+- **0.4.0**: MT5* module hierarchy, clean exports
 - **0.3.0**: Async client, Pydantic models, Python 3.13+, rpyc 6.x
 - **0.2.1**: Fail-fast error handling, structlog
 - **0.2.0**: Production server with auto-restart

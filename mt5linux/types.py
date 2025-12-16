@@ -6,6 +6,10 @@ All type definitions organized in a single container class for:
 - Easy discovery via IDE autocomplete
 - Single import: `from mt5linux.types import MT5Types`
 
+Hierarchy Level: 1
+- Dependencies: MT5Constants (Level 0) - used via enums in type definitions
+- Used by: MT5Models, MT5Utilities, client.py, server.py
+
 Usage:
     >>> from mt5linux.types import MT5Types
     >>> def process_rates(data: MT5Types.RatesArray) -> None: ...
@@ -33,6 +37,8 @@ class MT5Types:
     - Dict types: OrderRequestDict, TickDict, RateDict
     - Function types: MT5Function
     - Protocols: MT5ModuleProtocol
+
+    Uses MT5Constants for enum values in TypedDicts.
     """
 
     # =========================================================================

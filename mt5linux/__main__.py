@@ -1,168 +1,83 @@
 """Entry point for mt5linux.
 
+mt5linux provides both client and server components for MetaTrader5 via RPyC.
+
 Usage:
-    # Wine mode (for mt5docker - runs RPyC server via Wine):
-    python -m mt5linux --wine wine --python python.exe -p 8001
-    python -m mt5linux -w wine python.exe -p 8001
+    # Show info (default)
+    python -m mt5linux
 
-    # Direct server mode (runs RPyC server on Linux):
-    python -m mt5linux --port 18812
-    python -m mt5linux server --host 0.0.0.0 --port 18812
+    # Run server (on Windows with MT5)
+    python -m mt5linux --server
+    python -m mt5linux --server --host 0.0.0.0 --port 18812 --debug
 
-    # Help:
-    python -m mt5linux --help
+    # Client usage (in Python code)
+    from mt5linux import MetaTrader5
+    with MetaTrader5(host="windows-ip", port=18812) as mt5:
+        mt5.initialize(login=12345)
+        account = mt5.account_info()
 """
 
 from __future__ import annotations
 
 import sys
 
-import structlog
-
-from mt5linux.server import (
-    Server,
-    parse_args,
-)
-
-log = structlog.get_logger("mt5linux.main")
+from mt5linux import __version__
 
 
-def _print_help() -> None:
-    """Print usage help."""
-    help_text = """\
-mt5linux - MetaTrader5 RPyC Bridge for Linux
+def _print_info() -> None:
+    """Print package info and usage."""
+    info = f"""\
+mt5linux v{__version__} - MetaTrader5 Client/Server for Linux
 
 Usage:
-    python -m mt5linux [OPTIONS]
-    python -m mt5linux server [OPTIONS]        (legacy)
-    python -m mt5linux python.exe [OPTIONS]    (legacy Wine)
+    python -m mt5linux              # Show this info
+    python -m mt5linux --server     # Run RPyC server (Windows with MT5)
 
-Server Modes:
-    Direct (Linux):
-        python -m mt5linux --port 18812
-        python -m mt5linux --host 0.0.0.0 --port 18812
+Server Options:
+    --server              Start RPyC bridge server
+    --host HOST           Bind address (default: 0.0.0.0)
+    -p, --port PORT       Listen port (default: 18812)
+    --threads N           Worker threads (default: 10)
+    --timeout SECS        Request timeout (default: 300)
+    -d, --debug           Enable debug logging
 
-    Wine (for mt5docker):
-        python -m mt5linux --wine wine --python python.exe -p 8001
-        python -m mt5linux -w wine python.exe -p 8001
+Client Usage (Python):
+    from mt5linux import MetaTrader5, MT5Constants
 
-Options:
-    --host HOST         Host to bind (default: 0.0.0.0)
-    -p, --port PORT     Port to listen on (default: 18812)
-    --wine CMD          Wine command (enables Wine mode)
-    --python EXE        Python executable for Wine (default: python.exe)
-    --max-restarts N    Max restart attempts (default: 10)
-    --threads N         Worker threads (default: 10)
-    --timeout SECS      Request timeout (default: 300)
-    -h, --help          Show this help
+    with MetaTrader5(host="windows-ip", port=18812) as mt5:
+        mt5.initialize(login=12345, password="pass", server="Demo")
+        account = mt5.account_info()
+        rates = mt5.copy_rates_from_pos("EURUSD", MT5Constants.TimeFrame.H1, 0, 100)
 
-Environment Variables:
-    MT5_HOST            Override default host
-    MT5_RPYC_PORT       Override default port
+Configuration:
+    MT5_HOST          - Server host (default: localhost)
+    MT5_RPYC_PORT     - Server port (default: 18812)
 
-For more information: https://github.com/lucas-campagna/mt5linux
+Documentation:
+    https://www.mql5.com/en/docs/python_metatrader5
 """
-    print(help_text)  # noqa: T201
-
-
-def _find_python_exe(argv: list[str]) -> str | None:
-    """Find Python executable in legacy argument format."""
-    for arg in argv:
-        if not arg.startswith("-") and (
-            arg.endswith(".exe") or arg in {"python", "python3"}
-        ):
-            return arg
-    return None
-
-
-def _convert_legacy_wine_args(argv: list[str], python_exe: str) -> list[str]:
-    """Convert legacy Wine mode arguments to new format."""
-    new_argv = ["--wine", "wine", "--python", python_exe]
-
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-        if arg == python_exe:
-            i += 1
-            continue
-        if arg in {"-p", "--port"} and i + 1 < len(argv):
-            new_argv.extend(["-p", argv[i + 1]])
-            i += 2
-            continue
-        if arg in {"-w", "--wine"} and i + 1 < len(argv):
-            new_argv[1] = argv[i + 1]  # Override wine command
-            i += 2
-            continue
-        if arg == "--host" and i + 1 < len(argv):
-            new_argv.extend(["--host", argv[i + 1]])
-            i += 2
-            continue
-        if arg in {"-s", "--server-dir"} and i + 1 < len(argv):
-            new_argv.extend(["--server-dir", argv[i + 1]])
-            i += 2
-            continue
-        i += 1
-
-    return new_argv
-
-
-def _parse_legacy_args(argv: list[str]) -> Server.Config | None:
-    """Parse legacy command line format for backwards compatibility.
-
-    Supports:
-        python -m mt5linux python.exe -p 8001 -w wine
-        python -m mt5linux server --host 0.0.0.0 --port 18812
-
-    Returns:
-        Server.Config if parsed successfully, None otherwise.
-    """
-    if not argv:
-        return None
-
-    # Check for "server" subcommand (legacy direct mode)
-    if argv[0] == "server":
-        return parse_args(argv[1:])
-
-    # Check for positional python.exe argument (legacy Wine mode)
-    python_exe = _find_python_exe(argv)
-    if python_exe:
-        new_argv = _convert_legacy_wine_args(argv, python_exe)
-        return parse_args(new_argv)
-
-    return None
+    print(info)  # noqa: T201
 
 
 def main() -> int:
     """Entry point."""
-    argv = sys.argv[1:]
+    args = sys.argv[1:]
 
-    # Check for help flag
-    if "-h" in argv or "--help" in argv or not argv:
-        _print_help()
-        return 0 if argv else 1
+    # Check for --server flag
+    if "--server" in args or "-s" in args:
+        # Remove --server/-s flag and pass remaining args to bridge
+        server_args = [a for a in args if a not in ("--server", "-s")]
+        from mt5linux.bridge import main as bridge_main
 
-    # Try legacy argument format first
-    config = _parse_legacy_args(argv)
-    arg_format = "legacy"
+        return bridge_main(server_args)
 
-    # Fall back to new argument format
-    if config is None:
-        try:
-            config = parse_args(argv)
-            arg_format = "standard"
-        except SystemExit:
-            _print_help()
-            return 1
+    # Check for help
+    if "-h" in args or "--help" in args:
+        _print_info()
+        return 0
 
-    log.info("parsed_arguments", format=arg_format, mode=config.mode.value)
-
-    # Run server
-    server = Server(config)
-
-    try:
-        server.run(blocking=True)
-    except KeyboardInterrupt:
-        server.stop()
+    # Default: show info
+    _print_info()
     return 0
 
 
