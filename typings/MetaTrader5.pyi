@@ -10,9 +10,7 @@ def initialize(
     timeout: int | None = None,
     portable: bool = False,
 ) -> bool: ...
-def login(
-    login: int, password: str, server: str, timeout: int = 60000
-) -> bool: ...
+def login(login: int, password: str, server: str, timeout: int = 60000) -> bool: ...
 def shutdown() -> None: ...
 def version() -> tuple[int, int, str] | None: ...
 def last_error() -> tuple[int, str]: ...
@@ -32,25 +30,19 @@ def copy_rates_from(
     timeframe: int,
     date_from: datetime | int,
     count: int,
-) -> (
-    tuple[tuple[int, float, float, float, float, int, int, int], ...] | None
-): ...
+) -> tuple[tuple[int, float, float, float, float, int, int, int], ...] | None: ...
 def copy_rates_from_pos(
     symbol: str,
     timeframe: int,
     start_pos: int,
     count: int,
-) -> (
-    tuple[tuple[int, float, float, float, float, int, int, int], ...] | None
-): ...
+) -> tuple[tuple[int, float, float, float, float, int, int, int], ...] | None: ...
 def copy_rates_range(
     symbol: str,
     timeframe: int,
     date_from: datetime | int,
     date_to: datetime | int,
-) -> (
-    tuple[tuple[int, float, float, float, float, int, int, int], ...] | None
-): ...
+) -> tuple[tuple[int, float, float, float, float, int, int, int], ...] | None: ...
 def copy_ticks_from(
     symbol: str,
     date_from: datetime | int,

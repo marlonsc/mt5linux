@@ -9,7 +9,12 @@ import pytest
 
 from mt5linux import MetaTrader5
 
-from .conftest import TEST_GRPC_PORT
+from .conftest import (
+    TEST_GRPC_PORT,
+    tc,
+)
+
+# Test constants moved to TestConstants class
 
 
 class TestMetaTrader5Connection:
@@ -18,25 +23,25 @@ class TestMetaTrader5Connection:
     def test_connect_and_close(self, mt5_raw: MetaTrader5) -> None:
         """Test connection and close."""
         # Connection already established by fixture
-        assert mt5_raw._channel is not None
+        assert mt5_raw._channel is not None  # noqa: SLF001
         mt5_raw.disconnect()
-        assert mt5_raw._channel is None
+        assert mt5_raw._channel is None  # noqa: SLF001
 
     def test_context_manager(self) -> None:
         """Test context manager opens and closes connection correctly."""
         try:
             with MetaTrader5(host="localhost", port=TEST_GRPC_PORT) as mt5:
-                assert mt5._channel is not None
+                assert mt5._channel is not None  # noqa: SLF001
         except (ConnectionError, EOFError, OSError) as e:
             pytest.skip(f"MT5 connection failed: {e}")
         # After exiting context, channel closed
-        assert mt5._channel is None
+        assert mt5._channel is None  # noqa: SLF001
 
     def test_disconnect_idempotent(self, mt5_raw: MetaTrader5) -> None:
         """Test that disconnect() can be called multiple times."""
         mt5_raw.disconnect()
         mt5_raw.disconnect()  # Should not raise
-        assert mt5_raw._channel is None
+        assert mt5_raw._channel is None  # noqa: SLF001
 
 
 class TestMetaTrader5Initialize:
@@ -47,14 +52,14 @@ class TestMetaTrader5Initialize:
         # mt5 fixture already initializes
         version = mt5.version()
         assert version is not None
-        assert len(version) == 3
+        assert len(version) == tc.VERSION_TUPLE_LENGTH
 
     def test_last_error(self, mt5: MetaTrader5) -> None:
         """Test last_error after operation."""
         error = mt5.last_error()
         assert error is not None
         assert isinstance(error, tuple)
-        assert len(error) == 2
+        assert len(error) == tc.ERROR_TUPLE_LENGTH
 
 
 class TestMetaTrader5Constants:
@@ -62,22 +67,28 @@ class TestMetaTrader5Constants:
 
     def test_order_type_constants(self, mt5: MetaTrader5) -> None:
         """Test access to ORDER_TYPE_* constants."""
-        assert mt5.ORDER_TYPE_BUY == 0
-        assert mt5.ORDER_TYPE_SELL == 1
-        assert mt5.ORDER_TYPE_BUY_LIMIT == 2
-        assert mt5.ORDER_TYPE_SELL_LIMIT == 3
+        from mt5linux.constants import MT5Constants as c
+
+        assert mt5.ORDER_TYPE_BUY == c.Order.OrderType.BUY
+        assert mt5.ORDER_TYPE_SELL == c.Order.OrderType.SELL
+        assert mt5.ORDER_TYPE_BUY_LIMIT == c.Order.OrderType.BUY_LIMIT
+        assert mt5.ORDER_TYPE_SELL_LIMIT == c.Order.OrderType.SELL_LIMIT
 
     def test_timeframe_constants(self, mt5: MetaTrader5) -> None:
         """Test access to TIMEFRAME_* constants."""
-        assert mt5.TIMEFRAME_M1 == 1
-        assert mt5.TIMEFRAME_M5 == 5
-        assert mt5.TIMEFRAME_H1 == 16385
-        assert mt5.TIMEFRAME_D1 == 16408
+        from mt5linux.constants import MT5Constants as c
+
+        assert mt5.TIMEFRAME_M1 == c.MarketData.TimeFrame.M1
+        assert mt5.TIMEFRAME_M5 == c.MarketData.TimeFrame.M5
+        assert mt5.TIMEFRAME_H1 == c.MarketData.TimeFrame.H1
+        assert mt5.TIMEFRAME_D1 == c.MarketData.TimeFrame.D1
 
     def test_trade_retcode_constants(self, mt5: MetaTrader5) -> None:
         """Test access to TRADE_RETCODE_* constants."""
-        assert mt5.TRADE_RETCODE_DONE == 10009
-        assert mt5.TRADE_RETCODE_REQUOTE == 10004
+        from mt5linux.constants import MT5Constants as c
+
+        assert mt5.TRADE_RETCODE_DONE == c.Order.TradeRetcode.DONE
+        assert mt5.TRADE_RETCODE_REQUOTE == c.Order.TradeRetcode.REQUOTE
 
 
 class TestMetaTrader5AccountInfo:
@@ -120,7 +131,7 @@ class TestMetaTrader5Symbols:
 
     def test_symbol_info_tick(self, mt5: MetaTrader5) -> None:
         """Test symbol tick."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
         tick = mt5.symbol_info_tick("EURUSD")
         assert tick is not None
         assert tick.bid > 0
@@ -139,7 +150,9 @@ class TestMetaTrader5CopyRates:
     def test_copy_rates_from_pos(self, mt5: MetaTrader5) -> None:
         """Test copy_rates_from_pos returns local array."""
         try:
-            rates = mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 10)
+            rates = mt5.copy_rates_from_pos(
+                "EURUSD", mt5.TIMEFRAME_H1, 0, tc.DEFAULT_BAR_COUNT
+            )
         except Exception as e:
             if "pickling is disabled" in str(e):
                 pytest.skip(
@@ -158,8 +171,10 @@ class TestMetaTrader5CopyRates:
 
     def test_copy_rates_from(self, mt5: MetaTrader5) -> None:
         """Test copy_rates_from with datetime."""
-        date_from = datetime.now(UTC) - timedelta(days=7)
-        rates = mt5.copy_rates_from("EURUSD", mt5.TIMEFRAME_H1, date_from, 10)
+        date_from = datetime.now(UTC) - timedelta(days=tc.ONE_WEEK)
+        rates = mt5.copy_rates_from(
+            "EURUSD", mt5.TIMEFRAME_H1, date_from, tc.DEFAULT_BAR_COUNT
+        )
         # May be None if market closed
         if rates is not None:
             assert len(rates) > 0
@@ -169,9 +184,7 @@ class TestMetaTrader5CopyRates:
         """Test copy_rates_range with interval."""
         date_to = datetime.now(UTC)
         date_from = date_to - timedelta(days=7)
-        rates = mt5.copy_rates_range(
-            "EURUSD", mt5.TIMEFRAME_H1, date_from, date_to
-        )
+        rates = mt5.copy_rates_range("EURUSD", mt5.TIMEFRAME_H1, date_from, date_to)
         if rates is not None:
             assert len(rates) > 0
             assert hasattr(rates, "dtype")
@@ -182,10 +195,10 @@ class TestMetaTrader5CopyTicks:
 
     def test_copy_ticks_from(self, mt5: MetaTrader5) -> None:
         """Test copy_ticks_from returns local array."""
-        mt5.symbol_select("EURUSD", True)
-        date_from = datetime.now(UTC) - timedelta(hours=1)
+        mt5.symbol_select("EURUSD", enable=True)
+        date_from = datetime.now(UTC) - timedelta(hours=tc.ONE_HOUR)
         ticks = mt5.copy_ticks_from(
-            "EURUSD", date_from, 100, mt5.COPY_TICKS_ALL
+            "EURUSD", date_from, tc.DEFAULT_TICK_COUNT, mt5.COPY_TICKS_ALL
         )
         if ticks is not None and len(ticks) > 0:
             assert hasattr(ticks, "dtype")
@@ -195,12 +208,10 @@ class TestMetaTrader5CopyTicks:
 
     def test_copy_ticks_range(self, mt5: MetaTrader5) -> None:
         """Test copy_ticks_range with interval."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
         date_to = datetime.now(UTC)
-        date_from = date_to - timedelta(minutes=10)
-        ticks = mt5.copy_ticks_range(
-            "EURUSD", date_from, date_to, mt5.COPY_TICKS_ALL
-        )
+        date_from = date_to - timedelta(minutes=tc.MEDIUM_COUNT)
+        ticks = mt5.copy_ticks_range("EURUSD", date_from, date_to, mt5.COPY_TICKS_ALL)
         # May be None or empty if market closed
         if ticks is not None:
             assert hasattr(ticks, "dtype")
@@ -289,16 +300,14 @@ class TestMetaTrader5Login:
         assert account.login == login
 
     @pytest.mark.integration
-    def test_login_with_invalid_credentials(
-        self, mt5_raw: MetaTrader5
-    ) -> None:
+    def test_login_with_invalid_credentials(self, mt5_raw: MetaTrader5) -> None:
         """Test login with invalid credentials returns False."""
         # Initialize first
         init_result = mt5_raw.initialize()
         if not init_result:
             pytest.skip("MT5 initialize failed")
 
-        result = mt5_raw.login(99999999, "wrong_password", "InvalidServer")
+        result = mt5_raw.login(tc.MT5.INVALID_LOGIN, "wrong_password", "InvalidServer")
         assert result is False
 
     @pytest.mark.integration
@@ -379,12 +388,10 @@ class TestMetaTrader5Resilience:
         mt5_raw.disconnect()  # Should not raise
 
     @pytest.mark.integration
-    def test_multiple_operations_same_connection(
-        self, mt5: MetaTrader5
-    ) -> None:
+    def test_multiple_operations_same_connection(self, mt5: MetaTrader5) -> None:
         """Test multiple sequential operations on same connection."""
         # Perform multiple operations
-        for _ in range(5):
+        for _ in range(tc.FIVE_ITERATIONS):
             account = mt5.account_info()
             assert account is not None
 

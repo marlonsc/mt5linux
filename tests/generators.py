@@ -13,16 +13,13 @@ from datetime import UTC, datetime, timedelta
 
 from hypothesis import strategies as st
 
+from .conftest import tc
+
 # =============================================================================
-# SYMBOL CONSTANTS
+# SYMBOL CONSTANTS (moved to TestConstants)
 # =============================================================================
 
-MAJOR_PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"]
-ALL_FOREX = [*MAJOR_PAIRS, "USDCHF", "USDCAD", "EURGBP", "EURJPY"]
-
-# Test magic number to identify test orders
-TEST_MAGIC = 999999
-TEST_COMMENT = "mt5linux_test"
+# Constants are now accessed via c.* for consistency
 
 # =============================================================================
 # HYPOTHESIS STRATEGIES
@@ -103,8 +100,8 @@ def build_market_buy_request(
     symbol: str = "EURUSD",
     volume: float = 0.01,
     deviation: int = 20,
-    magic: int = TEST_MAGIC,
-    comment: str = TEST_COMMENT,
+    magic: int = tc.INVALID_TEST_MAGIC,
+    comment: str = tc.TEST_COMMENT,
 ) -> dict[str, str | float | int]:
     """Build a market buy order request.
 
@@ -134,8 +131,8 @@ def build_market_sell_request(
     symbol: str = "EURUSD",
     volume: float = 0.01,
     deviation: int = 20,
-    magic: int = TEST_MAGIC,
-    comment: str = TEST_COMMENT,
+    magic: int = tc.INVALID_TEST_MAGIC,
+    comment: str = tc.TEST_COMMENT,
 ) -> dict[str, str | float | int]:
     """Build a market sell order request.
 
@@ -159,13 +156,13 @@ def build_market_sell_request(
     }
 
 
-def build_limit_order_request(
+def build_limit_order_request(  # noqa: PLR0913
     symbol: str = "EURUSD",
     volume: float = 0.01,
     price: float = 1.0,
     deviation: int = 20,
-    magic: int = TEST_MAGIC,
-    comment: str = TEST_COMMENT,
+    magic: int = tc.INVALID_TEST_MAGIC,
+    comment: str = tc.TEST_COMMENT,
 ) -> dict[str, str | float | int]:
     """Build a limit order request.
 
@@ -191,13 +188,13 @@ def build_limit_order_request(
     }
 
 
-def build_close_position_request(
+def build_close_position_request(  # noqa: PLR0913
     position_ticket: int,
     symbol: str = "EURUSD",
     volume: float = 0.01,
     deviation: int = 20,
-    magic: int = TEST_MAGIC,
-    comment: str = TEST_COMMENT,
+    magic: int = tc.INVALID_TEST_MAGIC,
+    comment: str = tc.TEST_COMMENT,
 ) -> dict[str, str | float | int]:
     """Build a close position request.
 

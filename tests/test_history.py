@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .conftest import tc
+
 if TYPE_CHECKING:
     from mt5linux import MetaTrader5
 
@@ -48,7 +50,7 @@ class TestHistoryDeals:
 
     def test_history_deals_get_by_symbol(self, mt5: MetaTrader5) -> None:
         """Test filtering deals by symbol."""
-        date_from = datetime.now(UTC) - timedelta(days=365)
+        date_from = datetime.now(UTC) - timedelta(days=tc.ONE_YEAR)
         date_to = datetime.now(UTC)
 
         deals = mt5.history_deals_get(date_from, date_to, group="*USD*")
@@ -79,7 +81,7 @@ class TestHistoryDeals:
     def test_history_deals_get_empty_range(self, mt5: MetaTrader5) -> None:
         """Test getting deals from empty date range."""
         # Use tomorrow to avoid 32-bit overflow on Windows
-        tomorrow = datetime.now(UTC) + timedelta(days=1)
+        tomorrow = datetime.now(UTC) + timedelta(days=tc.SMALL_COUNT)
         day_after = tomorrow + timedelta(days=1)
 
         deals = mt5.history_deals_get(tomorrow, day_after)
@@ -134,7 +136,7 @@ class TestHistoryOrders:
 
     def test_history_orders_get_by_symbol(self, mt5: MetaTrader5) -> None:
         """Test filtering orders by symbol."""
-        date_from = datetime.now(UTC) - timedelta(days=365)
+        date_from = datetime.now(UTC) - timedelta(days=tc.ONE_YEAR)
         date_to = datetime.now(UTC)
 
         orders = mt5.history_orders_get(date_from, date_to, group="*EUR*")
@@ -164,7 +166,7 @@ class TestHistoryOrders:
     def test_history_orders_get_empty_range(self, mt5: MetaTrader5) -> None:
         """Test getting orders from empty date range."""
         # Use tomorrow to avoid 32-bit overflow on Windows
-        tomorrow = datetime.now(UTC) + timedelta(days=1)
+        tomorrow = datetime.now(UTC) + timedelta(days=tc.SMALL_COUNT)
         day_after = tomorrow + timedelta(days=1)
 
         orders = mt5.history_orders_get(tomorrow, day_after)
@@ -198,7 +200,7 @@ class TestHistoryCombined:
         Note: history_*_total may return None if no history available.
         API timing may cause count mismatches - we skip in those cases.
         """
-        date_from = datetime.now(UTC) - timedelta(days=30)
+        date_from = datetime.now(UTC) - timedelta(days=tc.ONE_MONTH)
         date_to = datetime.now(UTC)
 
         deals_total = mt5.history_deals_total(date_from, date_to)

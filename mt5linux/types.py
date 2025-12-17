@@ -45,10 +45,10 @@ class MT5Types:
     # ARRAY TYPE ALIASES
     # =========================================================================
 
-    type RatesArray = "NDArray[np.void]"
+    type RatesArray = NDArray[np.void]
     """NumPy array for OHLCV rate data from copy_rates_* functions."""
 
-    type TicksArray = "NDArray[np.void]"
+    type TicksArray = NDArray[np.void]
     """NumPy array for tick data from copy_ticks_* functions."""
 
     # =========================================================================
@@ -57,6 +57,16 @@ class MT5Types:
 
     type MT5Function = Callable[..., object]
     """Generic MT5 function callable type."""
+
+    # =========================================================================
+    # JSON TYPE ALIASES
+    # =========================================================================
+
+    type JSONPrimitive = str | int | float | bool | None
+    """Primitive JSON-compatible values."""
+
+    type JSONValue = JSONPrimitive | list[JSONValue] | dict[str, JSONValue]
+    """Recursive JSON-compatible value type (strict typing, no Any)."""
 
     # =========================================================================
     # TYPED DICTS
@@ -180,9 +190,7 @@ class MT5Types:
             """Get total number of available symbols."""
             ...
 
-        def symbols_get(
-            self, *, group: str | None = ...
-        ) -> tuple[object, ...] | None:
+        def symbols_get(self, *, group: str | None = ...) -> tuple[object, ...] | None:
             """Get available symbols with optional group filter."""
             ...
 
@@ -194,9 +202,7 @@ class MT5Types:
             """Get current tick data for a symbol."""
             ...
 
-        def symbol_select(
-            self, symbol: str, *, enable: bool = ...
-        ) -> bool:
+        def symbol_select(self, symbol: str, *, enable: bool = ...) -> bool:
             """Select or deselect symbol in Market Watch."""
             ...
 
@@ -357,9 +363,7 @@ class MT5Types:
             """Subscribe to market depth (DOM) for a symbol."""
             ...
 
-        def market_book_get(
-            self, symbol: str
-        ) -> tuple[object, ...] | None:
+        def market_book_get(self, symbol: str) -> tuple[object, ...] | None:
             """Get market depth (DOM) data for a symbol."""
             ...
 

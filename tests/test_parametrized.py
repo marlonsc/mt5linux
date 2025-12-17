@@ -16,6 +16,8 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from .conftest import tc
+
 if TYPE_CHECKING:
     from mt5linux import MetaTrader5
 
@@ -164,51 +166,44 @@ COMMON_TIMEFRAMES = [
 
 # Standard lot sizes for forex
 LOT_SIZES_FOREX = [
-    0.01,  # Micro lot (1,000 units)
+    tc.MICRO_LOT,  # Micro lot (1,000 units)
     0.02,
-    0.05,
-    0.1,  # Mini lot (10,000 units)
+    0.05,  # Between micro and mini
+    tc.MINI_LOT,  # Mini lot (10,000 units)
     0.2,
-    0.5,
-    1.0,  # Standard lot (100,000 units)
-    2.0,
-    5.0,
-    10.0,
+    tc.HALF_STANDARD_LOT,  # Half standard lot
+    tc.STANDARD_LOT,  # Standard lot (100,000 units)
+    tc.DOUBLE_STANDARD_LOT,
+    tc.FIVE_STANDARD_LOTS,
+    tc.TEN_STANDARD_LOTS,
 ]
 
 # Lot sizes for metals (may differ by broker)
 LOT_SIZES_METALS = [
-    0.01,
-    0.05,
+    tc.MICRO_LOT,
+    0.05,  # Between micro and mini
     0.1,
-    0.5,
+    tc.HALF_STANDARD_LOT,  # Half standard lot
     1.0,
 ]
 
 # Lot sizes for indices
 LOT_SIZES_INDICES = [
     0.1,
-    0.5,
+    tc.HALF_STANDARD_LOT,  # Half standard lot
     1.0,
-    2.0,
-    5.0,
+    tc.DOUBLE_STANDARD_LOT,
+    tc.FIVE_STANDARD_LOTS,
 ]
 
 # =============================================================================
 # DATA COUNT RANGES
 # =============================================================================
 
-# Bar/candle counts to test
-BAR_COUNTS = [1, 5, 10, 50, 100, 500, 1000, 5000, 10000]
+# Test data collections moved to TestConstants class
 
-# Tick counts to test
-TICK_COUNTS = [1, 10, 50, 100, 500, 1000]
-
-# Date ranges in days
-DATE_RANGES_DAYS = [1, 3, 7, 14, 30, 60, 90, 180, 365]
-
-# Position offsets
-POSITION_OFFSETS = [0, 10, 50, 100, 500, 1000]
+# Position offsets for copy_rates_from_pos parametrized tests
+POSITION_OFFSETS = [0, 10, 50, 100, 500]
 
 
 class TestSymbolCoverage:
@@ -219,11 +214,9 @@ class TestSymbolCoverage:
     # -------------------------------------------------------------------------
 
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS)
-    def test_symbol_info_all_majors(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_symbol_info_all_majors(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test symbol_info for all major pairs."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info = mt5.symbol_info(symbol)
 
         if info is None:
@@ -233,11 +226,9 @@ class TestSymbolCoverage:
         assert info.bid > 0 or info.ask > 0  # At least one price
 
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS)
-    def test_symbol_tick_all_majors(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_symbol_tick_all_majors(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test symbol_info_tick for all major pairs."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
@@ -245,13 +236,13 @@ class TestSymbolCoverage:
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS)
-    def test_copy_rates_all_symbols(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_copy_rates_all_symbols(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test copy_rates_from_pos for all major pairs."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
-        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 10)
+        rates = mt5.copy_rates_from_pos(
+            symbol, mt5.TIMEFRAME_H1, 0, tc.DEFAULT_BAR_COUNT
+        )
 
         # May be None if market data not available for symbol
         if rates is not None:
@@ -262,14 +253,14 @@ class TestSymbolCoverage:
             assert "close" in rates.dtype.names
 
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS)
-    def test_copy_ticks_all_symbols(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_copy_ticks_all_symbols(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test copy_ticks_from for all major pairs."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         date_from = datetime.now(UTC) - timedelta(minutes=30)
-        ticks = mt5.copy_ticks_from(symbol, date_from, 100, mt5.COPY_TICKS_ALL)
+        ticks = mt5.copy_ticks_from(
+            symbol, date_from, tc.DEFAULT_TICK_COUNT, mt5.COPY_TICKS_ALL
+        )
 
         # May be None if tick data not available
         if ticks is not None and len(ticks) > 0:
@@ -282,11 +273,9 @@ class TestSymbolCoverage:
     # -------------------------------------------------------------------------
 
     @pytest.mark.parametrize("symbol", CROSS_PAIRS)
-    def test_symbol_info_cross_pairs(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_symbol_info_cross_pairs(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test symbol_info for all cross pairs (no USD)."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info = mt5.symbol_info(symbol)
 
         if info is None:
@@ -296,11 +285,9 @@ class TestSymbolCoverage:
         assert info.bid > 0 or info.ask > 0
 
     @pytest.mark.parametrize("symbol", CROSS_PAIRS)
-    def test_symbol_tick_cross_pairs(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_symbol_tick_cross_pairs(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test symbol_info_tick for all cross pairs."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
@@ -308,13 +295,13 @@ class TestSymbolCoverage:
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", CROSS_PAIRS)
-    def test_copy_rates_cross_pairs(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_copy_rates_cross_pairs(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test copy_rates_from_pos for all cross pairs."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
-        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 10)
+        rates = mt5.copy_rates_from_pos(
+            symbol, mt5.TIMEFRAME_H1, 0, tc.DEFAULT_BAR_COUNT
+        )
 
         if rates is not None:
             assert len(rates) > 0
@@ -328,7 +315,7 @@ class TestSymbolCoverage:
     @pytest.mark.parametrize("symbol", METALS)
     def test_symbol_info_metals(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test symbol_info for precious metals."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info = mt5.symbol_info(symbol)
 
         if info is None:
@@ -341,7 +328,7 @@ class TestSymbolCoverage:
     @pytest.mark.parametrize("symbol", METALS)
     def test_symbol_tick_metals(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test symbol_info_tick for precious metals."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
@@ -351,9 +338,11 @@ class TestSymbolCoverage:
     @pytest.mark.parametrize("symbol", METALS)
     def test_copy_rates_metals(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test copy_rates_from_pos for precious metals."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
-        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 10)
+        rates = mt5.copy_rates_from_pos(
+            symbol, mt5.TIMEFRAME_H1, 0, tc.DEFAULT_BAR_COUNT
+        )
 
         if rates is not None:
             assert len(rates) > 0
@@ -370,7 +359,7 @@ class TestSymbolCoverage:
         Note: Index symbol names vary significantly between brokers.
         Common variations: US30/DJ30/DJI, US500/SP500/SPX, etc.
         """
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info = mt5.symbol_info(symbol)
 
         if info is None:
@@ -382,7 +371,7 @@ class TestSymbolCoverage:
     @pytest.mark.parametrize("symbol", INDICES)
     def test_symbol_tick_indices(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test symbol_info_tick for stock indices."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
@@ -392,9 +381,11 @@ class TestSymbolCoverage:
     @pytest.mark.parametrize("symbol", INDICES)
     def test_copy_rates_indices(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test copy_rates_from_pos for stock indices."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
-        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 10)
+        rates = mt5.copy_rates_from_pos(
+            symbol, mt5.TIMEFRAME_H1, 0, tc.DEFAULT_BAR_COUNT
+        )
 
         if rates is not None:
             assert len(rates) > 0
@@ -418,9 +409,9 @@ class TestTimeframeCoverage:
     ) -> None:
         """Test copy_rates for all common timeframes."""
         timeframe = getattr(mt5, timeframe_name)
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
-        rates = mt5.copy_rates_from_pos("EURUSD", timeframe, 0, 10)
+        rates = mt5.copy_rates_from_pos("EURUSD", timeframe, 0, tc.DEFAULT_BAR_COUNT)
 
         if rates is not None:
             assert len(rates) > 0
@@ -435,10 +426,12 @@ class TestTimeframeCoverage:
     ) -> None:
         """Test copy_rates_from with datetime for multiple timeframes."""
         timeframe = getattr(mt5, timeframe_name)
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
         date_from = datetime.now(UTC) - timedelta(days=7)
-        rates = mt5.copy_rates_from("EURUSD", timeframe, date_from, 10)
+        rates = mt5.copy_rates_from(
+            "EURUSD", timeframe, date_from, tc.DEFAULT_BAR_COUNT
+        )
 
         if rates is not None:
             assert len(rates) > 0
@@ -465,9 +458,9 @@ class TestCombinedCoverage:
     ) -> None:
         """Test rates for symbol x timeframe combinations."""
         timeframe = getattr(mt5, timeframe_name)
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
-        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 10)
+        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, tc.DEFAULT_BAR_COUNT)
 
         if rates is not None:
             assert len(rates) > 0
@@ -490,7 +483,7 @@ class TestCombinedCoverage:
         This ensures all symbols in our test lists can be selected.
         Unavailable symbols are skipped gracefully.
         """
-        result = mt5.symbol_select(symbol, True)
+        result = mt5.symbol_select(symbol, enable=True)
 
         if not result:
             info = mt5.symbol_info(symbol)
@@ -499,14 +492,12 @@ class TestCombinedCoverage:
 
     @pytest.mark.slow
     @pytest.mark.parametrize("symbol", ALL_SYMBOLS)
-    def test_market_book_all_symbols(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_market_book_all_symbols(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test market_book_add/release for all symbols.
 
         Market depth may not be available for all symbols.
         """
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info = mt5.symbol_info(symbol)
 
         if info is None:
@@ -531,48 +522,40 @@ class TestCombinedCoverage:
 class TestHypothesisProperties:
     """Property-based tests using Hypothesis."""
 
-    @given(count=st.integers(min_value=1, max_value=100))
+    @given(count=st.integers(min_value=1, max_value=tc.HUNDRED_ITEMS))
     @settings(
         max_examples=10,
         deadline=None,  # RPyC operations can be slow
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
-    def test_copy_rates_count_property(
-        self, mt5: MetaTrader5, count: int
-    ) -> None:
+    def test_copy_rates_count_property(self, mt5: MetaTrader5, count: int) -> None:
         """Property: returned rates count should be <= requested count."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
         rates = mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, count)
 
         if rates is not None:
             assert len(rates) <= count
 
-    @given(days_back=st.integers(min_value=1, max_value=30))
+    @given(days_back=st.integers(min_value=1, max_value=tc.ONE_MONTH))
     @settings(
         max_examples=5,
         deadline=None,  # RPyC operations can be slow
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
-    def test_rates_range_property(
-        self, mt5: MetaTrader5, days_back: int
-    ) -> None:
+    def test_rates_range_property(self, mt5: MetaTrader5, days_back: int) -> None:
         """Property: rates in range should be within requested dates."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
         date_to = datetime.now(UTC)
         date_from = date_to - timedelta(days=days_back)
 
-        rates = mt5.copy_rates_range(
-            "EURUSD", mt5.TIMEFRAME_D1, date_from, date_to
-        )
+        rates = mt5.copy_rates_range("EURUSD", mt5.TIMEFRAME_D1, date_from, date_to)
 
         if rates is not None and len(rates) > 0:
             # First rate should be >= date_from
             first_time = datetime.fromtimestamp(rates[0]["time"], tz=UTC)
-            assert first_time >= date_from - timedelta(
-                days=1
-            )  # Allow 1 day tolerance
+            assert first_time >= date_from - timedelta(days=1)  # Allow 1 day tolerance
 
     @given(
         volume=st.floats(min_value=0.01, max_value=1.0),
@@ -589,7 +572,7 @@ class TestHypothesisProperties:
     ) -> None:
         """Property: order_check should accept valid volumes."""
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None or ask is None or ask <= 0:
@@ -602,7 +585,7 @@ class TestHypothesisProperties:
             "type": mt5.ORDER_TYPE_BUY,
             "price": ask,
             "deviation": deviation,
-            "magic": 999999,
+            "magic": tc.MT5.TEST_MAGIC,
             "comment": "hypothesis_test",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
@@ -627,9 +610,7 @@ class TestDateRangeCoverage:
         "days_back",
         [1, 7, 30, 90],
     )
-    def test_history_deals_date_ranges(
-        self, mt5: MetaTrader5, days_back: int
-    ) -> None:
+    def test_history_deals_date_ranges(self, mt5: MetaTrader5, days_back: int) -> None:
         """Test history_deals_total with various date ranges.
 
         Note: May return None if no history available for the date range.
@@ -646,9 +627,7 @@ class TestDateRangeCoverage:
         "days_back",
         [1, 7, 30, 90],
     )
-    def test_history_orders_date_ranges(
-        self, mt5: MetaTrader5, days_back: int
-    ) -> None:
+    def test_history_orders_date_ranges(self, mt5: MetaTrader5, days_back: int) -> None:
         """Test history_orders_total with various date ranges.
 
         Note: May return None if no history available for the date range.
@@ -694,7 +673,7 @@ class TestConstantsAccess:
             ("TIMEFRAME_M1", 1),
             ("TIMEFRAME_M5", 5),
             ("TIMEFRAME_M15", 15),
-            ("TIMEFRAME_M30", 30),
+            ("TIMEFRAME_M30", tc.ONE_MONTH),
             ("TIMEFRAME_H1", 16385),
             ("TIMEFRAME_H4", 16388),
             ("TIMEFRAME_D1", 16408),
@@ -742,7 +721,7 @@ class TestLotSizeCoverage:
         self, mt5: MetaTrader5, symbol: str, lot_size: float
     ) -> None:
         """Test order_check with various forex lot sizes."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
@@ -765,7 +744,7 @@ class TestLotSizeCoverage:
             "type": mt5.ORDER_TYPE_BUY,
             "price": ask,
             "deviation": 20,
-            "magic": 999999,
+            "magic": tc.MT5.TEST_MAGIC,
             "comment": "lot_size_test",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
@@ -784,7 +763,7 @@ class TestLotSizeCoverage:
     ) -> None:
         """Test order_check with various gold lot sizes."""
         symbol = "XAUUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
@@ -806,7 +785,7 @@ class TestLotSizeCoverage:
             "type": mt5.ORDER_TYPE_BUY,
             "price": ask,
             "deviation": 50,
-            "magic": 999999,
+            "magic": tc.MT5.TEST_MAGIC,
             "comment": "gold_lot_test",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
@@ -820,7 +799,7 @@ class TestLotSizeCoverage:
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS[:3])
     def test_symbol_volume_limits(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test that symbol volume limits are properly returned."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info = mt5.symbol_info(symbol)
 
         if info is None:
@@ -837,7 +816,7 @@ class TestLotSizeCoverage:
         self, mt5: MetaTrader5, symbol: str
     ) -> None:
         """Test margin calculation for different lot sizes."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
@@ -853,9 +832,7 @@ class TestLotSizeCoverage:
 
         # Test with 1.0 lot (if within limits)
         if info.volume_max >= 1.0:
-            margin_1lot = mt5.order_calc_margin(
-                mt5.ORDER_TYPE_BUY, symbol, 1.0, ask
-            )
+            margin_1lot = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, 1.0, ask)
 
             if margin_min is not None and margin_1lot is not None:
                 # Margin should scale with lot size
@@ -873,13 +850,11 @@ class TestLotSizeCoverage:
 class TestDataRangeCoverage:
     """Tests for various data count and date range combinations."""
 
-    @pytest.mark.parametrize("count", BAR_COUNTS)
-    def test_copy_rates_various_counts(
-        self, mt5: MetaTrader5, count: int
-    ) -> None:
+    @pytest.mark.parametrize("count", tc.BAR_COUNTS)
+    def test_copy_rates_various_counts(self, mt5: MetaTrader5, count: int) -> None:
         """Test copy_rates_from_pos with various bar counts."""
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, count)
 
@@ -893,18 +868,14 @@ class TestDataRangeCoverage:
             assert "low" in rates.dtype.names
             assert "close" in rates.dtype.names
 
-    @pytest.mark.parametrize("count", TICK_COUNTS)
-    def test_copy_ticks_various_counts(
-        self, mt5: MetaTrader5, count: int
-    ) -> None:
+    @pytest.mark.parametrize("count", tc.TICK_COUNTS)
+    def test_copy_ticks_various_counts(self, mt5: MetaTrader5, count: int) -> None:
         """Test copy_ticks_from with various tick counts."""
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         date_from = datetime.now(UTC) - timedelta(hours=1)
-        ticks = mt5.copy_ticks_from(
-            symbol, date_from, count, mt5.COPY_TICKS_ALL
-        )
+        ticks = mt5.copy_ticks_from(symbol, date_from, count, mt5.COPY_TICKS_ALL)
 
         if ticks is not None and len(ticks) > 0:
             assert len(ticks) <= count
@@ -912,20 +883,18 @@ class TestDataRangeCoverage:
             assert "bid" in ticks.dtype.names
             assert "ask" in ticks.dtype.names
 
-    @pytest.mark.parametrize("days_back", DATE_RANGES_DAYS)
+    @pytest.mark.parametrize("days_back", tc.DATE_RANGES_DAYS)
     def test_copy_rates_range_various_periods(
         self, mt5: MetaTrader5, days_back: int
     ) -> None:
         """Test copy_rates_range with various date ranges."""
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         date_to = datetime.now(UTC)
         date_from = date_to - timedelta(days=days_back)
 
-        rates = mt5.copy_rates_range(
-            symbol, mt5.TIMEFRAME_D1, date_from, date_to
-        )
+        rates = mt5.copy_rates_range(symbol, mt5.TIMEFRAME_D1, date_from, date_to)
 
         if rates is not None and len(rates) > 0:
             # Should return approximately days_back bars (excluding weekends)
@@ -936,17 +905,17 @@ class TestDataRangeCoverage:
                 assert rates[i]["time"] > rates[i - 1]["time"]
 
     @pytest.mark.parametrize("offset", POSITION_OFFSETS)
-    def test_copy_rates_various_offsets(
-        self, mt5: MetaTrader5, offset: int
-    ) -> None:
+    def test_copy_rates_various_offsets(self, mt5: MetaTrader5, offset: int) -> None:
         """Test copy_rates_from_pos with various position offsets."""
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
-        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, offset, 10)
+        rates = mt5.copy_rates_from_pos(
+            symbol, mt5.TIMEFRAME_H1, offset, tc.DEFAULT_BAR_COUNT
+        )
 
         if rates is not None and len(rates) > 0:
-            assert len(rates) <= 10
+            assert len(rates) <= tc.DEFAULT_BAR_COUNT
             # Verify OHLC validity
             for rate in rates:
                 assert rate["high"] >= rate["low"]
@@ -957,12 +926,12 @@ class TestDataRangeCoverage:
 
     @pytest.mark.slow
     @pytest.mark.parametrize("symbol", ["EURUSD", "GBPUSD", "XAUUSD"])
-    @pytest.mark.parametrize("count", [100, 1000, 5000])
+    @pytest.mark.parametrize("count", [tc.HUNDRED_ITEMS, 1000, 5000])
     def test_copy_rates_symbol_count_matrix(
         self, mt5: MetaTrader5, symbol: str, count: int
     ) -> None:
         """Test copy_rates with symbol x count combinations."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, count)
 
@@ -990,8 +959,8 @@ class TestAllTimeframes:
         except AttributeError:
             pytest.skip(f"Timeframe {timeframe_name} not available")
 
-        mt5.symbol_select("EURUSD", True)
-        rates = mt5.copy_rates_from_pos("EURUSD", timeframe, 0, 100)
+        mt5.symbol_select("EURUSD", enable=True)
+        rates = mt5.copy_rates_from_pos("EURUSD", timeframe, 0, tc.EXTRA_LARGE_COUNT)
 
         if rates is not None:
             assert len(rates) > 0
@@ -1006,7 +975,7 @@ class TestAllTimeframes:
     ) -> None:
         """Test comprehensive symbol x timeframe x count matrix."""
         timeframe = getattr(mt5, timeframe_name)
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
 
@@ -1038,12 +1007,10 @@ class TestTickDataCoverage:
         "tick_flag_name",
         ["COPY_TICKS_ALL", "COPY_TICKS_INFO", "COPY_TICKS_TRADE"],
     )
-    def test_copy_ticks_all_flags(
-        self, mt5: MetaTrader5, tick_flag_name: str
-    ) -> None:
+    def test_copy_ticks_all_flags(self, mt5: MetaTrader5, tick_flag_name: str) -> None:
         """Test copy_ticks with different tick flags."""
         tick_flag = getattr(mt5, tick_flag_name)
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
         date_from = datetime.now(UTC) - timedelta(minutes=30)
         ticks = mt5.copy_ticks_from("EURUSD", date_from, 100, tick_flag)
@@ -1061,7 +1028,7 @@ class TestTickDataCoverage:
         self, mt5: MetaTrader5, symbol: str, minutes_back: int
     ) -> None:
         """Test copy_ticks with symbol x time range combinations."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         date_from = datetime.now(UTC) - timedelta(minutes=minutes_back)
         ticks = mt5.copy_ticks_from(symbol, date_from, 500, mt5.COPY_TICKS_ALL)
@@ -1077,14 +1044,12 @@ class TestTickDataCoverage:
     @pytest.mark.parametrize("symbol", ["EURUSD", "GBPUSD"])
     def test_copy_ticks_range(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test copy_ticks_range with date boundaries."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         date_to = datetime.now(UTC)
         date_from = date_to - timedelta(minutes=10)
 
-        ticks = mt5.copy_ticks_range(
-            symbol, date_from, date_to, mt5.COPY_TICKS_ALL
-        )
+        ticks = mt5.copy_ticks_range(symbol, date_from, date_to, mt5.COPY_TICKS_ALL)
 
         if ticks is not None and len(ticks) > 0:
             # Verify chronological order
@@ -1110,7 +1075,7 @@ class TestOrderTypeCombinations:
     ) -> None:
         """Test order_check for BUY and SELL across symbols."""
         order_type = getattr(mt5, order_type_name)
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
@@ -1127,7 +1092,7 @@ class TestOrderTypeCombinations:
             "type": order_type,
             "price": price,
             "deviation": 20,
-            "magic": 999999,
+            "magic": tc.MT5.TEST_MAGIC,
             "comment": "order_type_test",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
@@ -1154,7 +1119,7 @@ class TestOrderTypeCombinations:
         """Test order_check for pending order types."""
         order_type = getattr(mt5, order_type_name)
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
@@ -1176,7 +1141,7 @@ class TestOrderTypeCombinations:
             "type": order_type,
             "price": price,
             "deviation": 20,
-            "magic": 999999,
+            "magic": tc.MT5.TEST_MAGIC,
             "comment": "pending_test",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_RETURN,
@@ -1197,7 +1162,7 @@ class TestOrderTypeCombinations:
         """Test order_check with different filling modes."""
         filling_mode = getattr(mt5, filling_name)
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
@@ -1213,7 +1178,7 @@ class TestOrderTypeCombinations:
             "type": mt5.ORDER_TYPE_BUY,
             "price": ask,
             "deviation": 20,
-            "magic": 999999,
+            "magic": tc.MT5.TEST_MAGIC,
             "comment": "filling_test",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling_mode,
@@ -1241,7 +1206,7 @@ class TestProfitCalculation:
         self, mt5: MetaTrader5, symbol: str, lot_size: float, pips: int
     ) -> None:
         """Test profit calculation for symbol x lot x pips combinations."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
@@ -1266,11 +1231,9 @@ class TestProfitCalculation:
             assert profit > 0
 
     @pytest.mark.parametrize("symbol", ["EURUSD", "XAUUSD"])
-    def test_order_calc_profit_buy_vs_sell(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_order_calc_profit_buy_vs_sell(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test that BUY and SELL profits are symmetric."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, bid, _ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
@@ -1315,7 +1278,7 @@ class TestMarginCalculation:
         self, mt5: MetaTrader5, symbol: str, lot_size: float
     ) -> None:
         """Test margin calculation for symbol x lot combinations."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
@@ -1327,19 +1290,15 @@ class TestMarginCalculation:
         if lot_size < info.volume_min or lot_size > info.volume_max:
             pytest.skip(f"Lot size {lot_size} outside limits")
 
-        margin = mt5.order_calc_margin(
-            mt5.ORDER_TYPE_BUY, symbol, lot_size, ask
-        )
+        margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot_size, ask)
 
         if margin is not None:
             assert margin > 0
 
     @pytest.mark.parametrize("symbol", ["EURUSD", "XAUUSD", "US30"])
-    def test_margin_scales_with_lot(
-        self, mt5: MetaTrader5, symbol: str
-    ) -> None:
+    def test_margin_scales_with_lot(self, mt5: MetaTrader5, symbol: str) -> None:
         """Test that margin scales linearly with lot size."""
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:

@@ -28,7 +28,7 @@ Compatible with grpcio 1.60+ and Python 3.13+.
 
 from __future__ import annotations
 
-import json
+import ast
 import logging
 import threading
 from contextlib import suppress
@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Self
 
 import grpc
 import numpy as np
+import orjson
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -45,6 +46,9 @@ if TYPE_CHECKING:
 
 from mt5linux import mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
+from mt5linux.models import MT5Models
+from mt5linux.protocols import SyncClientProtocol
+from mt5linux.types import MT5Types
 
 log = logging.getLogger(__name__)
 
@@ -57,15 +61,15 @@ _NOT_CONNECTED_MSG = "MT5 connection not established - call connect() first"
 # gRPC channel options from config (no more hardcoded values)
 _CHANNEL_OPTIONS = _config.get_grpc_channel_options()
 
-# Type alias for JSON values (strict typing, no Any)
-JSONPrimitive = str | int | float | bool | None
-JSONValue = JSONPrimitive | list["JSONValue"] | dict[str, "JSONValue"]
+# Type alias for convenience (single source of truth)
+JSONValue = MT5Types.JSONValue
 
 
-class MetaTrader5:
+class MetaTrader5(SyncClientProtocol):
     """Synchronous MetaTrader5 client using native gRPC.
 
     Uses grpc.insecure_channel for blocking gRPC calls.
+    Implements SyncClientProtocol for type-safe client operations.
     All MT5 operations block until completion.
 
     Attributes:
@@ -176,9 +180,7 @@ class MetaTrader5:
             target = f"{self._host}:{self._port}"
             log.debug("Connecting to gRPC server at %s", target)
 
-            self._channel = grpc.insecure_channel(
-                target, options=_CHANNEL_OPTIONS
-            )
+            self._channel = grpc.insecure_channel(target, options=_CHANNEL_OPTIONS)
             self._stub = mt5_pb2_grpc.MT5ServiceStub(self._channel)
 
             # Load constants from server
@@ -244,7 +246,7 @@ class MetaTrader5:
         """
         if not json_data:
             return None
-        result: dict[str, JSONValue] = json.loads(json_data)
+        result: dict[str, JSONValue] = orjson.loads(json_data)
         return result
 
     def _json_list_to_dicts(
@@ -262,13 +264,11 @@ class MetaTrader5:
         if not json_items:
             return None
         result: list[dict[str, JSONValue]] = [
-            json.loads(item) for item in json_items if item
+            orjson.loads(item) for item in json_items if item
         ]
         return result
 
-    def _numpy_from_proto(
-        self, proto: mt5_pb2.NumpyArray
-    ) -> NDArray[np.void] | None:
+    def _numpy_from_proto(self, proto: mt5_pb2.NumpyArray) -> NDArray[np.void] | None:
         """Convert NumpyArray proto to numpy array.
 
         Args:
@@ -280,7 +280,17 @@ class MetaTrader5:
         """
         if not proto.data or not proto.dtype:
             return None
-        arr = np.frombuffer(proto.data, dtype=proto.dtype)
+        # Parse dtype string back to numpy dtype
+        # The dtype comes as str(arr.dtype) e.g. "[('time', '<i8'), ...]"
+        dtype_str = proto.dtype
+        if dtype_str.startswith("["):
+            # Structured array dtype - parse the list of tuples
+            dtype_spec = ast.literal_eval(dtype_str)
+            dtype = np.dtype(dtype_spec)
+        else:
+            # Simple dtype like 'float64', '<f8'
+            dtype = np.dtype(dtype_str)
+        arr = np.frombuffer(proto.data, dtype=dtype)
         if proto.shape:
             arr = arr.reshape(tuple(proto.shape))
         return arr
@@ -301,7 +311,7 @@ class MetaTrader5:
             return None
         result: list[dict[str, JSONValue]] = []
         for chunk in response.chunks:
-            chunk_data: list[dict[str, JSONValue]] = json.loads(chunk)
+            chunk_data: list[dict[str, JSONValue]] = orjson.loads(chunk)
             result.extend(chunk_data)
         return result
 
@@ -455,27 +465,29 @@ class MetaTrader5:
         response = stub.LastError(mt5_pb2.Empty())
         return (response.code, response.message)
 
-    def terminal_info(self) -> dict[str, JSONValue] | None:
+    def terminal_info(self) -> MT5Models.TerminalInfo | None:
         """Get terminal information.
 
         Returns:
-            Dictionary with terminal info or None.
+            TerminalInfo object or None.
 
         """
         stub = self._ensure_connected()
         response = stub.TerminalInfo(mt5_pb2.Empty())
-        return self._json_to_dict(response.json_data)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.TerminalInfo.from_mt5(result_dict)
 
-    def account_info(self) -> dict[str, JSONValue] | None:
+    def account_info(self) -> MT5Models.AccountInfo | None:
         """Get account information.
 
         Returns:
-            Dictionary with account info or None.
+            AccountInfo object or None.
 
         """
         stub = self._ensure_connected()
         response = stub.AccountInfo(mt5_pb2.Empty())
-        return self._json_to_dict(response.json_data)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.AccountInfo.from_mt5(result_dict)
 
     # =========================================================================
     # SYMBOL METHODS
@@ -511,35 +523,37 @@ class MetaTrader5:
         response = stub.SymbolsGet(request)
         return self._unwrap_symbols_chunks(response)
 
-    def symbol_info(self, symbol: str) -> dict[str, JSONValue] | None:
+    def symbol_info(self, symbol: str) -> MT5Models.SymbolInfo | None:
         """Get detailed symbol information.
 
         Args:
             symbol: Symbol name (e.g., "EURUSD").
 
         Returns:
-            Dictionary with symbol info or None.
+            SymbolInfo object or None.
 
         """
         stub = self._ensure_connected()
         request = mt5_pb2.SymbolRequest(symbol=symbol)
         response = stub.SymbolInfo(request)
-        return self._json_to_dict(response.json_data)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.SymbolInfo.from_mt5(result_dict)
 
-    def symbol_info_tick(self, symbol: str) -> dict[str, JSONValue] | None:
+    def symbol_info_tick(self, symbol: str) -> MT5Models.Tick | None:
         """Get current tick data for a symbol.
 
         Args:
             symbol: Symbol name (e.g., "EURUSD").
 
         Returns:
-            Dictionary with tick info or None.
+            Tick object or None.
 
         """
         stub = self._ensure_connected()
         request = mt5_pb2.SymbolRequest(symbol=symbol)
         response = stub.SymbolInfoTick(request)
-        return self._json_to_dict(response.json_data)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.Tick.from_mt5(result_dict)
 
     def symbol_select(self, symbol: str, *, enable: bool = True) -> bool:
         """Select/deselect symbol in Market Watch.
@@ -773,37 +787,37 @@ class MetaTrader5:
 
     def order_check(
         self, request: dict[str, JSONValue]
-    ) -> dict[str, JSONValue] | None:
+    ) -> MT5Models.OrderCheckResult | None:
         """Check order validity without sending.
 
         Args:
             request: Order request dictionary.
 
         Returns:
-            Order check result or None.
+            Order check result object or None.
 
         """
         stub = self._ensure_connected()
-        grpc_request = mt5_pb2.OrderRequest(json_request=json.dumps(request))
+        grpc_request = mt5_pb2.OrderRequest(json_request=orjson.dumps(request).decode())
         response = stub.OrderCheck(grpc_request)
-        return self._json_to_dict(response.json_data)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.OrderCheckResult.from_mt5(result_dict)
 
-    def order_send(
-        self, request: dict[str, JSONValue]
-    ) -> dict[str, JSONValue] | None:
+    def order_send(self, request: dict[str, JSONValue]) -> MT5Models.OrderResult | None:
         """Send trading order to MT5.
 
         Args:
             request: Order request dictionary.
 
         Returns:
-            Order execution result or None.
+            Order execution result object or None.
 
         """
         stub = self._ensure_connected()
-        grpc_request = mt5_pb2.OrderRequest(json_request=json.dumps(request))
+        grpc_request = mt5_pb2.OrderRequest(json_request=orjson.dumps(request).decode())
         response = stub.OrderSend(grpc_request)
-        return self._json_to_dict(response.json_data)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.OrderResult.from_mt5(result_dict)
 
     # =========================================================================
     # POSITIONS METHODS
@@ -1034,9 +1048,7 @@ class MetaTrader5:
         response = stub.MarketBookAdd(request)
         return response.result
 
-    def market_book_get(
-        self, symbol: str
-    ) -> list[dict[str, JSONValue]] | None:
+    def market_book_get(self, symbol: str) -> list[dict[str, JSONValue]] | None:
         """Get market depth (DOM) data for a symbol.
 
         Requires prior market_book_add call.

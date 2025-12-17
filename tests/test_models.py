@@ -8,8 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-from mt5linux.constants import MT5Constants
 from mt5linux.models import MT5Models
+
+from .conftest import c, tc
 
 # Type aliases for test convenience
 OrderRequest = MT5Models.OrderRequest
@@ -26,40 +27,40 @@ class TestOrderRequest:
     def test_valid_market_order(self) -> None:
         """Test valid market buy order."""
         request = OrderRequest(
-            action=MT5Constants.TradeAction.DEAL,
+            action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=0.1,
-            type=MT5Constants.OrderType.BUY,
+            volume=tc.MINI_LOT,
+            type=c.Order.OrderType.BUY,
         )
-        assert request.action == MT5Constants.TradeAction.DEAL
+        assert request.action == c.Order.TradeAction.DEAL
         assert request.symbol == "EURUSD"
-        assert request.volume == 0.1
-        assert request.type == MT5Constants.OrderType.BUY
+        assert request.volume == tc.TEST_VOLUME_MICRO
+        assert request.type == c.Order.OrderType.BUY
         assert request.is_market_order is True
 
     def test_valid_limit_order(self) -> None:
         """Test valid limit order."""
         request = OrderRequest(
-            action=MT5Constants.TradeAction.DEAL,
+            action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
             volume=0.5,
-            type=MT5Constants.OrderType.BUY_LIMIT,
-            price=1.0900,
+            type=c.Order.OrderType.BUY_LIMIT,
+            price=tc.TEST_PRICE_BASE,
             sl=1.0850,
             tp=1.1000,
         )
-        assert request.type == MT5Constants.OrderType.BUY_LIMIT
-        assert request.price == 1.0900
+        assert request.type == c.Order.OrderType.BUY_LIMIT
+        assert request.price == tc.TEST_PRICE_BASE
         assert request.is_market_order is False
 
     def test_invalid_volume_zero(self) -> None:
         """Test validation rejects zero volume."""
         with pytest.raises(ValidationError) as exc_info:
             OrderRequest(
-                action=MT5Constants.TradeAction.DEAL,
+                action=c.Order.TradeAction.DEAL,
                 symbol="EURUSD",
-                volume=0,
-                type=MT5Constants.OrderType.BUY,
+                volume=tc.TEST_VOLUME_MICRO,
+                type=c.Order.OrderType.BUY,
             )
         assert "volume" in str(exc_info.value)
 
@@ -67,66 +68,66 @@ class TestOrderRequest:
         """Test validation rejects negative volume."""
         with pytest.raises(ValidationError):
             OrderRequest(
-                action=MT5Constants.TradeAction.DEAL,
+                action=c.Order.TradeAction.DEAL,
                 symbol="EURUSD",
-                volume=-0.1,
-                type=MT5Constants.OrderType.BUY,
+                volume=-tc.MINI_LOT,
+                type=c.Order.OrderType.BUY,
             )
 
     def test_invalid_volume_too_large(self) -> None:
         """Test validation rejects volume > 1000."""
         with pytest.raises(ValidationError):
             OrderRequest(
-                action=MT5Constants.TradeAction.DEAL,
+                action=c.Order.TradeAction.DEAL,
                 symbol="EURUSD",
-                volume=1001,
-                type=MT5Constants.OrderType.BUY,
+                volume=tc.INVALID_VOLUME,
+                type=c.Order.OrderType.BUY,
             )
 
     def test_to_mt5_request_basic(self) -> None:
         """Test to_mt5_request produces valid MT5 request."""
         request = OrderRequest(
-            action=MT5Constants.TradeAction.DEAL,
+            action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=0.1,
-            type=MT5Constants.OrderType.BUY,
-            deviation=20,
+            volume=tc.MINI_LOT,
+            type=c.Order.OrderType.BUY,
+            deviation=tc.DEFAULT_DEVIATION,
         )
         d = request.to_mt5_request()
 
-        assert d["action"] == 1  # MT5Constants.TradeAction.DEAL
+        assert d["action"] == 1  # c.Order.TradeAction.DEAL
         assert d["symbol"] == "EURUSD"
         assert d["volume"] == 0.1
-        assert d["type"] == 0  # MT5Constants.OrderType.BUY
-        assert d["deviation"] == 20
+        assert d["type"] == 0  # c.Order.OrderType.BUY
+        assert d["deviation"] == tc.TEST_DEVIATION_NORMAL
         assert "sl" not in d  # Zero values excluded
         assert "tp" not in d
 
     def test_to_mt5_request_with_sl_tp(self) -> None:
         """Test to_mt5_request includes sl/tp when set."""
         request = OrderRequest(
-            action=MT5Constants.TradeAction.DEAL,
+            action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=0.1,
-            type=MT5Constants.OrderType.BUY,
+            volume=tc.MINI_LOT,
+            type=c.Order.OrderType.BUY,
             sl=1.0900,
-            tp=1.1100,
+            tp=tc.TEST_PRICE_HIGH,
         )
         d = request.to_mt5_request()
 
-        assert d["sl"] == 1.0900
-        assert d["tp"] == 1.1100
+        assert d["sl"] == tc.TEST_PRICE_BASE
+        assert d["tp"] == tc.TEST_PRICE_HIGH
 
     def test_to_mt5_request_with_expiration(self) -> None:
         """Test to_mt5_request converts expiration to timestamp."""
         exp = datetime(2025, 12, 31, 23, 59, 59, tzinfo=UTC)
         request = OrderRequest(
-            action=MT5Constants.TradeAction.DEAL,
+            action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=0.1,
-            type=MT5Constants.OrderType.BUY_LIMIT,
-            price=1.0900,
-            type_time=MT5Constants.OrderTime.SPECIFIED,
+            volume=tc.MINI_LOT,
+            type=c.Order.OrderType.BUY_LIMIT,
+            price=tc.TEST_PRICE_BASE,
+            type_time=c.Order.OrderTime.SPECIFIED,
             expiration=exp,
         )
         d = request.to_mt5_request()
@@ -137,10 +138,10 @@ class TestOrderRequest:
     def test_frozen_model(self) -> None:
         """Test model is frozen (immutable)."""
         request = OrderRequest(
-            action=MT5Constants.TradeAction.DEAL,
+            action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=0.1,
-            type=MT5Constants.OrderType.BUY,
+            volume=tc.MINI_LOT,
+            type=c.Order.OrderType.BUY,
         )
         with pytest.raises(ValidationError):
             request.volume = 0.2
@@ -152,21 +153,21 @@ class TestOrderResult:
     def test_success_result(self) -> None:
         """Test successful order result."""
         result = OrderResult(
-            retcode=MT5Constants.TradeRetcode.DONE,
-            deal=12345,
-            order=67890,
-            volume=0.1,
+            retcode=c.Order.TradeRetcode.DONE,
+            deal=tc.TEST_MAGIC_DEFAULT,
+            order=tc.TEST_ORDER_DEFAULT,
+            volume=tc.MINI_LOT,
             price=1.1000,
         )
         assert result.is_success is True
         assert result.is_partial is False
-        assert result.deal == 12345
-        assert result.order == 67890
+        assert result.deal == tc.TEST_MAGIC_DEFAULT
+        assert result.order == tc.TEST_ORDER_DEFAULT
 
     def test_partial_result(self) -> None:
         """Test partial fill result."""
         result = OrderResult(
-            retcode=MT5Constants.TradeRetcode.DONE_PARTIAL,
+            retcode=c.Order.TradeRetcode.DONE_PARTIAL,
             volume=0.05,
         )
         assert result.is_success is False
@@ -175,7 +176,7 @@ class TestOrderResult:
     def test_error_result(self) -> None:
         """Test error result."""
         result = OrderResult(
-            retcode=MT5Constants.TradeRetcode.NO_MONEY,
+            retcode=c.Order.TradeRetcode.NO_MONEY,
             comment="Not enough money",
         )
         assert result.is_success is False
@@ -184,9 +185,9 @@ class TestOrderResult:
     def test_from_mt5_success(self) -> None:
         """Test from_mt5 with valid MT5 result."""
         mock_result = MagicMock()
-        mock_result.retcode = 10009
-        mock_result.deal = 12345
-        mock_result.order = 67890
+        mock_result.retcode = tc.TEST_RETCODE_SUCCESS
+        mock_result.deal = tc.TEST_MAGIC_DEFAULT
+        mock_result.order = tc.TEST_ORDER_DEFAULT
         mock_result.volume = 0.1
         mock_result.price = 1.1000
         mock_result.bid = 1.0999
@@ -196,15 +197,15 @@ class TestOrderResult:
 
         result = OrderResult.from_mt5(mock_result)
 
-        assert result.retcode == 10009
+        assert result.retcode == tc.TEST_RETCODE_SUCCESS
         assert result.is_success is True
-        assert result.deal == 12345
+        assert result.deal == tc.TEST_MAGIC_DEFAULT
 
     def test_from_mt5_none(self) -> None:
         """Test from_mt5 with None returns error result."""
         result = OrderResult.from_mt5(None)
 
-        assert result.retcode == MT5Constants.TradeRetcode.ERROR
+        assert result.retcode == c.Order.TradeRetcode.ERROR
         assert "No result" in result.comment
 
 
@@ -214,7 +215,7 @@ class TestAccountInfo:
     def test_from_mt5(self) -> None:
         """Test from_mt5 creates valid AccountInfo."""
         mock_info = MagicMock()
-        mock_info.login = 12345
+        mock_info.login = tc.TEST_MAGIC_DEFAULT
         mock_info.trade_mode = 0
         mock_info.leverage = 100
         mock_info.limit_orders = 200
@@ -224,10 +225,10 @@ class TestAccountInfo:
         mock_info.margin_mode = 0
         mock_info.currency_digits = 2
         mock_info.fifo_close = False
-        mock_info.balance = 10000.00
+        mock_info.balance = tc.TEST_ACCOUNT_BALANCE
         mock_info.credit = 0.0
         mock_info.profit = 150.50
-        mock_info.equity = 10150.50
+        mock_info.equity = tc.TEST_ACCOUNT_EQUITY_HIGH
         mock_info.margin = 100.0
         mock_info.margin_free = 10050.50
         mock_info.margin_level = 10150.5
@@ -245,9 +246,9 @@ class TestAccountInfo:
 
         account = AccountInfo.from_mt5(mock_info)
 
-        assert account.login == 12345
-        assert account.balance == 10000.00
-        assert account.equity == 10150.50
+        assert account.login == tc.TEST_MAGIC_DEFAULT
+        assert account.balance == tc.TEST_ACCOUNT_BALANCE
+        assert account.equity == tc.TEST_ACCOUNT_EQUITY_HIGH
         assert account.currency == "USD"
 
     def test_from_mt5_none(self) -> None:
@@ -304,14 +305,14 @@ class TestPosition:
     def test_from_mt5(self) -> None:
         """Test from_mt5 creates valid Position."""
         mock_pos = MagicMock()
-        mock_pos.ticket = 12345678
+        mock_pos.ticket = tc.TEST_MAGIC_LARGE
         mock_pos.time = 1702000000
         mock_pos.time_msc = 1702000000123
         mock_pos.time_update = 1702001000
         mock_pos.time_update_msc = 1702001000456
         mock_pos.type = 0  # BUY
-        mock_pos.magic = 123456
-        mock_pos.identifier = 12345678
+        mock_pos.magic = c.Trading.DEFAULT_MAGIC_NUMBER
+        mock_pos.identifier = tc.TEST_MAGIC_LARGE
         mock_pos.reason = 0
         mock_pos.volume = 0.1
         mock_pos.price_open = 1.0900
@@ -326,9 +327,9 @@ class TestPosition:
 
         position = Position.from_mt5(mock_pos)
 
-        assert position.ticket == 12345678
+        assert position.ticket == tc.TEST_MAGIC_LARGE
         assert position.volume == 0.1
-        assert position.profit == 50.00
+        assert position.profit == tc.TEST_ACCOUNT_LOW
         assert position.symbol == "EURUSD"
 
 
@@ -338,7 +339,7 @@ class TestTick:
     def test_from_mt5(self) -> None:
         """Test from_mt5 creates valid Tick."""
         mock_tick = MagicMock()
-        mock_tick.time = 1702000000
+        mock_tick.time = tc.TEST_TIMESTAMP_EPOCH
         mock_tick.bid = 1.0900
         mock_tick.ask = 1.0901
         mock_tick.last = 0.0
@@ -349,7 +350,7 @@ class TestTick:
 
         tick = Tick.from_mt5(mock_tick)
 
-        assert tick.time == 1702000000
+        assert tick.time == tc.TEST_TIMESTAMP_EPOCH
         assert tick.bid == 1.0900
         assert tick.ask == 1.0901
 
@@ -358,29 +359,29 @@ class TestEnums:
     """Tests for enum values."""
 
     def test_trade_action_values(self) -> None:
-        """Test TradeAction enum values match MT5Constants."""
-        assert MT5Constants.TradeAction.DEAL.value == 1
-        assert MT5Constants.TradeAction.PENDING.value == 5
-        assert MT5Constants.TradeAction.CLOSE_BY.value == 10
+        """Test TradeAction enum values match c."""
+        assert c.Order.TradeAction.DEAL.value == 1
+        assert c.Order.TradeAction.PENDING.value == tc.TEST_ORDER_COUNT_LOW
+        assert c.Order.TradeAction.CLOSE_BY.value == tc.TEST_ORDER_COUNT_HIGH
 
     def test_order_type_values(self) -> None:
-        """Test OrderType enum values match MT5Constants."""
-        assert MT5Constants.OrderType.BUY.value == 0
-        assert MT5Constants.OrderType.SELL.value == 1
-        assert MT5Constants.OrderType.BUY_LIMIT.value == 2
-        assert MT5Constants.OrderType.SELL_LIMIT.value == 3
+        """Test OrderType enum values match c."""
+        assert c.Order.OrderType.BUY.value == 0
+        assert c.Order.OrderType.SELL.value == 1
+        assert c.Order.OrderType.BUY_LIMIT.value == 2
+        assert c.Order.OrderType.SELL_LIMIT.value == 3
 
     def test_order_filling_values(self) -> None:
-        """Test OrderFilling enum values match MT5Constants."""
-        assert MT5Constants.OrderFilling.FOK.value == 0
-        assert MT5Constants.OrderFilling.IOC.value == 1
-        assert MT5Constants.OrderFilling.RETURN.value == 2
+        """Test OrderFilling enum values match c."""
+        assert c.Order.OrderFilling.FOK.value == 0
+        assert c.Order.OrderFilling.IOC.value == 1
+        assert c.Order.OrderFilling.RETURN.value == 2
 
     def test_trade_retcode_values(self) -> None:
-        """Test TradeRetcode enum values match MT5Constants."""
-        assert MT5Constants.TradeRetcode.DONE.value == 10009
-        assert MT5Constants.TradeRetcode.REQUOTE.value == 10004
-        assert MT5Constants.TradeRetcode.NO_MONEY.value == 10019
+        """Test TradeRetcode enum values match c."""
+        assert c.Order.TradeRetcode.DONE.value == tc.TEST_RETCODE_SUCCESS
+        assert c.Order.TradeRetcode.REQUOTE.value == tc.TEST_RETCODE_REQUOTE
+        assert c.Order.TradeRetcode.NO_MONEY.value == tc.TEST_RETCODE_NO_MONEY
 
 
 class TestOrder:
@@ -391,7 +392,7 @@ class TestOrder:
         from mt5linux.models import MT5Models
 
         mock_order = MagicMock()
-        mock_order.ticket = 12345678
+        mock_order.ticket = tc.TEST_MAGIC_LARGE
         mock_order.time_setup = 1702000000
         mock_order.time_setup_msc = 1702000000123
         mock_order.time_done = 0
@@ -401,7 +402,7 @@ class TestOrder:
         mock_order.type_time = 0  # GTC
         mock_order.type_filling = 0  # FOK
         mock_order.state = 1  # PLACED
-        mock_order.magic = 123456
+        mock_order.magic = c.Trading.DEFAULT_MAGIC_NUMBER
         mock_order.position_id = 0
         mock_order.position_by_id = 0
         mock_order.reason = 0  # CLIENT
@@ -419,7 +420,7 @@ class TestOrder:
         order = MT5Models.Order.from_mt5(mock_order)
 
         assert order is not None
-        assert order.ticket == 12345678
+        assert order.ticket == tc.TEST_MAGIC_LARGE
         assert order.type == 2
         assert order.volume_initial == 0.1
         assert order.symbol == "EURUSD"
@@ -440,13 +441,13 @@ class TestDeal:
         from mt5linux.models import MT5Models
 
         mock_deal = MagicMock()
-        mock_deal.ticket = 87654321
-        mock_deal.order = 12345678
+        mock_deal.ticket = tc.TEST_MAGIC_ALT
+        mock_deal.order = tc.TEST_MAGIC_LARGE
         mock_deal.time = 1702000000
         mock_deal.time_msc = 1702000000123
         mock_deal.type = 0  # BUY
         mock_deal.entry = 0  # IN
-        mock_deal.magic = 123456
+        mock_deal.magic = c.Trading.DEFAULT_MAGIC_NUMBER
         mock_deal.position_id = 99999
         mock_deal.reason = 0  # CLIENT
         mock_deal.volume = 0.1
@@ -462,10 +463,10 @@ class TestDeal:
         deal = MT5Models.Deal.from_mt5(mock_deal)
 
         assert deal is not None
-        assert deal.ticket == 87654321
-        assert deal.order == 12345678
+        assert deal.ticket == tc.TEST_MAGIC_ALT
+        assert deal.order == tc.TEST_MAGIC_LARGE
         assert deal.volume == 0.1
-        assert deal.profit == 10.0
+        assert deal.profit == tc.TEST_CONFIDENCE_HIGH
         assert deal.symbol == "EURUSD"
 
     def test_from_mt5_none(self) -> None:

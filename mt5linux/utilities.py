@@ -39,10 +39,13 @@ import threading
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import numpy as np
+import orjson
+
 if TYPE_CHECKING:
     from mt5linux.config import MT5Config
 
-from mt5linux.constants import MT5Constants
+from mt5linux.constants import MT5Constants as c
 
 log = logging.getLogger(__name__)
 
@@ -117,9 +120,7 @@ class MT5Utilities:
                     last_error: The last exception that occurred.
 
                 """
-                msg = (
-                    f"Operation '{operation}' failed after {attempts} attempts"
-                )
+                msg = f"Operation '{operation}' failed after {attempts} attempts"
                 if last_error:
                     msg += f": {last_error}"
                 super().__init__(msg)
@@ -350,6 +351,71 @@ class MT5Utilities:
                 return int(dt.timestamp())
             return dt
 
+        @staticmethod
+        def unwrap_proto_list_to_dicts(
+            json_items: list[str],
+        ) -> list[dict[str, object]] | None:
+            """Convert list of JSON strings from gRPC to list of dicts.
+
+            Used by both sync and async clients for gRPC responses containing
+            lists of JSON-serialized objects (positions, orders, history, etc).
+
+            Args:
+                json_items: List of JSON strings to parse.
+
+            Returns:
+                List of dictionaries or None if empty.
+
+            """
+            if not json_items:
+                return None
+            return [orjson.loads(item) for item in json_items if item]
+
+        @staticmethod
+        def numpy_from_proto(proto: object) -> object | None:
+            """Convert NumpyArray proto to numpy array.
+
+            Used by both sync and async clients to deserialize OHLCV and tick data
+            from gRPC NumpyArray protobuf messages.
+
+            Args:
+                proto: NumpyArray protobuf message with .data, .dtype, .shape
+                 attributes.
+
+            Returns:
+                NumPy structured array or None if empty.
+
+            """
+            if not hasattr(proto, "data") or not proto.data or not proto.dtype:
+                return None
+
+            arr = np.frombuffer(proto.data, dtype=proto.dtype)
+            if proto.shape:
+                arr = arr.reshape(tuple(proto.shape))
+            return arr
+
+        @staticmethod
+        def unwrap_symbols_chunks(response: object) -> list[dict[str, object]] | None:
+            """Unwrap chunked symbols response from gRPC.
+
+            Used by both sync and async clients to reassemble large symbol lists
+            that are sent in chunks to avoid gRPC message size limits.
+
+            Args:
+                response: SymbolsResponse protobuf with .total and .chunks attributes.
+
+            Returns:
+                List of symbol dictionaries or None if empty.
+
+            """
+            if not hasattr(response, "total") or response.total == 0:
+                return None
+            result: list[dict[str, object]] = []
+            for chunk in response.chunks:
+                chunk_data: list[dict[str, object]] = orjson.loads(chunk)
+                result.extend(chunk_data)
+            return result
+
     # =========================================================================
     # CIRCUIT BREAKER
     # =========================================================================
@@ -360,7 +426,7 @@ class MT5Utilities:
         Implements the circuit breaker pattern to prevent cascading failures.
         Uses MT5Config directly for configuration (no separate config class).
 
-        States (from MT5Constants.CircuitBreakerState):
+        States (from c.Resilience.CircuitBreakerState):
             CLOSED: Normal operation, requests pass through
             OPEN: Too many failures, requests blocked
             HALF_OPEN: Testing recovery, limited requests allowed
@@ -392,7 +458,7 @@ class MT5Utilities:
             """
             self._config = config
             self.name = name
-            self._state = MT5Constants.CircuitBreakerState.CLOSED
+            self._state = c.Resilience.CircuitBreakerState.CLOSED
             self._failure_count = 0
             self._success_count = 0
             self._last_failure_time: datetime | None = None
@@ -405,18 +471,18 @@ class MT5Utilities:
             return self._config
 
         @property
-        def state(self) -> MT5Constants.CircuitBreakerState:
+        def state(self) -> c.Resilience.CircuitBreakerState:
             """Get current circuit state, transitioning if needed."""
             with self._lock:
                 if (
-                    self._state == MT5Constants.CircuitBreakerState.OPEN
+                    self._state == c.Resilience.CircuitBreakerState.OPEN
                     and self._should_attempt_reset()
                 ):
                     log.info(
                         "Circuit breaker '%s' transitioning OPEN -> HALF_OPEN",
                         self.name,
                     )
-                    self._state = MT5Constants.CircuitBreakerState.HALF_OPEN
+                    self._state = c.Resilience.CircuitBreakerState.HALF_OPEN
                     self._half_open_calls = 0
                 return self._state
 
@@ -429,12 +495,12 @@ class MT5Utilities:
         @property
         def is_closed(self) -> bool:
             """Check if circuit is closed (normal operation)."""
-            return self.state == MT5Constants.CircuitBreakerState.CLOSED
+            return self.state == c.Resilience.CircuitBreakerState.CLOSED
 
         @property
         def is_open(self) -> bool:
             """Check if circuit is open (blocking requests)."""
-            return self.state == MT5Constants.CircuitBreakerState.OPEN
+            return self.state == c.Resilience.CircuitBreakerState.OPEN
 
         def _should_attempt_reset(self) -> bool:
             """Check if enough time passed to attempt recovery."""
@@ -448,12 +514,12 @@ class MT5Utilities:
             with self._lock:
                 self._failure_count = 0
                 self._success_count += 1
-                if self._state == MT5Constants.CircuitBreakerState.HALF_OPEN:
+                if self._state == c.Resilience.CircuitBreakerState.HALF_OPEN:
                     log.info(
                         "Circuit breaker '%s' recovered: HALF_OPEN -> CLOSED",
                         self.name,
                     )
-                    self._state = MT5Constants.CircuitBreakerState.CLOSED
+                    self._state = c.Resilience.CircuitBreakerState.CLOSED
 
         def record_failure(self) -> None:
             """Record a failed operation."""
@@ -461,28 +527,28 @@ class MT5Utilities:
                 self._failure_count += 1
                 self._last_failure_time = datetime.now(UTC)
 
-                if self._state == MT5Constants.CircuitBreakerState.HALF_OPEN:
+                if self._state == c.Resilience.CircuitBreakerState.HALF_OPEN:
                     log.warning(
                         "Circuit breaker '%s' failed during recovery",
                         self.name,
                     )
-                    self._state = MT5Constants.CircuitBreakerState.OPEN
+                    self._state = c.Resilience.CircuitBreakerState.OPEN
                 elif self._failure_count >= self._config.cb_threshold:
                     log.warning(
                         "Circuit breaker '%s' opened after %d failures",
                         self.name,
                         self._failure_count,
                     )
-                    self._state = MT5Constants.CircuitBreakerState.OPEN
+                    self._state = c.Resilience.CircuitBreakerState.OPEN
 
         def can_execute(self) -> bool:
             """Check if a request is allowed through the circuit."""
             current_state = self.state
 
-            if current_state == MT5Constants.CircuitBreakerState.CLOSED:
+            if current_state == c.Resilience.CircuitBreakerState.CLOSED:
                 return True
 
-            if current_state == MT5Constants.CircuitBreakerState.HALF_OPEN:
+            if current_state == c.Resilience.CircuitBreakerState.HALF_OPEN:
                 with self._lock:
                     if self._half_open_calls < self._config.cb_half_open_max:
                         self._half_open_calls += 1
@@ -495,7 +561,7 @@ class MT5Utilities:
             """Manually reset the circuit breaker to closed state."""
             with self._lock:
                 log.info("Circuit breaker '%s' manually reset", self.name)
-                self._state = MT5Constants.CircuitBreakerState.CLOSED
+                self._state = c.Resilience.CircuitBreakerState.CLOSED
                 self._failure_count = 0
                 self._success_count = 0
                 self._last_failure_time = None
@@ -518,10 +584,8 @@ class MT5Utilities:
                 }
 
                 if self._last_failure_time:
-                    status["last_failure"] = (
-                        self._last_failure_time.isoformat()
-                    )
-                    if self._state == MT5Constants.CircuitBreakerState.OPEN:
+                    status["last_failure"] = self._last_failure_time.isoformat()
+                    if self._state == c.Resilience.CircuitBreakerState.OPEN:
                         recovery_at = self._last_failure_time + timedelta(
                             seconds=self._config.cb_recovery
                         )

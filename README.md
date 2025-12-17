@@ -143,6 +143,7 @@ python -m mt5linux.bridge --host 0.0.0.0 --port 8001 --debug
 ```
 
 Server options:
+
 - `--host HOST` - Bind address (default: 0.0.0.0)
 - `-p, --port PORT` - Listen port (default: 8001)
 - `--workers N` - Worker threads (default: 10)

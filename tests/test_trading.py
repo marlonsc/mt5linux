@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from .conftest import tc
+
 if TYPE_CHECKING:
     from mt5linux import MetaTrader5
 
@@ -36,10 +38,8 @@ class TestOrderCheck:
         """
         result = mt5.order_check(buy_order_request)
         if result is None:
-            pytest.skip(
-                "order_check returned None (not supported on this account)"
-            )
-        assert result.retcode in {mt5.TRADE_RETCODE_DONE, 0}
+            pytest.skip("order_check returned None (not supported on this account)")
+        assert result.retcode == mt5.TRADE_RETCODE_DONE
         assert result.balance > 0
         assert result.equity > 0
 
@@ -55,9 +55,7 @@ class TestOrderCheck:
         """
         result = mt5.order_check(sell_order_request)
         if result is None:
-            pytest.skip(
-                "order_check returned None (not supported on this account)"
-            )
+            pytest.skip("order_check returned None (not supported on this account)")
         assert result.balance > 0
         assert result.equity > 0
 
@@ -68,11 +66,11 @@ class TestOrderCheck:
         invalid_request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": "INVALID_SYMBOL",
-            "volume": 0.01,
+            "volume": tc.MICRO_LOT,
             "type": mt5.ORDER_TYPE_BUY,
             "price": tick.ask if tick else 1.0,
-            "deviation": 20,
-            "magic": 999999,
+            "deviation": tc.DEFAULT_DEVIATION,
+            "magic": tc.INVALID_TEST_MAGIC,
             "comment": "test_invalid",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
@@ -89,11 +87,11 @@ class TestOrderCheck:
         invalid_request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": "EURUSD",
-            "volume": 0.0,  # Invalid volume
+            "volume": tc.ZERO_VOLUME,  # Invalid volume
             "type": mt5.ORDER_TYPE_BUY,
             "price": tick.ask if tick else 1.0,
-            "deviation": 20,
-            "magic": 999999,
+            "deviation": tc.DEFAULT_DEVIATION,
+            "magic": tc.INVALID_TEST_MAGIC,
             "comment": "test_zero_volume",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
@@ -117,20 +115,18 @@ class TestOrderSend:
         self,
         mt5: MetaTrader5,
         buy_order_request: dict[str, Any],
-        cleanup_test_positions: None,
+        _cleanup_test_positions: None,
     ) -> None:
         """Test placing a market buy order.
 
         Note: order_send may return None on some demo accounts.
         """
         # Ensure symbol is selected
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
         result = mt5.order_send(buy_order_request)
         if result is None:
-            pytest.skip(
-                "order_send returned None (not supported on this account)"
-            )
+            pytest.skip("order_send returned None (not supported on this account)")
 
         # Check for success or common acceptable return codes
         acceptable_codes = [
@@ -160,19 +156,17 @@ class TestOrderSend:
         self,
         mt5: MetaTrader5,
         sell_order_request: dict[str, Any],
-        cleanup_test_positions: None,
+        _cleanup_test_positions: None,
     ) -> None:
         """Test placing a market sell order.
 
         Note: order_send may return None on some demo accounts.
         """
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
         result = mt5.order_send(sell_order_request)
         if result is None:
-            pytest.skip(
-                "order_send returned None (not supported on this account)"
-            )
+            pytest.skip("order_send returned None (not supported on this account)")
 
         acceptable_codes = [
             mt5.TRADE_RETCODE_DONE,
@@ -196,29 +190,29 @@ class TestOrderSend:
     def test_order_send_buy_limit(
         self,
         mt5: MetaTrader5,
-        cleanup_test_positions: None,
+        _cleanup_test_positions: None,
     ) -> None:
         """Test placing a buy limit order.
 
         Note: order_send may return None on some demo accounts.
         """
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
         tick = mt5.symbol_info_tick("EURUSD")
 
         if tick is None:
             pytest.skip("Could not get EURUSD tick")
 
         # Place limit order below current price
-        limit_price = round(tick.bid * 0.99, 5)  # 1% below
+        limit_price = round(tick.bid * tc.ONE_PERCENT, 5)  # 1% below
 
         limit_request = {
             "action": mt5.TRADE_ACTION_PENDING,
             "symbol": "EURUSD",
-            "volume": 0.01,
+            "volume": tc.MICRO_LOT,
             "type": mt5.ORDER_TYPE_BUY_LIMIT,
             "price": limit_price,
-            "deviation": 20,
-            "magic": 999999,
+            "deviation": tc.DEFAULT_DEVIATION,
+            "magic": tc.INVALID_TEST_MAGIC,
             "comment": "test_buy_limit",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_RETURN,
@@ -226,16 +220,14 @@ class TestOrderSend:
 
         result = mt5.order_send(limit_request)
         if result is None:
-            pytest.skip(
-                "order_send returned None (not supported on this account)"
-            )
+            pytest.skip("order_send returned None (not supported on this account)")
 
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             # Cancel the pending order
             orders = mt5.orders_get(symbol="EURUSD")
             if orders:
                 for order in orders:
-                    if order.magic == 999999:
+                    if order.magic == tc.INVALID_TEST_MAGIC:
                         cancel_request = {
                             "action": mt5.TRADE_ACTION_REMOVE,
                             "order": order.ticket,
@@ -250,15 +242,12 @@ class TestOrderSend:
         buy_order_request: dict[str, Any],
     ) -> None:
         """Test opening and closing a position."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
         # Open position
         open_result = mt5.order_send(buy_order_request)
 
-        if (
-            open_result is None
-            or open_result.retcode != mt5.TRADE_RETCODE_DONE
-        ):
+        if open_result is None or open_result.retcode != mt5.TRADE_RETCODE_DONE:
             pytest.skip("Could not open position for close test")
 
         # Get the position
@@ -268,7 +257,7 @@ class TestOrderSend:
 
         position = None
         for pos in positions:
-            if pos.magic == 999999:
+            if pos.magic == tc.INVALID_TEST_MAGIC:
                 position = pos
                 break
 
@@ -284,8 +273,8 @@ class TestOrderSend:
             "type": mt5.ORDER_TYPE_SELL,  # Opposite of buy
             "position": position.ticket,
             "price": tick.bid,
-            "deviation": 20,
-            "magic": 999999,
+            "deviation": tc.DEFAULT_DEVIATION,
+            "magic": tc.INVALID_TEST_MAGIC,
             "comment": "close_test",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
@@ -302,7 +291,7 @@ class TestOrderCalc:
     @pytest.mark.trading
     def test_order_calc_margin_buy(self, mt5: MetaTrader5) -> None:
         """Test margin calculation for buy order."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
         tick = mt5.symbol_info_tick("EURUSD")
 
         if tick is None:
@@ -311,7 +300,7 @@ class TestOrderCalc:
         margin = mt5.order_calc_margin(
             mt5.ORDER_TYPE_BUY,
             "EURUSD",
-            0.1,  # 0.1 lots
+            tc.MINI_LOT,  # 0.1 lots
             tick.ask,
         )
 
@@ -321,7 +310,7 @@ class TestOrderCalc:
     @pytest.mark.trading
     def test_order_calc_margin_sell(self, mt5: MetaTrader5) -> None:
         """Test margin calculation for sell order."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
         tick = mt5.symbol_info_tick("EURUSD")
 
         if tick is None:
@@ -330,7 +319,7 @@ class TestOrderCalc:
         margin = mt5.order_calc_margin(
             mt5.ORDER_TYPE_SELL,
             "EURUSD",
-            0.1,
+            tc.MINI_LOT,
             tick.bid,
         )
 
@@ -340,7 +329,7 @@ class TestOrderCalc:
     @pytest.mark.trading
     def test_order_calc_profit_buy_win(self, mt5: MetaTrader5) -> None:
         """Test profit calculation for winning buy position."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
         tick = mt5.symbol_info_tick("EURUSD")
 
         if tick is None:
@@ -348,12 +337,12 @@ class TestOrderCalc:
 
         # Simulate buy at current price, close higher
         entry_price = tick.ask
-        close_price = entry_price + 0.0010  # +10 pips
+        close_price = entry_price + tc.TEN_PIPS  # +10 pips
 
         profit = mt5.order_calc_profit(
             mt5.ORDER_TYPE_BUY,
             "EURUSD",
-            0.1,
+            tc.MINI_LOT,
             entry_price,
             close_price,
         )
@@ -365,7 +354,7 @@ class TestOrderCalc:
     @pytest.mark.trading
     def test_order_calc_profit_buy_loss(self, mt5: MetaTrader5) -> None:
         """Test profit calculation for losing buy position."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
         tick = mt5.symbol_info_tick("EURUSD")
 
         if tick is None:
@@ -373,12 +362,12 @@ class TestOrderCalc:
 
         # Simulate buy at current price, close lower
         entry_price = tick.ask
-        close_price = entry_price - 0.0010  # -10 pips
+        close_price = entry_price - tc.TEN_PIPS  # -10 pips
 
         profit = mt5.order_calc_profit(
             mt5.ORDER_TYPE_BUY,
             "EURUSD",
-            0.1,
+            tc.MINI_LOT,
             entry_price,
             close_price,
         )
@@ -389,7 +378,7 @@ class TestOrderCalc:
     @pytest.mark.trading
     def test_order_calc_profit_sell_win(self, mt5: MetaTrader5) -> None:
         """Test profit calculation for winning sell position."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
         tick = mt5.symbol_info_tick("EURUSD")
 
         if tick is None:
@@ -397,12 +386,12 @@ class TestOrderCalc:
 
         # Simulate sell at current price, close lower
         entry_price = tick.bid
-        close_price = entry_price - 0.0010  # -10 pips
+        close_price = entry_price - tc.TEN_PIPS  # -10 pips
 
         profit = mt5.order_calc_profit(
             mt5.ORDER_TYPE_SELL,
             "EURUSD",
-            0.1,
+            tc.MINI_LOT,
             entry_price,
             close_price,
         )

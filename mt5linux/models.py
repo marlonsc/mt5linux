@@ -23,7 +23,7 @@ from typing import Protocol, Self, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from mt5linux.config import MT5Config
-from mt5linux.constants import MT5Constants
+from mt5linux.constants import MT5Constants as c
 
 # Default config instance for model defaults
 _config = MT5Config()
@@ -87,10 +87,10 @@ class MT5Models:
 
         Example:
             >>> request = MT5Models.OrderRequest(
-            ...     action=MT5Constants.TradeAction.DEAL,
+            ...     action=c.Order.TradeAction.DEAL,
             ...     symbol="EURUSD",
             ...     volume=0.1,
-            ...     type=MT5Constants.OrderType.BUY,
+            ...     type=c.Order.OrderType.BUY,
             ...     price=1.1000,
             ... )
             >>> mt5.order_send(request.to_mt5_request())
@@ -99,21 +99,19 @@ class MT5Models:
 
         model_config = ConfigDict(frozen=True, use_enum_values=True)
 
-        action: MT5Constants.TradeAction
+        action: c.Order.TradeAction
         symbol: str
         volume: float = Field(gt=0, le=1000)
-        type: MT5Constants.OrderType
+        type: c.Order.OrderType
         price: float = Field(ge=0, default=0.0)
         sl: float = Field(ge=0, default=0.0)
         tp: float = Field(ge=0, default=0.0)
         deviation: int = Field(ge=0, default=_config.order_deviation)
         magic: int = Field(ge=0, default=_config.order_magic)
         comment: str = Field(max_length=31, default="")
-        type_time: MT5Constants.OrderTime = Field(default=_config.order_time)
+        type_time: c.Order.OrderTime = Field(default=_config.order_time)
         expiration: datetime | None = None
-        type_filling: MT5Constants.OrderFilling = Field(
-            default=_config.order_filling
-        )
+        type_filling: c.Order.OrderFilling = Field(default=_config.order_filling)
         position: int = Field(ge=0, default=0)
         position_by: int = Field(ge=0, default=0)
 
@@ -122,8 +120,8 @@ class MT5Models:
         def is_market_order(self) -> bool:
             """Check if this is a market order."""
             market_types = {
-                MT5Constants.OrderType.BUY,
-                MT5Constants.OrderType.SELL,
+                c.Order.OrderType.BUY,
+                c.Order.OrderType.SELL,
             }
             return self.type in market_types
 
@@ -184,13 +182,13 @@ class MT5Models:
         @property
         def is_success(self) -> bool:
             """Check if order was successful."""
-            return self.retcode == MT5Constants.TradeRetcode.DONE
+            return self.retcode == c.Order.TradeRetcode.DONE
 
         @computed_field  # type: ignore[prop-decorator]
         @property
         def is_partial(self) -> bool:
             """Check if order was partially filled."""
-            return self.retcode == MT5Constants.TradeRetcode.DONE_PARTIAL
+            return self.retcode == c.Order.TradeRetcode.DONE_PARTIAL
 
         @classmethod
         def from_mt5(cls, result: object) -> Self | None:
@@ -207,7 +205,7 @@ class MT5Models:
             """
             if result is None:
                 return cls(
-                    retcode=MT5Constants.TradeRetcode.ERROR,
+                    retcode=c.Order.TradeRetcode.ERROR,
                     comment="No result from MT5",
                 )
             return super().from_mt5(result)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -29,6 +30,8 @@ from dotenv import load_dotenv
 
 from mt5linux import AsyncMetaTrader5, MetaTrader5, mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
+from mt5linux.constants import MT5Constants as c
+from tests.constants import TestConstants as tc
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
@@ -66,7 +69,7 @@ STARTUP_TIMEOUT = _config.test_startup_timeout
 GRPC_TIMEOUT = _config.test_grpc_timeout
 
 # MT5 credentials (loaded via env vars - no defaults in config)
-MT5_LOGIN = int(os.getenv("MT5_LOGIN", "0"))
+MT5_LOGIN = int(os.getenv("MT5_LOGIN", tc.MT5.DEFAULT_MT5_LOGIN))
 MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
 MT5_SERVER: str | None = os.getenv("MT5_SERVER")
 
@@ -89,16 +92,29 @@ MT5_CONFIG: dict[str, str | int | None] = {
 # TIMING INSTRUMENTATION (matches mt5docker pattern)
 # =============================================================================
 
-_timing_start: float = 0.0
+
+class _Timer:
+    """Simple timer for logging."""
+
+    def __init__(self) -> None:
+        """Initialize timer."""
+        self.start_time: float = time.time()
+
+    def elapsed(self) -> float:
+        """Get elapsed time in seconds."""
+        return time.time() - self.start_time
+
+
+_timer = _Timer()
 
 
 def _log(message: str, *, phase: bool = False) -> None:
     """Log message to stderr (always visible in pytest)."""
-    elapsed = time.time() - _timing_start
+    elapsed = _timer.elapsed()
     if phase:
-        sys.stderr.write(f"\n{'='*60}\n")
+        sys.stderr.write(f"\n{'=' * 60}\n")
         sys.stderr.write(f"[{elapsed:5.1f}s] PHASE: {message}\n")
-        sys.stderr.write(f"{'='*60}\n")
+        sys.stderr.write(f"{'=' * 60}\n")
     else:
         sys.stderr.write(f"[{elapsed:5.1f}s] {message}\n")
     sys.stderr.flush()
@@ -109,25 +125,70 @@ def _log(message: str, *, phase: bool = False) -> None:
 # =============================================================================
 
 
+def _run_command(  # noqa: PLR0913
+    cmd: list[str],
+    *,
+    capture_output: bool = False,
+    text: bool = False,
+    timeout: int | None = None,
+    check: bool = False,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a command with full path resolution.
+
+    Args:
+        cmd: Command and arguments. First element is resolved to full path.
+        capture_output: If True, capture stdout and stderr.
+        text: If True, return output as strings instead of bytes.
+        timeout: Timeout in seconds.
+        check: If True, raise CalledProcessError on non-zero exit.
+        cwd: Working directory.
+        env: Environment variables.
+
+    Returns:
+        CompletedProcess instance
+
+    Raises:
+        FileNotFoundError: If command not found
+
+    """
+    cmd_path = shutil.which(cmd[0])
+    if cmd_path is None:
+        msg = f"Command not found: {cmd[0]}"
+        raise FileNotFoundError(msg)
+    return subprocess.run(  # noqa: S603
+        [cmd_path, *cmd[1:]],
+        capture_output=capture_output,
+        text=text,
+        timeout=timeout,
+        check=check,
+        cwd=cwd,
+        env=env,
+    )
+
+
 def is_docker_available() -> bool:
     """Check if Docker is available and running."""
     try:
-        result = subprocess.run(
+        result = _run_command(
             ["docker", "version"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=tc.SLOW_TIMEOUT,
             check=False,
         )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+    return result.returncode == 0
 
 
 def has_mt5_credentials() -> bool:
     """Check if MT5 credentials are configured for integration tests."""
     return bool(
-        os.getenv("MT5_LOGIN") and os.getenv("MT5_PASSWORD") and MT5_LOGIN != 0
+        os.getenv("MT5_LOGIN")
+        and os.getenv("MT5_PASSWORD")
+        and int(tc.DEFAULT_MT5_LOGIN) != MT5_LOGIN
     )
 
 
@@ -155,10 +216,11 @@ def is_grpc_service_ready(
         response = stub.HealthCheck(mt5_pb2.Empty(), timeout=timeout)
         channel.close()
         _log(f"gRPC check: healthy={response.healthy}")
-        return response.healthy
     except grpc.RpcError as e:
         _log(f"gRPC check: FAILED - {type(e).__name__}")
         return False
+    else:
+        return response.healthy
 
 
 def wait_for_grpc_service(
@@ -224,19 +286,22 @@ def _is_container_running(name: str | None = None) -> bool:
     """Check if container is running."""
     container_name = name or TEST_CONTAINER_NAME
     _log(f"Checking if container '{container_name}' is running...")
-    result = subprocess.run(
-        ["docker", "ps", "-q", "-f", f"name=^{container_name}$"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    running = bool(result.stdout.strip())
+    try:
+        result = _run_command(
+            ["docker", "ps", "-q", "-f", f"name=^{container_name}$"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        running = bool(result.stdout.strip())
+    except FileNotFoundError:
+        running = False
     _log(f"Container running: {running}")
     return running
 
 
 @pytest.fixture(scope="session", autouse=True)
-def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
+def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901, PLR0915
     """Start test Docker container and run codegen before all tests.
 
     This fixture automatically handles Docker availability:
@@ -251,16 +316,17 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
     - Progressive backoff for service readiness
     - Detailed timing instrumentation
     """
-    global _timing_start  # noqa: PLW0603
-    _timing_start = time.time()
+    _timer.start_time = time.time()
 
     _log("CONTAINER VALIDATION START", phase=True)
     _log(f"Container: {TEST_CONTAINER_NAME}")
     _log(f"gRPC port: {TEST_GRPC_PORT}")
     _log(f"Startup timeout: {STARTUP_TIMEOUT}s")
 
+    timing_start = time.time()
+
     # Check if Docker tests should be skipped
-    if os.getenv("SKIP_DOCKER", "0") == "1":
+    if os.getenv("SKIP_DOCKER", tc.DEFAULT_SKIP_DOCKER) == "1":
         _log("SKIP_DOCKER=1 - skipping Docker setup")
         yield
         return
@@ -278,9 +344,11 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
 
         # PHASE 2: Fast-path gRPC check (2s timeout)
         _log("PHASE 2: Fast-path gRPC check (2s timeout)", phase=True)
-        if is_grpc_service_ready(TEST_GRPC_HOST, TEST_GRPC_PORT, timeout=2.0):
+        if is_grpc_service_ready(
+            TEST_GRPC_HOST, TEST_GRPC_PORT, timeout=tc.FAST_TIMEOUT
+        ):
             _log("FAST-PATH SUCCESS: gRPC already ready!")
-            _log(f"Total validation time: {time.time() - _timing_start:.1f}s")
+            _log(f"Total validation time: {time.time() - timing_start:.1f}s")
             _run_codegen()
             yield
             return
@@ -288,7 +356,7 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
         # PHASE 3: Wait for gRPC with progressive backoff
         _log("PHASE 3: Wait for gRPC (service not immediately ready)", phase=True)
         if wait_for_grpc_service(TEST_GRPC_HOST, TEST_GRPC_PORT):
-            _log(f"Total validation time: {time.time() - _timing_start:.1f}s")
+            _log(f"Total validation time: {time.time() - timing_start:.1f}s")
             _run_codegen()
             yield
             return
@@ -328,19 +396,19 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
     _log("Running: docker compose up -d...")
 
     try:
-        result = subprocess.run(
+        _run_command(
             ["docker", "compose", "-f", str(COMPOSE_FILE), "up", "-d"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
             check=True,
             env=test_env,
-            timeout=60,
+            timeout=tc.CONTAINER_TIMEOUT,
         )
         _log("Container started successfully")
-    except subprocess.CalledProcessError as e:
-        _log(f"FAILED: docker compose error: {e.stderr}")
-        pytest.skip(f"Failed to start container: {e.stderr}")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        _log(f"FAILED: docker compose error: {e}")
+        pytest.skip(f"Failed to start container: {e}")
     except subprocess.TimeoutExpired:
         pytest.skip("Timeout waiting for docker compose up")
 
@@ -350,15 +418,26 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
     _log("PHASE 4: Wait for gRPC service", phase=True)
 
     if not wait_for_grpc_service(TEST_GRPC_HOST, TEST_GRPC_PORT):
-        logs = subprocess.run(
-            ["docker", "logs", TEST_CONTAINER_NAME, "--tail", "50"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            logs = _run_command(
+                [
+                    "docker",
+                    "logs",
+                    TEST_CONTAINER_NAME,
+                    "--tail",
+                    str(tc.LOG_TAIL_LINES),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            log_output = (
+                logs.stdout[-500:] if logs.stdout else logs.stderr[-500:]
+            )  # 500 chars for readability
+        except FileNotFoundError:
+            log_output = "Could not retrieve logs (docker not found)"
         pytest.skip(
-            f"gRPC service not ready after {STARTUP_TIMEOUT}s.\n"
-            f"Logs: {logs.stdout[-500:] if logs.stdout else logs.stderr[-500:]}",
+            f"gRPC service not ready after {STARTUP_TIMEOUT}s.\nLogs: {log_output}",
         )
 
     _log(f"Test container {TEST_CONTAINER_NAME} ready on port {TEST_GRPC_PORT}")
@@ -380,7 +459,7 @@ def _run_codegen() -> None:
 
     _log("Running codegen_enums.py...")
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             [sys.executable, str(CODEGEN_SCRIPT), "--check"],
             capture_output=True,
             text=True,
@@ -398,13 +477,9 @@ def _run_codegen() -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Configure pytest markers."""
-    config.addinivalue_line(
-        "markers", "integration: marks tests requiring MT5 server"
-    )
+    config.addinivalue_line("markers", "integration: marks tests requiring MT5 server")
     config.addinivalue_line("markers", "slow: marks tests as slow")
-    config.addinivalue_line(
-        "markers", "trading: marks tests that place real orders"
-    )
+    config.addinivalue_line("markers", "trading: marks tests that place real orders")
     config.addinivalue_line(
         "markers", "market_depth: marks tests requiring market depth"
     )
@@ -427,10 +502,10 @@ def mt5_raw() -> Generator[MetaTrader5]:
     mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
     try:
         mt5.connect()
-    except Exception as e:
+    except (grpc.RpcError, ConnectionError, OSError) as e:
         pytest.skip(f"MT5 connection failed: {e}")
     yield mt5
-    with contextlib.suppress(Exception):
+    with contextlib.suppress(grpc.RpcError, ConnectionError):
         mt5.disconnect()
 
 
@@ -454,7 +529,7 @@ def mt5(mt5_raw: MetaTrader5) -> Generator[MetaTrader5]:
             password=MT5_PASSWORD,
             server=MT5_SERVER,
         )
-    except Exception as e:
+    except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
         pytest.skip(f"MT5 connection failed: {e}")
 
     if not result:
@@ -476,10 +551,10 @@ def buy_order_request() -> dict[str, Any]:
     return {
         "action": 1,  # TRADE_ACTION_DEAL
         "symbol": "EURUSD",
-        "volume": 0.01,
+        "volume": tc.MICRO_LOT,
         "type": 0,  # ORDER_TYPE_BUY
-        "deviation": 20,
-        "magic": 123456,
+        "deviation": tc.DEFAULT_DEVIATION,
+        "magic": tc.TEST_ORDER_MAGIC,
         "comment": "pytest buy order",
     }
 
@@ -493,10 +568,10 @@ def sell_order_request() -> dict[str, Any]:
     return {
         "action": 1,  # TRADE_ACTION_DEAL
         "symbol": "EURUSD",
-        "volume": 0.01,
+        "volume": tc.MICRO_LOT,
         "type": 1,  # ORDER_TYPE_SELL
-        "deviation": 20,
-        "magic": 123456,
+        "deviation": tc.DEFAULT_DEVIATION,
+        "magic": tc.TEST_ORDER_MAGIC,
         "comment": "pytest sell order",
     }
 
@@ -508,7 +583,7 @@ def date_range_month() -> tuple[datetime, datetime]:
     Returns (start_date, end_date) tuple for historical data queries.
     """
     end = datetime.now(UTC)
-    start = end - timedelta(days=30)
+    start = end - timedelta(days=tc.ONE_MONTH)
     return (start, end)
 
 
@@ -516,7 +591,7 @@ def date_range_month() -> tuple[datetime, datetime]:
 def date_range_week() -> tuple[datetime, datetime]:
     """Return date range for last 7 days."""
     end = datetime.now(UTC)
-    start = end - timedelta(days=7)
+    start = end - timedelta(days=tc.ONE_WEEK)
     return (start, end)
 
 
@@ -529,7 +604,7 @@ def market_book_symbol(mt5: MetaTrader5) -> Generator[str]:
     symbol = "EURUSD"
     try:
         mt5.market_book_add(symbol)
-    except Exception as e:
+    except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
         pytest.skip(f"Market book not available: {e}")
     yield symbol
     with contextlib.suppress(Exception):
@@ -549,7 +624,7 @@ def cleanup_test_positions(mt5: MetaTrader5) -> Generator[None]:
         positions = [
             pos
             for pos in (all_positions or [])
-            if getattr(pos, "magic", None) == 123456
+            if getattr(pos, "magic", None) == tc.TEST_ORDER_MAGIC
         ]
         if positions:
             for pos in positions:
@@ -560,21 +635,18 @@ def cleanup_test_positions(mt5: MetaTrader5) -> Generator[None]:
                     "volume": pos.volume,
                     "type": 1 if pos.type == 0 else 0,  # Opposite direction
                     "position": pos.ticket,
-                    "deviation": 20,
-                    "magic": 123456,
+                    "deviation": tc.DEFAULT_DEVIATION,
+                    "magic": tc.TEST_ORDER_MAGIC,
                     "comment": "pytest cleanup",
                 }
                 mt5.order_send(request)
-    except Exception as e:
+    except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
         _log(f"Warning: Failed to cleanup test positions: {e}")
 
 
 # =============================================================================
 # HISTORY TEST FIXTURES - Create orders to populate history
 # =============================================================================
-
-# Magic number for history test orders (different from regular test orders)
-HISTORY_TEST_MAGIC = 888888
 
 
 @pytest.fixture
@@ -588,7 +660,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
     Skips if market is closed or trading disabled.
     """
     symbol = "EURUSD"
-    mt5.symbol_select(symbol, True)
+    mt5.symbol_select(symbol, enable=True)
     tick = mt5.symbol_info_tick(symbol)
 
     if tick is None:
@@ -598,11 +670,11 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
     buy_request = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": symbol,
-        "volume": 0.01,
+        "volume": tc.MICRO_LOT,
         "type": mt5.ORDER_TYPE_BUY,
         "price": tick.ask,
-        "deviation": 50,
-        "magic": HISTORY_TEST_MAGIC,
+        "deviation": tc.HIGH_DEVIATION,
+        "magic": c.MT5.HISTORY_MAGIC,
         "comment": "pytest history test",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
@@ -616,9 +688,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
         # Check for market closed
         if result.retcode == mt5.TRADE_RETCODE_MARKET_CLOSED:
             pytest.skip("Market closed - cannot create history test data")
-        pytest.skip(
-            f"Could not open position: {result.retcode} - {result.comment}"
-        )
+        pytest.skip(f"Could not open position: {result.retcode} - {result.comment}")
 
     order_ticket = result.order
     deal_ticket = result.deal
@@ -628,7 +698,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
     position = None
     if positions:
         for pos in positions:
-            if pos.magic == HISTORY_TEST_MAGIC:
+            if pos.magic == c.MT5.HISTORY_MAGIC:
                 position = pos
                 break
 
@@ -647,7 +717,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
         "position": position.ticket,
         "price": tick.bid,
         "deviation": 50,
-        "magic": HISTORY_TEST_MAGIC,
+        "magic": c.MT5.HISTORY_MAGIC,
         "comment": "pytest history close",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
@@ -683,7 +753,7 @@ async def async_mt5_raw() -> AsyncGenerator[AsyncMetaTrader5]:
     client = AsyncMetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
     try:
         await client.connect()
-    except Exception as e:
+    except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
         pytest.skip(f"Async MT5 connection failed: {e}")
     yield client
     await client.disconnect()
@@ -711,7 +781,7 @@ async def async_mt5(
             password=MT5_PASSWORD,
             server=MT5_SERVER,
         )
-    except Exception as e:
+    except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
         pytest.skip(f"Async MT5 connection failed: {e}")
 
     if not result:
@@ -730,4 +800,6 @@ __all__ = [
     "TEST_CONTAINER_NAME",
     "TEST_GRPC_HOST",
     "TEST_GRPC_PORT",
+    "c",  # MT5Constants from mt5linux.constants
+    "tc",  # TestConstants from tests.constants
 ]

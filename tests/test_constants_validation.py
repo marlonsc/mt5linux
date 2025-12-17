@@ -1,7 +1,7 @@
-"""Validate MT5Constants against real MetaTrader5 library.
+"""Validate c against real MetaTrader5 library.
 
 This test connects to the MT5 Docker container and validates that
-all constants in mt5linux.constants.MT5Constants match the real
+all constants in mt5linux.constants.c match the real
 MetaTrader5 library values.
 
 REQUIRES: Docker test container running (use conftest.py fixtures)
@@ -16,12 +16,14 @@ import pytest
 
 from mt5linux import mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
-from mt5linux.constants import MT5Constants
+from mt5linux.constants import c
+
+from .conftest import tc
 
 # Default config instance
 _config = MT5Config()
 
-# Mapping of MT5 constant prefixes to MT5Constants nested class names
+# Mapping of MT5 constant prefixes to c nested class names
 PREFIX_TO_CLASS: dict[str, str] = {
     "TIMEFRAME_": "TimeFrame",
     "ORDER_TYPE_": "OrderType",
@@ -57,7 +59,7 @@ def _is_grpc_server_available(host: str, port: int) -> bool:
     """Check if gRPC server is available."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)
+        sock.settimeout(tc.MEDIUM_TIMEOUT)
         result = sock.connect_ex((host, port))
         sock.close()
         return result == 0
@@ -73,7 +75,7 @@ def _extract_mt5_constants(host: str, port: int) -> dict[str, int]:
     channel = grpc.insecure_channel(
         f"{host}:{port}",
         options=[
-            ("grpc.max_receive_message_length", 50 * 1024 * 1024),
+            ("grpc.max_receive_message_length", tc.GRPC_MAX_MESSAGE_SIZE),
         ],
     )
 
@@ -84,26 +86,22 @@ def _extract_mt5_constants(host: str, port: int) -> dict[str, int]:
     finally:
         channel.close()
 
-    constants = {
+    return {
         name: value
         for name, value in raw_constants.items()
-        if isinstance(value, int)
-        and name.isupper()
-        and not name.startswith("_")
+        if isinstance(value, int) and name.isupper() and not name.startswith("_")
     }
-
-    return constants
 
 
 def _get_local_constants() -> dict[str, int]:
-    """Extract all constants from MT5Constants class."""
+    """Extract all constants from c class."""
     constants: dict[str, int] = {}
 
-    for attr_name in dir(MT5Constants):
+    for attr_name in dir(c):
         if attr_name.startswith("_"):
             continue
 
-        attr = getattr(MT5Constants, attr_name)
+        attr = getattr(c, attr_name)
         if not isinstance(attr, type):
             continue
 
@@ -146,7 +144,7 @@ def _group_by_class(constants: dict[str, int]) -> dict[str, dict[str, int]]:
 def mt5_constants() -> dict[str, int]:
     """Fixture that provides real MT5 constants from Docker container."""
     # Use test port from shared conftest configuration
-    from conftest import TEST_GRPC_HOST, TEST_GRPC_PORT
+    from .conftest import TEST_GRPC_HOST, TEST_GRPC_PORT
 
     host = TEST_GRPC_HOST
     port = TEST_GRPC_PORT
@@ -161,12 +159,10 @@ def mt5_constants() -> dict[str, int]:
 
 
 class TestConstantsValidation:
-    """Validate MT5Constants against real MetaTrader5 library."""
+    """Validate c against real MetaTrader5 library."""
 
-    def test_all_constants_present(
-        self, mt5_constants: dict[str, int]
-    ) -> None:
-        """Verify all real MT5 constants are present in MT5Constants."""
+    def test_all_constants_present(self, mt5_constants: dict[str, int]) -> None:
+        """Verify all real MT5 constants are present in c."""
         local = _get_local_constants()
 
         missing: list[str] = []
@@ -186,19 +182,18 @@ class TestConstantsValidation:
                 missing.append(f"{name}={value}")
 
         if missing:
+            limit = c.Test.Validation.ERROR_DISPLAY_LIMIT
             pytest.fail(
-                f"Missing {len(missing)} constants in MT5Constants:\n"
-                + "\n".join(f"  - {m}" for m in sorted(missing)[:20])
+                f"Missing {len(missing)} constants in c:\n"
+                + "\n".join(f"  - {m}" for m in sorted(missing)[:limit])
                 + (
-                    f"\n  ... and {len(missing) - 20} more"
-                    if len(missing) > 20
+                    f"\n  ... and {len(missing) - limit} more"
+                    if len(missing) > limit
                     else ""
                 )
             )
 
-    def test_constant_values_match(
-        self, mt5_constants: dict[str, int]
-    ) -> None:
+    def test_constant_values_match(self, mt5_constants: dict[str, int]) -> None:
         """Verify all constant values match the real MT5 values."""
         local = _get_local_constants()
 
@@ -209,9 +204,7 @@ class TestConstantsValidation:
 
             actual = local[name]
             if actual != expected:
-                mismatches.append(
-                    f"{name}: expected={expected}, actual={actual}"
-                )
+                mismatches.append(f"{name}: expected={expected}, actual={actual}")
 
         if mismatches:
             pytest.fail(
@@ -220,7 +213,7 @@ class TestConstantsValidation:
             )
 
     def test_no_extra_constants(self, mt5_constants: dict[str, int]) -> None:
-        """Check for constants in MT5Constants that don't exist in real MT5."""
+        """Check for constants in c that don't exist in real MT5."""
         local = _get_local_constants()
 
         # Filter MT5 constants to only those we track
@@ -244,18 +237,14 @@ class TestConstantsValidation:
             )
 
     def test_enum_classes_exist(self) -> None:
-        """Verify all expected enum classes exist in MT5Constants."""
+        """Verify all expected enum classes exist in c."""
         expected_classes = set(PREFIX_TO_CLASS.values())
 
         for class_name in expected_classes:
-            assert hasattr(MT5Constants, class_name), (
-                f"MT5Constants missing class: {class_name}"
-            )
+            assert hasattr(c, class_name), f"c missing class: {class_name}"
 
-            cls = getattr(MT5Constants, class_name)
-            assert isinstance(cls, type), (
-                f"MT5Constants.{class_name} is not a class"
-            )
+            cls = getattr(c, class_name)
+            assert isinstance(cls, type), f"c.{class_name} is not a class"
 
     def test_timeframe_constants(self, mt5_constants: dict[str, int]) -> None:
         """Validate TimeFrame constants specifically (commonly used)."""
@@ -279,17 +268,14 @@ class TestConstantsValidation:
 
             # Also check local
             member_name = name.replace("TIMEFRAME_", "")
-            assert hasattr(MT5Constants.TimeFrame, member_name), (
-                f"MT5Constants.TimeFrame missing {member_name}"
+            assert hasattr(c.TimeFrame, member_name), (
+                f"c.TimeFrame missing {member_name}"
             )
-            assert (
-                getattr(MT5Constants.TimeFrame, member_name).value
-                == expected_value
-            ), f"MT5Constants.TimeFrame.{member_name} value mismatch"
+            assert getattr(c.TimeFrame, member_name).value == expected_value, (
+                f"c.TimeFrame.{member_name} value mismatch"
+            )
 
-    def test_trade_retcode_constants(
-        self, mt5_constants: dict[str, int]
-    ) -> None:
+    def test_trade_retcode_constants(self, mt5_constants: dict[str, int]) -> None:
         """Validate TradeRetcode constants specifically (critical for trading)."""
         expected = {
             "TRADE_RETCODE_DONE": 10009,

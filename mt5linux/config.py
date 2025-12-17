@@ -103,7 +103,19 @@ class MT5Config(BaseSettings):
     cb_half_open_max: int = 3
 
     # =========================================================================
-    # SERVER (bridge.py)
+    # RESILIENCE FEATURE FLAGS (opt-in for backward compatibility)
+    # =========================================================================
+    enable_auto_reconnect: bool = False
+    """Enable automatic reconnection with exponential backoff."""
+
+    enable_health_monitor: bool = False
+    """Enable background health monitoring task."""
+
+    enable_circuit_breaker: bool = False
+    """Enable circuit breaker pattern for cascading failure prevention."""
+
+    # =========================================================================
+    # SERVER (bridge.py)  # noqa: ERA001
     # =========================================================================
     server_host: str = "0.0.0.0"  # Server bind address
     server_port: int = 8001  # Server listen port (aligned with grpc_port)
@@ -125,8 +137,8 @@ class MT5Config(BaseSettings):
     # =========================================================================
     # ORDER DEFAULTS (from MT5Constants)
     # =========================================================================
-    order_filling: int = MT5Constants.OrderFilling.FOK
-    order_time: int = MT5Constants.OrderTime.GTC
+    order_filling: int = MT5Constants.Order.OrderFilling.FOK
+    order_time: int = MT5Constants.Order.OrderTime.GTC
     order_deviation: int = 20
     order_magic: int = 0
 
@@ -150,7 +162,7 @@ class MT5Config(BaseSettings):
         )
         if self.retry_jitter:
             # Add 0-100% jitter (S311: random is fine for jitter - not cryptographic)
-            delay *= 0.5 + random.random()  # noqa: S311
+            delay *= 0.5 + random.random()
         return delay
 
     def calculate_backoff_delay(self, attempt: int) -> float:
@@ -163,12 +175,10 @@ class MT5Config(BaseSettings):
             Delay in seconds with jitter applied.
 
         """
-        delay = self.restart_delay_base * (
-            self.restart_delay_multiplier**attempt
-        )
+        delay = self.restart_delay_base * (self.restart_delay_multiplier**attempt)
         delay = min(delay, self.restart_delay_max)
         # S311: random is fine for jitter - not cryptographic
-        jitter = delay * self.jitter_factor * (2 * random.random() - 1)  # noqa: S311
+        jitter = delay * self.jitter_factor * (2 * random.random() - 1)
         return max(0, delay + jitter)
 
     def get_grpc_channel_options(self) -> list[tuple[str, int]]:

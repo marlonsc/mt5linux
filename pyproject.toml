@@ -3,114 +3,141 @@ build-backend = "poetry.core.masonry.api"
 requires = ["poetry-core"]
 
 [tool.poetry]
-    name = "mt5linux"
-    version = "0.6.0"
-    description = "MetaTrader5 bridge for Linux via gRPC"
-    authors = ["Lucas Prett Campagna"]
-    license = "MIT"
-    readme = "README.md"
-    homepage = "https://github.com/lucas-campagna/mt5linux"
-    repository = "https://github.com/lucas-campagna/mt5linux"
-    packages = [{ include = "mt5linux" }]
+name = "mt5linux"
+version = "0.6.0"
+description = "MetaTrader5 bridge for Linux via gRPC"
+authors = ["Lucas Prett Campagna"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/lucas-campagna/mt5linux"
+repository = "https://github.com/lucas-campagna/mt5linux"
+packages = [{ include = "mt5linux" }]
 
-    [tool.poetry.dependencies]
-        grpcio = ">=1.60.0"
-        grpcio-tools = ">=1.60.0"
-        numpy = ">=1.26.4,<2.0"
-        protobuf = ">=4.25.0"
-        pydantic = "^2.10.0"
-        pydantic-settings = "^2.12.0"
-        python = ">=3.13,<3.14"
-        structlog = "^25.5.0"
+[tool.poetry.dependencies]
+grpcio = ">=1.60.0"
+grpcio-tools = ">=1.60.0"
+numpy = ">=1.26.4,<2.0"
+orjson = ">=3.9.0"
+protobuf = ">=4.25.0"
+pydantic = "^2.10.0"
+pydantic-settings = "^2.12.0"
+python = ">=3.13,<3.14"
+structlog = "^25.5.0"
 
-    [tool.poetry.group.dev.dependencies]
-        hypothesis = "^6.0"
-        mypy = "^1.15.0"
-        pyrefly = "^0.46.0"
-        pytest = "^9.0.0"
-        pytest-asyncio = "^1.0.0"
-        pytest-cov = "^6.0.0"
-        pytest-xdist = "^3.0"
-        python-dotenv = "^1.0.0"
-        ruff = "^0.11.0"
+[tool.poetry.group.dev.dependencies]
+hypothesis = "^6.0"
+mypy = "^1.15.0"
+pyrefly = "^0.46.0"
+pytest = "^9.0.0"
+pytest-asyncio = "^1.0.0"
+pytest-cov = "^6.0.0"
+pytest-xdist = "^3.0"
+python-dotenv = "^1.0.0"
+ruff = "^0.11.0"
 
 [tool.ruff]
-    line-length = 88
-    target-version = "py313"
+line-length = 88
+target-version = "py313"
 
 [tool.ruff.lint]
-    exclude = [
-        "*.pyi",
-        "mt5linux/mt5_pb2.py",
-        "mt5linux/mt5_pb2_grpc.py",
-        "typings/",
-    ]
-    ignore = [
-        "COM812",  # missing-trailing-comma (conflicts with formatter)
-        "ISC001",  # single-line-implicit-string-concatenation (conflicts with formatter)
-    ]
-    select = ["ALL"]
+exclude = [
+    "*.pyi",
+    "mt5linux/mt5_pb2.py",
+    "mt5linux/mt5_pb2_grpc.py",
+    "typings/",
+]
+ignore = [
+    "D203",
+    "D213",
+    "COM812", # missing-trailing-comma (conflicts with formatter)
+    "ISC001", # single-line-implicit-string-concatenation (conflicts with formatter)
+    "N813",   # CamelCase variable name - not applicable for runtime aliases
+]
+select = ["ALL"]
 
-    [tool.ruff.lint.per-file-ignores]
-        "tests/*" = [
-            "S101",    # assert ok in tests
-        ]
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101", # assert ok in tests
+]
+"mt5linux/bridge.py" = [
+    "ARG002",  # unused arguments are required by gRPC framework (request, context)
+    "N802",    # function names must be PascalCase for gRPC service methods
+    "PLW0603", # global statement needed for server lifecycle management
+    "S104",    # binding to all interfaces is intentional for gRPC server
+    "TRY400",  # log.error before raise - not in exception handler
+]
+"mt5linux/resilience.py" = [
+    "PLR0913", # too many arguments - retry configuration requires multiple params
+    "FBT001",  # boolean positional arg - jitter parameter is idiomatic for retry
+    "FBT002",  # boolean default - jitter parameter is idiomatic for retry
+    "TRY400",  # log.error before raise - not in exception handler
+]
+
+"mt5linux/protocols.py" = [
+    "PLR0913",  # too many arguments - protocol methods require specific signatures
+    "ASYNC109", # async function with timeout - required for protocol compatibility
+]
+"mt5linux/config.py" = [
+    "S104", # binding to all interfaces is intentional for server configuration
+    "S311", # random usage is for jitter/backoff, not cryptography
+]
+"mt5linux/async_client.py" = [
+    "PLR0913", # too many arguments - MT5 API requires specific method signatures
+]
 
 [tool.mypy]
-    exclude = [
-        '.*\.pyi$',
-        'mt5linux/mt5_pb2\.py$',
-        'mt5linux/mt5_pb2_grpc\.py$',
-        'typings/',
-    ]
-    mypy_path = "typings"
-    python_version = "3.13"
-    strict = true
-    warn_return_any = true
-    warn_unused_configs = true
+exclude = [
+    '.*\.pyi$',
+    'mt5linux/mt5_pb2\.py$',
+    'mt5linux/mt5_pb2_grpc\.py$',
+    'typings/',
+]
+mypy_path = "typings"
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
 
 [tool.pyrefly]
-    exclude = [
-        "*.pyi",
-        "mt5linux/mt5_pb2.py",
-        "mt5linux/mt5_pb2_grpc.py",
-        "typings/",
-    ]
+exclude = [
+    '.*\.pyi$',
+    "mt5linux/mt5_pb2.py",
+    "mt5linux/mt5_pb2_grpc.py",
+    "typings/",
+]
 
 [tool.pyright]
-    # Pyright config for MetaTrader5 module (Wine-only)
-    exclude = [
-        "*.pyi",
-        "mt5linux/mt5_pb2.py",
-        "mt5linux/mt5_pb2_grpc.py",
-        "typings/",
-    ]
-    include = ["mt5linux"]
-    pythonVersion = "3.13"
-    stubPath = "typings"
-
-    typeCheckingMode = "strict"
-    typeStubSearchPaths = ["/typings"]
+# Pyright config for MetaTrader5 module (Wine-only)
+excludee = [
+    '.*\.pyi$',
+    "mt5linux/mt5_pb2.py",
+    "mt5linux/mt5_pb2_grpc.py",
+    "typings/",
+]
+executionEnvironments = [{ root = ".", extraPaths = ["."] }]
+pythonVersion = "3.13"
+pythonPlatform = "Linux"
+typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]
-    addopts = "-v --tb=short"
-    asyncio_mode = "auto"
-    markers = [
-        "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-        "trading: marks tests that place real orders",
-        "market_depth: marks tests requiring market depth subscription",
-        "integration: marks tests requiring MT5 server",
-        "unit: marks pure unit tests (no server needed)",
-    ]
-    testpaths = ["tests"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "trading: marks tests that place real orders",
+    "market_depth: marks tests requiring market depth subscription",
+    "integration: marks tests requiring MT5 server",
+    "unit: marks pure unit tests (no server needed)",
+]
+testpaths = ["tests"]
 
 [tool.coverage.report]
-    exclude_lines = [
-        "pragma: no cover",
-        "if TYPE_CHECKING:",
-        "raise NotImplementedError",
-    ]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
 
 [tool.coverage.run]
-    branch = true
-    source = ["mt5linux"]
+branch = true
+source = ["mt5linux"]

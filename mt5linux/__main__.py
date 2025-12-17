@@ -17,10 +17,13 @@ Usage:
         account = mt5.account_info()
 """
 
+import logging
 import sys
 
 from mt5linux import __version__
 from mt5linux.bridge import main as bridge_main
+
+logger = logging.getLogger(__name__)
 
 
 def _print_info() -> None:
@@ -45,7 +48,7 @@ Client Usage (Python):
     with MetaTrader5(host="windows-ip", port=50051) as mt5:
         mt5.initialize(login=12345, password="pass", server="Demo")
         account = mt5.account_info()
-        rates = mt5.copy_rates_from_pos("EURUSD", MT5Constants.TimeFrame.H1, 0, 100)
+        rates = mt5.copy_rates_from_pos("EURUSD", c.MarketData.TimeFrame.H1, 0, 100)
 
 Async Client Usage (Python):
     from mt5linux import AsyncMetaTrader5
@@ -62,7 +65,7 @@ Configuration:
 Documentation:
     https://www.mql5.com/en/docs/python_metatrader5
 """
-    print(info)  # noqa: T201
+    logger.info(info)
 
 
 def main() -> int:

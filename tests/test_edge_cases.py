@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from mt5linux.constants import MT5Constants as c
+
+from .conftest import tc
+
 if TYPE_CHECKING:
     from mt5linux import MetaTrader5
 
@@ -45,7 +49,7 @@ class TestInvalidInputs:
             "INVALID_SYMBOL",
             mt5.TIMEFRAME_H1,
             0,
-            100,
+            tc.DEFAULT_BAR_COUNT,
         )
 
         assert result is None
@@ -53,14 +57,16 @@ class TestInvalidInputs:
     def test_invalid_timeframe(self, mt5: MetaTrader5) -> None:
         """Test copy_rates with invalid timeframe."""
         # 999 is not a valid timeframe constant
-        result = mt5.copy_rates_from_pos("EURUSD", 999, 0, 100)
+        result = mt5.copy_rates_from_pos(
+            "EURUSD", tc.INVALID_TIMEFRAME, tc.SMALL_COUNT, tc.LARGE_COUNT
+        )
 
         # Should return None or empty for invalid timeframe
         assert result is None or len(result) == 0
 
     def test_invalid_date_range_reversed(self, mt5: MetaTrader5) -> None:
         """Test with reversed date range (from > to)."""
-        date_to = datetime.now(UTC) - timedelta(days=30)
+        date_to = datetime.now(UTC) - timedelta(days=tc.ONE_MONTH)
         date_from = datetime.now(UTC)  # from is later than to
 
         result = mt5.copy_rates_range(
@@ -78,7 +84,7 @@ class TestInvalidInputs:
         # Use tomorrow to test future date handling
         from datetime import timedelta
 
-        tomorrow = datetime.now(UTC) + timedelta(days=1)
+        tomorrow = datetime.now(UTC) + timedelta(days=tc.SMALL_COUNT)
         day_after = tomorrow + timedelta(days=1)
 
         result = mt5.copy_rates_range(
@@ -103,7 +109,7 @@ class TestInvalidInputs:
             "EURUSD",
             mt5.TIMEFRAME_H1,
             0,
-            -100,  # Negative count
+            tc.NEGATIVE_COUNT,  # Negative count
         )
 
         # Should return None or empty
@@ -135,19 +141,19 @@ class TestApiLimits:
     def test_max_bars_limit(self, mt5: MetaTrader5) -> None:
         """Test requesting maximum number of bars."""
         # Request a large number of bars
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
         result = mt5.copy_rates_from_pos(
             "EURUSD",
             mt5.TIMEFRAME_M1,
             0,
-            10000,  # Large number
+            tc.EXTRA_LARGE_COUNT,  # Large number
         )
 
         if result is not None:
             # Should return data up to available bars
             assert len(result) > 0
-            assert len(result) <= 10000
+            assert len(result) <= c.Test.Validation.TICKS_LIMIT_THRESHOLD
 
             # Verify data structure
             assert hasattr(result, "dtype")
@@ -159,26 +165,26 @@ class TestApiLimits:
     @pytest.mark.slow
     def test_max_ticks_limit(self, mt5: MetaTrader5) -> None:
         """Test requesting maximum number of ticks."""
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
 
         date_from = datetime.now(UTC) - timedelta(hours=1)
 
         result = mt5.copy_ticks_from(
             "EURUSD",
             date_from,
-            10000,  # Large number
+            tc.EXTRA_LARGE_COUNT,  # Large number
             mt5.COPY_TICKS_ALL,
         )
 
         if result is not None and len(result) > 0:
-            assert len(result) <= 10000
+            assert len(result) <= c.Test.Validation.TICKS_LIMIT_THRESHOLD
             assert hasattr(result, "dtype")
 
     @pytest.mark.slow
     def test_large_history_query(self, mt5: MetaTrader5) -> None:
         """Test querying large history range."""
         # Query 1 year of history
-        date_from = datetime.now(UTC) - timedelta(days=365)
+        date_from = datetime.now(UTC) - timedelta(days=tc.ONE_YEAR)
         date_to = datetime.now(UTC)
 
         result = mt5.copy_rates_range(
@@ -190,8 +196,10 @@ class TestApiLimits:
 
         if result is not None:
             # Should have roughly 250 trading days
-            assert len(result) > 100  # At least some data
-            assert len(result) < 400  # Not unreasonably many
+            assert len(result) > tc.MIN_TRADING_DAYS  # At least some data
+            assert (
+                len(result) < c.Test.Validation.TRADING_DAYS_THRESHOLD
+            )  # Not unreasonably many
 
     @pytest.mark.slow
     @pytest.mark.skip(reason="Hangs due to large data transfer")
@@ -205,7 +213,7 @@ class TestApiLimits:
         test_groups = [
             ("*USD*", 10),  # Small: USD pairs
             ("*EUR*", 10),  # Medium: EUR pairs
-            ("*", 100),  # All symbols - should work with optimization
+            ("*", tc.MIN_TOTAL_SYMBOLS),  # All symbols - should work with optimization
         ]
 
         for group_filter, min_expected in test_groups:
@@ -215,9 +223,7 @@ class TestApiLimits:
                 symbols = mt5.symbols_get(group=group_filter)
 
             if symbols is None:
-                pytest.skip(
-                    f"symbols_get(group={group_filter!r}) not available"
-                )
+                pytest.skip(f"symbols_get(group={group_filter!r}) not available")
 
             count = len(symbols)
             assert count >= min_expected, (
@@ -227,18 +233,16 @@ class TestApiLimits:
             # Verify structure
             if count > 0:
                 symbol = symbols[0]
-                assert hasattr(symbol, "name"), (
-                    "Symbol missing 'name' attribute"
-                )
-                assert hasattr(symbol, "visible"), (
-                    "Symbol missing 'visible' attribute"
-                )
+                assert hasattr(symbol, "name"), "Symbol missing 'name' attribute"
+                assert hasattr(symbol, "visible"), "Symbol missing 'visible' attribute"
 
         # Final verification: all symbols should be > 1000
         all_symbols = mt5.symbols_get()
         if all_symbols:
             total = len(all_symbols)
-            assert total > 1000, f"Expected 1000+ symbols, got {total}"
+            assert total > c.Test.Validation.SYMBOL_COUNT_THRESHOLD, (
+                f"Expected {c.Test.Validation.SYMBOL_COUNT_THRESHOLD}+ symbols, got {total}"
+            )
 
     @pytest.mark.slow
     @pytest.mark.skip(reason="Calls symbols_get() which hangs")
@@ -266,9 +270,7 @@ class TestApiLimits:
 class TestErrorHandling:
     """Tests for error handling and recovery."""
 
-    def test_last_error_after_invalid_operation(
-        self, mt5: MetaTrader5
-    ) -> None:
+    def test_last_error_after_invalid_operation(self, mt5: MetaTrader5) -> None:
         """Test that last_error is set after failed operation."""
         # Force an error with invalid symbol
         mt5.symbol_info("DEFINITELY_INVALID_SYMBOL")
@@ -277,7 +279,7 @@ class TestErrorHandling:
 
         assert error is not None
         assert isinstance(error, tuple)
-        assert len(error) == 2
+        assert len(error) == c.Test.Validation.TUPLE_LENGTH_ERROR
         # Error code and message
         error_code, error_message = error
         assert isinstance(error_code, int)
@@ -286,7 +288,7 @@ class TestErrorHandling:
     def test_last_error_after_valid_operation(self, mt5: MetaTrader5) -> None:
         """Test that last_error is set after successful operation."""
         # Successful operation
-        mt5.symbol_select("EURUSD", True)
+        mt5.symbol_select("EURUSD", enable=True)
         info = mt5.symbol_info("EURUSD")
 
         if info is None:
@@ -322,7 +324,7 @@ class TestErrorHandling:
 
         assert version is not None
         assert isinstance(version, tuple)
-        assert len(version) == 3
+        assert len(version) == c.Test.Validation.TUPLE_LENGTH_VERSION
 
         # Version numbers - first two should be non-negative integers
         major, minor, build_or_date = version
@@ -349,9 +351,7 @@ class TestErrorHandling:
         account = mt5.account_info()
 
         if account is None:
-            pytest.skip(
-                "account_info returned None (MT5 connection may be unstable)"
-            )
+            pytest.skip("account_info returned None (MT5 connection may be unstable)")
 
         assert account.login > 0
         assert account.balance >= 0

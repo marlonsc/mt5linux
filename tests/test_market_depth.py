@@ -23,7 +23,7 @@ class TestMarketBook:
     def test_market_book_add(self, mt5: MetaTrader5) -> None:
         """Test subscribing to market book."""
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         result = mt5.market_book_add(symbol)
 
@@ -67,9 +67,7 @@ class TestMarketBook:
                 assert hasattr(entry, "volume")
 
     @pytest.mark.market_depth
-    def test_market_book_get_without_subscription(
-        self, mt5: MetaTrader5
-    ) -> None:
+    def test_market_book_get_without_subscription(self, mt5: MetaTrader5) -> None:
         """Test getting market book without explicit subscription.
 
         Note: Some brokers may provide market depth data even without
@@ -77,7 +75,7 @@ class TestMarketBook:
         This test verifies that the call doesn't fail, not the specific behavior.
         """
         symbol = "GBPUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         # Don't call market_book_add, try to get directly
         book = mt5.market_book_get(symbol)
@@ -92,7 +90,7 @@ class TestMarketBook:
     def test_market_book_release(self, mt5: MetaTrader5) -> None:
         """Test unsubscribing from market book."""
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         # Subscribe first
         add_result = mt5.market_book_add(symbol)
@@ -106,9 +104,7 @@ class TestMarketBook:
         assert result is True
 
     @pytest.mark.market_depth
-    def test_market_book_release_not_subscribed(
-        self, mt5: MetaTrader5
-    ) -> None:
+    def test_market_book_release_not_subscribed(self, mt5: MetaTrader5) -> None:
         """Test unsubscribing when not subscribed."""
         result = mt5.market_book_release("USDJPY")
 
@@ -120,7 +116,7 @@ class TestMarketBook:
     def test_market_book_lifecycle(self, mt5: MetaTrader5) -> None:
         """Test full market book lifecycle: subscribe, get, unsubscribe."""
         symbol = "EURUSD"
-        mt5.symbol_select(symbol, True)
+        mt5.symbol_select(symbol, enable=True)
 
         # Step 1: Subscribe
         add_result = mt5.market_book_add(symbol)
@@ -150,7 +146,7 @@ class TestMarketBook:
 
         subscribed_symbols = []
         for symbol in symbols:
-            mt5.symbol_select(symbol, True)
+            mt5.symbol_select(symbol, enable=True)
             result = mt5.market_book_add(symbol)
             if result is True:
                 subscribed_symbols.append(symbol)

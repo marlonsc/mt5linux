@@ -8,7 +8,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from mt5linux.async_client import AsyncMetaTrader5
-from tests.conftest import TEST_GRPC_HOST, TEST_GRPC_PORT
+
+from .conftest import (
+    TEST_GRPC_HOST,
+    TEST_GRPC_PORT,
+    tc,
+)
 
 
 class TestAsyncMetaTrader5Connection:
@@ -22,13 +27,11 @@ class TestAsyncMetaTrader5Connection:
         assert async_mt5_raw.is_connected is True
 
     @pytest.mark.asyncio
-    async def test_connect_idempotent(
-        self, async_mt5_raw: AsyncMetaTrader5
-    ) -> None:
+    async def test_connect_idempotent(self, async_mt5_raw: AsyncMetaTrader5) -> None:
         """Test _connect() is idempotent - calling twice doesn't break."""
         assert async_mt5_raw.is_connected is True
         # Second connect should be no-op
-        await async_mt5_raw._connect()
+        await async_mt5_raw._connect()  # noqa: SLF001
         assert async_mt5_raw.is_connected is True
 
     @pytest.mark.asyncio
@@ -54,14 +57,16 @@ class TestAsyncMetaTrader5Connection:
 
         try:
             # Simulate many concurrent connect calls
-            await asyncio.gather(*[client._connect() for _ in range(10)])
+            await asyncio.gather(
+                *[client._connect() for _ in range(tc.CONCURRENT_CONNECTIONS)]
+            )
         except (ConnectionError, EOFError, OSError) as e:
             pytest.skip(f"MT5 connection failed: {e}")
 
         # Should be connected with no errors
         assert client.is_connected is True
 
-        await client._disconnect()
+        await client._disconnect()  # noqa: SLF001
         assert client.is_connected is False
 
 
@@ -89,7 +94,7 @@ class TestAsyncMetaTrader5ErrorHandling:
         """Test _ensure_connected raises ConnectionError when not connected."""
         client = AsyncMetaTrader5()
         with pytest.raises(ConnectionError, match="not established"):
-            client._ensure_connected()
+            client._ensure_connected()  # noqa: SLF001
 
     @pytest.mark.asyncio
     async def test_getattr_raises_before_connect(self) -> None:
@@ -107,7 +112,7 @@ class TestAsyncMetaTrader5Terminal:
         """Test async version retrieval."""
         version = await async_mt5.version()
         assert version is not None
-        assert len(version) == 3
+        assert len(version) == tc.VERSION_TUPLE_LENGTH
         assert isinstance(version[0], int)  # Major version
         assert isinstance(version[1], int)  # Build
         assert isinstance(version[2], str)  # Date
@@ -118,7 +123,7 @@ class TestAsyncMetaTrader5Terminal:
         error = await async_mt5.last_error()
         assert error is not None
         assert isinstance(error, tuple)
-        assert len(error) == 2
+        assert len(error) == tc.ERROR_TUPLE_LENGTH
         assert isinstance(error[0], int)  # Error code
         assert isinstance(error[1], str)  # Error message
 
@@ -140,9 +145,7 @@ class TestAsyncMetaTrader5Account:
         """Test async account_info retrieval."""
         account = await async_mt5.account_info()
         if account is None:
-            pytest.skip(
-                "account_info returned None (MT5 connection may be unstable)"
-            )
+            pytest.skip("account_info returned None (MT5 connection may be unstable)")
         assert account.login > 0
         assert account.balance >= 0
         assert hasattr(account, "equity")
@@ -176,7 +179,7 @@ class TestAsyncMetaTrader5Symbols:
     @pytest.mark.asyncio
     async def test_symbol_info(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async symbol_info."""
-        await async_mt5.symbol_select("EURUSD", True)
+        await async_mt5.symbol_select("EURUSD", enable=True)
         info = await async_mt5.symbol_info("EURUSD")
         if info is None:
             pytest.skip("symbol_info returned None (MT5 connection issue)")
@@ -189,7 +192,7 @@ class TestAsyncMetaTrader5Symbols:
     @pytest.mark.asyncio
     async def test_symbol_info_tick(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async symbol_info_tick."""
-        await async_mt5.symbol_select("EURUSD", True)
+        await async_mt5.symbol_select("EURUSD", enable=True)
         tick = await async_mt5.symbol_info_tick("EURUSD")
         assert tick is not None
         assert tick.bid > 0 or tick.ask > 0
@@ -200,13 +203,11 @@ class TestAsyncMetaTrader5Symbols:
     async def test_symbol_select(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async symbol_select."""
         # Enable EURUSD in Market Watch
-        result = await async_mt5.symbol_select("EURUSD", True)
+        result = await async_mt5.symbol_select("EURUSD", enable=True)
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_getattr_proxies_constants(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_getattr_proxies_constants(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test __getattr__ proxies MT5 constants."""
         # Test timeframe constants
         assert async_mt5.TIMEFRAME_M1 is not None
@@ -222,14 +223,12 @@ class TestAsyncMetaTrader5MarketData:
     """Test market data operations with real server."""
 
     @pytest.mark.asyncio
-    async def test_copy_rates_from_pos(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_copy_rates_from_pos(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async copy_rates_from_pos."""
-        await async_mt5.symbol_select("EURUSD", True)
+        await async_mt5.symbol_select("EURUSD", enable=True)
         try:
             rates = await async_mt5.copy_rates_from_pos(
-                "EURUSD", async_mt5.TIMEFRAME_H1, 0, 10
+                "EURUSD", async_mt5.TIMEFRAME_H1, 0, tc.TEN_ITEMS
             )
         except Exception as e:
             if "pickling is disabled" in str(e):
@@ -254,10 +253,10 @@ class TestAsyncMetaTrader5MarketData:
     @pytest.mark.asyncio
     async def test_copy_rates_from(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async copy_rates_from."""
-        await async_mt5.symbol_select("EURUSD", True)
-        date_from = datetime.now(UTC) - timedelta(days=7)
+        await async_mt5.symbol_select("EURUSD", enable=True)
+        date_from = datetime.now(UTC) - timedelta(days=tc.ONE_WEEK)
         rates = await async_mt5.copy_rates_from(
-            "EURUSD", async_mt5.TIMEFRAME_H1, date_from, 50
+            "EURUSD", async_mt5.TIMEFRAME_H1, date_from, tc.FIFTY_ITEMS
         )
         # May return None if market closed or no data for period
         if rates is None:
@@ -267,9 +266,9 @@ class TestAsyncMetaTrader5MarketData:
     @pytest.mark.asyncio
     async def test_copy_rates_range(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async copy_rates_range."""
-        await async_mt5.symbol_select("EURUSD", True)
+        await async_mt5.symbol_select("EURUSD", enable=True)
         date_to = datetime.now(UTC)
-        date_from = date_to - timedelta(days=7)
+        date_from = date_to - timedelta(days=tc.ONE_WEEK)
         rates = await async_mt5.copy_rates_range(
             "EURUSD", async_mt5.TIMEFRAME_H1, date_from, date_to
         )
@@ -281,10 +280,10 @@ class TestAsyncMetaTrader5MarketData:
     @pytest.mark.asyncio
     async def test_copy_ticks_from(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async copy_ticks_from."""
-        await async_mt5.symbol_select("EURUSD", True)
+        await async_mt5.symbol_select("EURUSD", enable=True)
         date_from = datetime.now(UTC) - timedelta(hours=1)
         ticks = await async_mt5.copy_ticks_from(
-            "EURUSD", date_from, 100, async_mt5.COPY_TICKS_ALL
+            "EURUSD", date_from, tc.HUNDRED_ITEMS, async_mt5.COPY_TICKS_ALL
         )
         # May return None if no ticks available in the period
         if ticks is not None:
@@ -337,12 +336,10 @@ class TestAsyncMetaTrader5History:
     """Test history operations with real server."""
 
     @pytest.mark.asyncio
-    async def test_history_orders_total(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_history_orders_total(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async history_orders_total."""
         date_to = datetime.now(UTC)
-        date_from = date_to - timedelta(days=30)
+        date_from = date_to - timedelta(days=tc.ONE_MONTH)
         total = await async_mt5.history_orders_total(date_from, date_to)
         # May return None if no history
         if total is not None:
@@ -350,12 +347,10 @@ class TestAsyncMetaTrader5History:
             assert total >= 0
 
     @pytest.mark.asyncio
-    async def test_history_orders_get(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_history_orders_get(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async history_orders_get."""
         date_to = datetime.now(UTC)
-        date_from = date_to - timedelta(days=30)
+        date_from = date_to - timedelta(days=tc.ONE_MONTH)
         orders = await async_mt5.history_orders_get(
             date_from=date_from, date_to=date_to
         )
@@ -364,12 +359,10 @@ class TestAsyncMetaTrader5History:
             assert isinstance(orders, tuple)
 
     @pytest.mark.asyncio
-    async def test_history_deals_total(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_history_deals_total(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async history_deals_total."""
         date_to = datetime.now(UTC)
-        date_from = date_to - timedelta(days=30)
+        date_from = date_to - timedelta(days=tc.ONE_MONTH)
         total = await async_mt5.history_deals_total(date_from, date_to)
         # May return None if no history
         if total is not None:
@@ -377,15 +370,11 @@ class TestAsyncMetaTrader5History:
             assert total >= 0
 
     @pytest.mark.asyncio
-    async def test_history_deals_get(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_history_deals_get(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async history_deals_get."""
         date_to = datetime.now(UTC)
-        date_from = date_to - timedelta(days=30)
-        deals = await async_mt5.history_deals_get(
-            date_from=date_from, date_to=date_to
-        )
+        date_from = date_to - timedelta(days=tc.ONE_MONTH)
+        deals = await async_mt5.history_deals_get(date_from=date_from, date_to=date_to)
         # May return None if no history
         if deals is not None:
             assert isinstance(deals, tuple)
@@ -395,18 +384,16 @@ class TestAsyncMetaTrader5Trading:
     """Test trading operations with real server (read-only)."""
 
     @pytest.mark.asyncio
-    async def test_order_calc_margin(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_order_calc_margin(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async order_calc_margin."""
-        await async_mt5.symbol_select("EURUSD", True)
+        await async_mt5.symbol_select("EURUSD", enable=True)
         tick = await async_mt5.symbol_info_tick("EURUSD")
         assert tick is not None
 
         margin = await async_mt5.order_calc_margin(
             async_mt5.ORDER_TYPE_BUY,
             "EURUSD",
-            0.01,
+            tc.MICRO_LOT,
             tick.ask,
         )
         # May return None on some broker configurations
@@ -415,11 +402,9 @@ class TestAsyncMetaTrader5Trading:
             assert margin > 0
 
     @pytest.mark.asyncio
-    async def test_order_calc_profit(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_order_calc_profit(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async order_calc_profit."""
-        await async_mt5.symbol_select("EURUSD", True)
+        await async_mt5.symbol_select("EURUSD", enable=True)
         tick = await async_mt5.symbol_info_tick("EURUSD")
         if tick is None:
             pytest.skip("Could not get tick data")
@@ -428,9 +413,9 @@ class TestAsyncMetaTrader5Trading:
         profit = await async_mt5.order_calc_profit(
             async_mt5.ORDER_TYPE_BUY,
             "EURUSD",
-            0.01,
+            tc.MICRO_LOT,
             tick.ask,
-            tick.ask + 0.0010,  # 10 pips
+            tick.ask + tc.TEN_PIPS,  # 10 pips
         )
         # May return None on some broker configurations
         if profit is not None:
@@ -439,7 +424,7 @@ class TestAsyncMetaTrader5Trading:
     @pytest.mark.asyncio
     async def test_order_check(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async order_check (validates without executing)."""
-        await async_mt5.symbol_select("EURUSD", True)
+        await async_mt5.symbol_select("EURUSD", enable=True)
         tick = await async_mt5.symbol_info_tick("EURUSD")
         if tick is None:
             pytest.skip("Could not get tick data")
@@ -450,8 +435,8 @@ class TestAsyncMetaTrader5Trading:
             "volume": 0.01,
             "type": async_mt5.ORDER_TYPE_BUY,
             "price": tick.ask,
-            "deviation": 20,
-            "magic": 999999,
+            "deviation": tc.DEFAULT_DEVIATION,
+            "magic": tc.MT5.TEST_MAGIC,
             "comment": "pytest check only",
         }
 
@@ -467,31 +452,27 @@ class TestAsyncMetaTrader5Concurrent:
     """Test concurrent async operations with real server."""
 
     @pytest.mark.asyncio
-    async def test_concurrent_symbol_info(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_concurrent_symbol_info(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test concurrent symbol_info calls with real server."""
         symbols = ["EURUSD", "GBPUSD", "USDJPY"]
 
         # Select all symbols first
         for symbol in symbols:
-            await async_mt5.symbol_select(symbol, True)
+            await async_mt5.symbol_select(symbol, enable=True)
 
         # Concurrent fetching
         tasks = [async_mt5.symbol_info(s) for s in symbols]
         results = await asyncio.gather(*tasks)
 
-        assert len(results) == 3
+        assert len(results) == tc.SYMBOLS_TEST_COUNT
         for i, result in enumerate(results):
             if result is not None:
                 assert result.name == symbols[i]
 
     @pytest.mark.asyncio
-    async def test_concurrent_data_fetching(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_concurrent_data_fetching(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test concurrent data fetching with real server."""
-        await async_mt5.symbol_select("EURUSD", True)
+        await async_mt5.symbol_select("EURUSD", enable=True)
 
         # Parallel fetching of different data types
         account, symbol, tick = await asyncio.gather(
@@ -502,31 +483,29 @@ class TestAsyncMetaTrader5Concurrent:
 
         # Skip if MT5 connection is unstable
         if account is None or symbol is None or tick is None:
-            pytest.skip(
-                "Concurrent data fetch returned None (MT5 connection issue)"
-            )
+            pytest.skip("Concurrent data fetch returned None (MT5 connection issue)")
 
         assert account.balance >= 0
         assert symbol.name == "EURUSD"
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.asyncio
-    async def test_concurrent_rates_fetching(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_concurrent_rates_fetching(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test concurrent OHLCV rates fetching."""
         symbols = ["EURUSD", "GBPUSD"]
         for s in symbols:
-            await async_mt5.symbol_select(s, True)
+            await async_mt5.symbol_select(s, enable=True)
 
         tasks = [
-            async_mt5.copy_rates_from_pos(s, async_mt5.TIMEFRAME_H1, 0, 10)
+            async_mt5.copy_rates_from_pos(
+                s, async_mt5.TIMEFRAME_H1, 0, tc.DEFAULT_BAR_COUNT
+            )
             for s in symbols
         ]
         # Use return_exceptions to handle RPyC pickling issues gracefully
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        assert len(results) == 2
+        assert len(results) == tc.SYMBOLS_RATES_COUNT
         success_count = 0
         for rates in results:
             # Skip exceptions (RPyC pickling may fail)
@@ -572,9 +551,7 @@ class TestAsyncMetaTrader5HealthCheck:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_async_health_check(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_async_health_check(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async health_check returns healthy status."""
         health = await async_mt5.health_check()
 
@@ -583,9 +560,7 @@ class TestAsyncMetaTrader5HealthCheck:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_async_health_check_fields(
-        self, async_mt5: AsyncMetaTrader5
-    ) -> None:
+    async def test_async_health_check_fields(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async health_check returns expected fields."""
         health = await async_mt5.health_check()
 

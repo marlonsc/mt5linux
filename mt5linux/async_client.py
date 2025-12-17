@@ -14,15 +14,21 @@ Thread Safety:
     Multiple concurrent coroutines can safely make requests in parallel.
     HTTP/2 connection multiplexing allows efficient concurrent operations.
 
+Resilience Features (opt-in via config):
+    - Automatic reconnection with exponential backoff
+    - Background health monitoring
+    - Circuit breaker for cascading failure prevention
+
 Compatible with grpcio 1.60+ and Python 3.13+.
 
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
-import json
 import logging
+import random
 from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Self
@@ -30,12 +36,17 @@ from typing import TYPE_CHECKING, Self
 import grpc
 import grpc.aio
 import numpy as np
+import orjson
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 from mt5linux import mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
+from mt5linux.models import MT5Models
+from mt5linux.protocols import AsyncClientProtocol
+from mt5linux.resilience import CircuitBreaker
+from mt5linux.types import MT5Types
 
 log = logging.getLogger(__name__)
 
@@ -46,18 +57,21 @@ _config = MT5Config()
 # Error message constant
 _NOT_CONNECTED_MSG = "MT5 connection not established - call connect() first"
 
+# Health check failure threshold before marking disconnected
+_HEALTH_CHECK_FAILURE_THRESHOLD = 3
+
 # gRPC channel options from config (no more hardcoded values)
 _CHANNEL_OPTIONS = _config.get_grpc_channel_options()
 
-# Type alias for JSON values (strict typing, no Any)
-JSONPrimitive = str | int | float | bool | None
-JSONValue = JSONPrimitive | list["JSONValue"] | dict[str, "JSONValue"]
+# Type alias for convenience (single source of truth)
+JSONValue = MT5Types.JSONValue
 
 
-class AsyncMetaTrader5:
+class AsyncMetaTrader5(AsyncClientProtocol):
     """Async wrapper for MetaTrader5 client using native gRPC async.
 
     Uses grpc.aio.insecure_channel for true async operations.
+    Implements AsyncClientProtocol for type-safe async MT5 operations.
     All MT5 operations are executed via native gRPC async stubs.
 
     Attributes:
@@ -67,8 +81,6 @@ class AsyncMetaTrader5:
     All MetaTrader5 methods are available as async versions.
 
     """
-
-    _lock = asyncio.Lock()
 
     def __init__(
         self,
@@ -98,6 +110,23 @@ class AsyncMetaTrader5:
         self._stub: mt5_pb2_grpc.MT5ServiceStub | None = None
         self._constants: dict[str, int] = {}
         self._connect_lock: asyncio.Lock | None = None
+        # Instance-level lock - each client has its own lock (not class-level)
+        self._lock = asyncio.Lock()
+
+        # Resilience components (opt-in via config)
+        self._config = _config
+        self._circuit_breaker: CircuitBreaker | None = None
+        if self._config.enable_circuit_breaker:
+            self._circuit_breaker = CircuitBreaker(
+                failure_threshold=self._config.cb_threshold,
+                recovery_timeout=self._config.cb_recovery,
+                half_open_max_calls=self._config.cb_half_open_max,
+            )
+
+        # Health monitoring
+        self._health_task: asyncio.Task[None] | None = None
+        self._health_monitor_running = False
+        self._consecutive_failures = 0
 
     @property
     def is_connected(self) -> bool:
@@ -156,9 +185,7 @@ class AsyncMetaTrader5:
             target = f"{self._host}:{self._port}"
             log.debug("Connecting to gRPC server at %s", target)
 
-            self._channel = grpc.aio.insecure_channel(
-                target, options=_CHANNEL_OPTIONS
-            )
+            self._channel = grpc.aio.insecure_channel(target, options=_CHANNEL_OPTIONS)
             self._stub = mt5_pb2_grpc.MT5ServiceStub(self._channel)
 
             # Load constants from server
@@ -172,7 +199,9 @@ class AsyncMetaTrader5:
             return
 
         try:
-            response = await self._stub.GetConstants(mt5_pb2.Empty())
+            response = await self._stub.GetConstants(
+                mt5_pb2.Empty(), timeout=self._timeout
+            )
             self._constants = dict(response.values)
             log.debug("Loaded %d constants from server", len(self._constants))
         except grpc.aio.AioRpcError as e:
@@ -189,7 +218,7 @@ class AsyncMetaTrader5:
 
         try:
             await channel.close()
-        except Exception:  # noqa: BLE001
+        except grpc.RpcError:
             log.debug("Channel close failed during disconnect")
 
         log.debug("Disconnected from MT5 gRPC server")
@@ -199,6 +228,203 @@ class AsyncMetaTrader5:
         if self._stub is None:
             raise ConnectionError(_NOT_CONNECTED_MSG)
         return self._stub
+
+    # =========================================================================
+    # RESILIENCE METHODS
+    # =========================================================================
+
+    async def _reconnect_with_backoff(self) -> bool:
+        """Attempt reconnection with exponential backoff and jitter.
+
+        Uses configuration values for retry parameters.
+
+        Returns:
+            True if reconnection successful, False otherwise.
+
+        """
+        delay = self._config.retry_initial_delay
+
+        for attempt in range(self._max_reconnect_attempts):
+            try:
+                log.info(
+                    "Reconnection attempt %d/%d to %s:%d",
+                    attempt + 1,
+                    self._max_reconnect_attempts,
+                    self._host,
+                    self._port,
+                )
+
+                # Close existing channel if any
+                if self._channel is not None:
+                    with suppress(Exception):
+                        await self._channel.close()
+                    self._channel = None
+                    self._stub = None
+
+                # Create new connection
+                target = f"{self._host}:{self._port}"
+                self._channel = grpc.aio.insecure_channel(
+                    target, options=_CHANNEL_OPTIONS
+                )
+                self._stub = mt5_pb2_grpc.MT5ServiceStub(self._channel)
+
+                # Test connection with health check
+                await self._stub.HealthCheck(mt5_pb2.Empty(), timeout=5.0)
+
+                log.info(
+                    "Reconnected successfully after %d attempts",
+                    attempt + 1,
+                )
+                self._consecutive_failures = 0
+                return True  # noqa: TRY300
+
+            except Exception as e:  # noqa: BLE001
+                log.warning(
+                    "Reconnection attempt %d/%d failed: %s",
+                    attempt + 1,
+                    self._max_reconnect_attempts,
+                    e,
+                )
+
+                # Exponential backoff with jitter
+                jitter = random.uniform(0, delay * 0.1)  # noqa: S311
+                wait_time = delay + jitter
+                await asyncio.sleep(wait_time)
+                delay = min(
+                    delay * self._config.retry_exponential_base,
+                    self._config.retry_max_delay,
+                )
+
+        log.error(
+            "Failed to reconnect after %d attempts",
+            self._max_reconnect_attempts,
+        )
+        return False
+
+    async def _ensure_connected_with_reconnect(self) -> mt5_pb2_grpc.MT5ServiceStub:
+        """Ensure connection with auto-reconnect if enabled.
+
+        Returns:
+            gRPC stub for making calls.
+
+        Raises:
+            ConnectionError: If not connected and reconnection fails.
+
+        """
+        if self._stub is not None:
+            return self._stub
+
+        if self._config.enable_auto_reconnect:
+            success = await self._reconnect_with_backoff()
+            if success and self._stub is not None:
+                return self._stub
+            msg = f"Failed to reconnect after {self._max_reconnect_attempts} attempts"
+            raise ConnectionError(msg)
+
+        raise ConnectionError(_NOT_CONNECTED_MSG)
+
+    async def _health_monitor_task(self) -> None:
+        """Background task that monitors connection health.
+
+        Runs periodically and checks connection status.
+        Marks connection as disconnected if health check fails.
+
+        """
+        log.info("Health monitor started (interval: %ds)", self._health_check_interval)
+
+        while self._health_monitor_running:
+            try:
+                await asyncio.sleep(self._health_check_interval)
+
+                if self._stub is not None:
+                    try:
+                        result = await asyncio.wait_for(
+                            self._stub.HealthCheck(mt5_pb2.Empty()),
+                            timeout=5.0,
+                        )
+                        if not result.connected:
+                            log.warning("Health check: MT5 terminal not connected")
+                            self._consecutive_failures += 1
+                        else:
+                            self._consecutive_failures = 0
+                            log.debug("Health check: OK")
+
+                    except TimeoutError:
+                        log.warning("Health check timeout")
+                        self._consecutive_failures += 1
+                        threshold = _HEALTH_CHECK_FAILURE_THRESHOLD
+                        if self._consecutive_failures >= threshold:
+                            log.warning(
+                                "Health check failed %d times, marking disconnected",
+                                self._consecutive_failures,
+                            )
+                            await self._disconnect()
+
+                    except grpc.aio.AioRpcError as e:
+                        log.warning("Health check gRPC error: %s", e)
+                        self._consecutive_failures += 1
+
+            except asyncio.CancelledError:
+                log.info("Health monitor cancelled")
+                break
+            except Exception as e:  # noqa: BLE001
+                log.warning("Health monitor unexpected error: %s", e)
+
+        log.info("Health monitor stopped")
+
+    async def start_health_monitor(self) -> None:
+        """Start the health monitoring background task.
+
+        Only starts if enable_health_monitor is True in config.
+
+        """
+        if not self._config.enable_health_monitor:
+            log.debug("Health monitor disabled in config")
+            return
+
+        if self._health_task is not None and not self._health_task.done():
+            log.debug("Health monitor already running")
+            return
+
+        self._health_monitor_running = True
+        self._health_task = asyncio.create_task(self._health_monitor_task())
+        log.info("Health monitor task created")
+
+    async def stop_health_monitor(self) -> None:
+        """Stop the health monitoring background task."""
+        self._health_monitor_running = False
+
+        if self._health_task is not None:
+            self._health_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._health_task
+            self._health_task = None
+            log.info("Health monitor stopped")
+
+    def _record_circuit_success(self) -> None:
+        """Record successful operation in circuit breaker."""
+        if self._circuit_breaker is not None:
+            self._circuit_breaker.record_success()
+
+    def _record_circuit_failure(self) -> None:
+        """Record failed operation in circuit breaker."""
+        if self._circuit_breaker is not None:
+            self._circuit_breaker.record_failure()
+
+    def _check_circuit_breaker(self, operation: str) -> None:
+        """Check if circuit breaker allows operation.
+
+        Args:
+            operation: Name of operation for logging.
+
+        Raises:
+            ConnectionError: If circuit breaker is OPEN.
+
+        """
+        cb = self._circuit_breaker
+        if cb is not None and not cb.can_execute():
+            msg = f"Circuit breaker OPEN for {operation} ({cb.failure_count} failures)"
+            raise ConnectionError(msg)
 
     # =========================================================================
     # Public connection methods
@@ -228,7 +454,7 @@ class AsyncMetaTrader5:
         """
         if not json_data:
             return None
-        result: dict[str, JSONValue] = json.loads(json_data)
+        result: dict[str, JSONValue] = orjson.loads(json_data)
         return result
 
     def _json_list_to_dicts(
@@ -246,13 +472,11 @@ class AsyncMetaTrader5:
         if not json_items:
             return None
         result: list[dict[str, JSONValue]] = [
-            json.loads(item) for item in json_items if item
+            orjson.loads(item) for item in json_items if item
         ]
         return result
 
-    def _numpy_from_proto(
-        self, proto: mt5_pb2.NumpyArray
-    ) -> NDArray[np.void] | None:
+    def _numpy_from_proto(self, proto: mt5_pb2.NumpyArray) -> NDArray[np.void] | None:
         """Convert NumpyArray proto to numpy array.
 
         Args:
@@ -264,7 +488,17 @@ class AsyncMetaTrader5:
         """
         if not proto.data or not proto.dtype:
             return None
-        arr = np.frombuffer(proto.data, dtype=proto.dtype)
+        # Parse dtype string back to numpy dtype
+        # The dtype comes as str(arr.dtype) e.g. "[('time', '<i8'), ...]"
+        dtype_str = proto.dtype
+        if dtype_str.startswith("["):
+            # Structured array dtype - parse the list of tuples
+            dtype_spec = ast.literal_eval(dtype_str)
+            dtype = np.dtype(dtype_spec)
+        else:
+            # Simple dtype like 'float64', '<f8'
+            dtype = np.dtype(dtype_str)
+        arr = np.frombuffer(proto.data, dtype=dtype)
         if proto.shape:
             arr = arr.reshape(tuple(proto.shape))
         return arr
@@ -285,7 +519,7 @@ class AsyncMetaTrader5:
             return None
         result: list[dict[str, JSONValue]] = []
         for chunk in response.chunks:
-            chunk_data: list[dict[str, JSONValue]] = json.loads(chunk)
+            chunk_data: list[dict[str, JSONValue]] = orjson.loads(chunk)
             result.extend(chunk_data)
         return result
 
@@ -307,7 +541,7 @@ class AsyncMetaTrader5:
     # TERMINAL METHODS
     # =========================================================================
 
-    async def initialize(  # noqa: PLR0913
+    async def initialize(
         self,
         path: str | None = None,
         login: int | None = None,
@@ -349,7 +583,7 @@ class AsyncMetaTrader5:
         if init_timeout is not None:
             request.timeout = init_timeout
 
-        response = await stub.Initialize(request)
+        response = await stub.Initialize(request, timeout=self._timeout)
         return response.result
 
     async def login(
@@ -378,7 +612,7 @@ class AsyncMetaTrader5:
             server=server,
             timeout=login_timeout,
         )
-        response = await stub.Login(request)
+        response = await stub.Login(request, timeout=self._timeout)
         return response.result
 
     async def shutdown(self) -> None:
@@ -388,7 +622,7 @@ class AsyncMetaTrader5:
         """
         if self._stub is not None:
             with suppress(grpc.aio.AioRpcError):
-                await self._stub.Shutdown(mt5_pb2.Empty())
+                await self._stub.Shutdown(mt5_pb2.Empty(), timeout=self._timeout)
 
     async def health_check(self) -> dict[str, bool | int | str]:
         """Check MT5 service health status.
@@ -404,7 +638,7 @@ class AsyncMetaTrader5:
 
         """
         stub = self._ensure_connected()
-        response = await stub.HealthCheck(mt5_pb2.Empty())
+        response = await stub.HealthCheck(mt5_pb2.Empty(), timeout=self._timeout)
         return {
             "healthy": response.healthy,
             "mt5_available": response.mt5_available,
@@ -422,7 +656,7 @@ class AsyncMetaTrader5:
 
         """
         stub = self._ensure_connected()
-        response = await stub.Version(mt5_pb2.Empty())
+        response = await stub.Version(mt5_pb2.Empty(), timeout=self._timeout)
         if not response.build:
             return None
         return (response.major, response.minor, response.build)
@@ -435,30 +669,32 @@ class AsyncMetaTrader5:
 
         """
         stub = self._ensure_connected()
-        response = await stub.LastError(mt5_pb2.Empty())
+        response = await stub.LastError(mt5_pb2.Empty(), timeout=self._timeout)
         return (response.code, response.message)
 
-    async def terminal_info(self) -> dict[str, JSONValue] | None:
+    async def terminal_info(self) -> MT5Models.TerminalInfo | None:
         """Get terminal information.
 
         Returns:
-            Dictionary with terminal info or None.
+            TerminalInfo object or None.
 
         """
         stub = self._ensure_connected()
-        response = await stub.TerminalInfo(mt5_pb2.Empty())
-        return self._json_to_dict(response.json_data)
+        response = await stub.TerminalInfo(mt5_pb2.Empty(), timeout=self._timeout)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.TerminalInfo.from_mt5(result_dict)
 
-    async def account_info(self) -> dict[str, JSONValue] | None:
+    async def account_info(self) -> MT5Models.AccountInfo | None:
         """Get account information.
 
         Returns:
-            Dictionary with account info or None.
+            AccountInfo object or None.
 
         """
         stub = self._ensure_connected()
-        response = await stub.AccountInfo(mt5_pb2.Empty())
-        return self._json_to_dict(response.json_data)
+        response = await stub.AccountInfo(mt5_pb2.Empty(), timeout=self._timeout)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.AccountInfo.from_mt5(result_dict)
 
     # =========================================================================
     # SYMBOL METHODS
@@ -472,7 +708,7 @@ class AsyncMetaTrader5:
 
         """
         stub = self._ensure_connected()
-        response = await stub.SymbolsTotal(mt5_pb2.Empty())
+        response = await stub.SymbolsTotal(mt5_pb2.Empty(), timeout=self._timeout)
         return response.value
 
     async def symbols_get(
@@ -491,40 +727,40 @@ class AsyncMetaTrader5:
         request = mt5_pb2.SymbolsRequest()
         if group is not None:
             request.group = group
-        response = await stub.SymbolsGet(request)
+        response = await stub.SymbolsGet(request, timeout=self._timeout)
         return self._unwrap_symbols_chunks(response)
 
-    async def symbol_info(self, symbol: str) -> dict[str, JSONValue] | None:
+    async def symbol_info(self, symbol: str) -> MT5Models.SymbolInfo | None:
         """Get detailed symbol information.
 
         Args:
             symbol: Symbol name (e.g., "EURUSD").
 
         Returns:
-            Dictionary with symbol info or None.
+            SymbolInfo object or None.
 
         """
         stub = self._ensure_connected()
         request = mt5_pb2.SymbolRequest(symbol=symbol)
-        response = await stub.SymbolInfo(request)
-        return self._json_to_dict(response.json_data)
+        response = await stub.SymbolInfo(request, timeout=self._timeout)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.SymbolInfo.from_mt5(result_dict)
 
-    async def symbol_info_tick(
-        self, symbol: str
-    ) -> dict[str, JSONValue] | None:
+    async def symbol_info_tick(self, symbol: str) -> MT5Models.Tick | None:
         """Get current tick data for a symbol.
 
         Args:
             symbol: Symbol name (e.g., "EURUSD").
 
         Returns:
-            Dictionary with tick info or None.
+            Tick object or None.
 
         """
         stub = self._ensure_connected()
         request = mt5_pb2.SymbolRequest(symbol=symbol)
-        response = await stub.SymbolInfoTick(request)
-        return self._json_to_dict(response.json_data)
+        response = await stub.SymbolInfoTick(request, timeout=self._timeout)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.Tick.from_mt5(result_dict)
 
     async def symbol_select(self, symbol: str, *, enable: bool = True) -> bool:
         """Select/deselect symbol in Market Watch.
@@ -539,7 +775,7 @@ class AsyncMetaTrader5:
         """
         stub = self._ensure_connected()
         request = mt5_pb2.SymbolSelectRequest(symbol=symbol, enable=enable)
-        response = await stub.SymbolSelect(request)
+        response = await stub.SymbolSelect(request, timeout=self._timeout)
         return response.result
 
     # =========================================================================
@@ -572,7 +808,7 @@ class AsyncMetaTrader5:
             date_from=self._to_timestamp(date_from),
             count=count,
         )
-        response = await stub.CopyRatesFrom(request)
+        response = await stub.CopyRatesFrom(request, timeout=self._timeout)
         return self._numpy_from_proto(response)
 
     async def copy_rates_from_pos(
@@ -601,7 +837,7 @@ class AsyncMetaTrader5:
             start_pos=start_pos,
             count=count,
         )
-        response = await stub.CopyRatesFromPos(request)
+        response = await stub.CopyRatesFromPos(request, timeout=self._timeout)
         return self._numpy_from_proto(response)
 
     async def copy_rates_range(
@@ -630,7 +866,7 @@ class AsyncMetaTrader5:
             date_from=self._to_timestamp(date_from),
             date_to=self._to_timestamp(date_to),
         )
-        response = await stub.CopyRatesRange(request)
+        response = await stub.CopyRatesRange(request, timeout=self._timeout)
         return self._numpy_from_proto(response)
 
     async def copy_ticks_from(
@@ -659,7 +895,7 @@ class AsyncMetaTrader5:
             count=count,
             flags=flags,
         )
-        response = await stub.CopyTicksFrom(request)
+        response = await stub.CopyTicksFrom(request, timeout=self._timeout)
         return self._numpy_from_proto(response)
 
     async def copy_ticks_range(
@@ -688,7 +924,7 @@ class AsyncMetaTrader5:
             date_to=self._to_timestamp(date_to),
             flags=flags,
         )
-        response = await stub.CopyTicksRange(request)
+        response = await stub.CopyTicksRange(request, timeout=self._timeout)
         return self._numpy_from_proto(response)
 
     # =========================================================================
@@ -721,7 +957,7 @@ class AsyncMetaTrader5:
             volume=volume,
             price=price,
         )
-        response = await stub.OrderCalcMargin(request)
+        response = await stub.OrderCalcMargin(request, timeout=self._timeout)
         return response.value if response.HasField("value") else None
 
     async def order_calc_profit(
@@ -753,42 +989,44 @@ class AsyncMetaTrader5:
             price_open=price_open,
             price_close=price_close,
         )
-        response = await stub.OrderCalcProfit(request)
+        response = await stub.OrderCalcProfit(request, timeout=self._timeout)
         return response.value if response.HasField("value") else None
 
     async def order_check(
         self, request: dict[str, JSONValue]
-    ) -> dict[str, JSONValue] | None:
+    ) -> MT5Models.OrderCheckResult | None:
         """Check order validity without sending.
 
         Args:
             request: Order request dictionary.
 
         Returns:
-            Order check result or None.
+            Order check result object or None.
 
         """
         stub = self._ensure_connected()
-        grpc_request = mt5_pb2.OrderRequest(json_request=json.dumps(request))
-        response = await stub.OrderCheck(grpc_request)
-        return self._json_to_dict(response.json_data)
+        grpc_request = mt5_pb2.OrderRequest(json_request=orjson.dumps(request).decode())
+        response = await stub.OrderCheck(grpc_request, timeout=self._timeout)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.OrderCheckResult.from_mt5(result_dict)
 
     async def order_send(
         self, request: dict[str, JSONValue]
-    ) -> dict[str, JSONValue] | None:
+    ) -> MT5Models.OrderResult | None:
         """Send trading order to MT5.
 
         Args:
             request: Order request dictionary.
 
         Returns:
-            Order execution result or None.
+            Order execution result object or None.
 
         """
         stub = self._ensure_connected()
-        grpc_request = mt5_pb2.OrderRequest(json_request=json.dumps(request))
-        response = await stub.OrderSend(grpc_request)
-        return self._json_to_dict(response.json_data)
+        grpc_request = mt5_pb2.OrderRequest(json_request=orjson.dumps(request).decode())
+        response = await stub.OrderSend(grpc_request, timeout=self._timeout)
+        result_dict = self._json_to_dict(response.json_data)
+        return MT5Models.OrderResult.from_mt5(result_dict)
 
     # =========================================================================
     # POSITIONS METHODS
@@ -802,7 +1040,7 @@ class AsyncMetaTrader5:
 
         """
         stub = self._ensure_connected()
-        response = await stub.PositionsTotal(mt5_pb2.Empty())
+        response = await stub.PositionsTotal(mt5_pb2.Empty(), timeout=self._timeout)
         return response.value
 
     async def positions_get(
@@ -830,7 +1068,7 @@ class AsyncMetaTrader5:
             request.group = group
         if ticket is not None:
             request.ticket = ticket
-        response = await stub.PositionsGet(request)
+        response = await stub.PositionsGet(request, timeout=self._timeout)
         return self._json_list_to_dicts(list(response.json_items))
 
     # =========================================================================
@@ -845,7 +1083,7 @@ class AsyncMetaTrader5:
 
         """
         stub = self._ensure_connected()
-        response = await stub.OrdersTotal(mt5_pb2.Empty())
+        response = await stub.OrdersTotal(mt5_pb2.Empty(), timeout=self._timeout)
         return response.value
 
     async def orders_get(
@@ -873,7 +1111,7 @@ class AsyncMetaTrader5:
             request.group = group
         if ticket is not None:
             request.ticket = ticket
-        response = await stub.OrdersGet(request)
+        response = await stub.OrdersGet(request, timeout=self._timeout)
         return self._json_list_to_dicts(list(response.json_items))
 
     # =========================================================================
@@ -900,7 +1138,7 @@ class AsyncMetaTrader5:
             date_from=self._to_timestamp(date_from),
             date_to=self._to_timestamp(date_to),
         )
-        response = await stub.HistoryOrdersTotal(request)
+        response = await stub.HistoryOrdersTotal(request, timeout=self._timeout)
         return response.value
 
     async def history_orders_get(
@@ -936,7 +1174,7 @@ class AsyncMetaTrader5:
             request.ticket = ticket
         if position is not None:
             request.position = position
-        response = await stub.HistoryOrdersGet(request)
+        response = await stub.HistoryOrdersGet(request, timeout=self._timeout)
         return self._json_list_to_dicts(list(response.json_items))
 
     async def history_deals_total(
@@ -959,7 +1197,7 @@ class AsyncMetaTrader5:
             date_from=self._to_timestamp(date_from),
             date_to=self._to_timestamp(date_to),
         )
-        response = await stub.HistoryDealsTotal(request)
+        response = await stub.HistoryDealsTotal(request, timeout=self._timeout)
         return response.value
 
     async def history_deals_get(
@@ -995,7 +1233,7 @@ class AsyncMetaTrader5:
             request.ticket = ticket
         if position is not None:
             request.position = position
-        response = await stub.HistoryDealsGet(request)
+        response = await stub.HistoryDealsGet(request, timeout=self._timeout)
         return self._json_list_to_dicts(list(response.json_items))
 
     # =========================================================================
@@ -1016,12 +1254,10 @@ class AsyncMetaTrader5:
         """
         stub = self._ensure_connected()
         request = mt5_pb2.SymbolRequest(symbol=symbol)
-        response = await stub.MarketBookAdd(request)
+        response = await stub.MarketBookAdd(request, timeout=self._timeout)
         return response.result
 
-    async def market_book_get(
-        self, symbol: str
-    ) -> list[dict[str, JSONValue]] | None:
+    async def market_book_get(self, symbol: str) -> list[dict[str, JSONValue]] | None:
         """Get market depth (DOM) data for a symbol.
 
         Requires prior market_book_add call.
@@ -1035,7 +1271,7 @@ class AsyncMetaTrader5:
         """
         stub = self._ensure_connected()
         request = mt5_pb2.SymbolRequest(symbol=symbol)
-        response = await stub.MarketBookGet(request)
+        response = await stub.MarketBookGet(request, timeout=self._timeout)
         return self._json_list_to_dicts(list(response.json_items))
 
     async def market_book_release(self, symbol: str) -> bool:
@@ -1050,5 +1286,5 @@ class AsyncMetaTrader5:
         """
         stub = self._ensure_connected()
         request = mt5_pb2.SymbolRequest(symbol=symbol)
-        response = await stub.MarketBookRelease(request)
+        response = await stub.MarketBookRelease(request, timeout=self._timeout)
         return response.result
