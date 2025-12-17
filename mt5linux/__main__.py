@@ -1,18 +1,18 @@
 """Entry point for mt5linux.
 
-mt5linux provides both client and server components for MetaTrader5 via RPyC.
+mt5linux provides both client and server components for MetaTrader5 via gRPC.
 
 Usage:
     # Show info (default)
     python -m mt5linux
 
-    # Run server (on Windows with MT5)
+    # Run gRPC server (on Windows with MT5 via Wine)
     python -m mt5linux --server
-    python -m mt5linux --server --host 0.0.0.0 --port 18812 --debug
+    python -m mt5linux --server --host 0.0.0.0 --port 50051 --debug
 
     # Client usage (in Python code)
     from mt5linux import MetaTrader5
-    with MetaTrader5(host="windows-ip", port=18812) as mt5:
+    with MetaTrader5(host="windows-ip", port=50051) as mt5:
         mt5.initialize(login=12345)
         account = mt5.account_info()
 """
@@ -26,31 +26,38 @@ from mt5linux.bridge import main as bridge_main
 def _print_info() -> None:
     """Print package info and usage."""
     info = f"""\
-mt5linux v{__version__} - MetaTrader5 Client/Server for Linux
+mt5linux v{__version__} - MetaTrader5 Client/Server for Linux via gRPC
 
 Usage:
     python -m mt5linux              # Show this info
-    python -m mt5linux --server     # Run RPyC server (Windows with MT5)
+    python -m mt5linux --server     # Run gRPC server (Windows with MT5)
 
 Server Options:
-    --server              Start RPyC bridge server
+    --server              Start gRPC bridge server
     --host HOST           Bind address (default: 0.0.0.0)
-    -p, --port PORT       Listen port (default: 18812)
-    --threads N           Worker threads (default: 10)
-    --timeout SECS        Request timeout (default: 300)
+    -p, --port PORT       Listen port (default: 50051)
+    --workers N           Worker threads (default: 10)
     -d, --debug           Enable debug logging
 
 Client Usage (Python):
     from mt5linux import MetaTrader5, MT5Constants
 
-    with MetaTrader5(host="windows-ip", port=18812) as mt5:
+    with MetaTrader5(host="windows-ip", port=50051) as mt5:
         mt5.initialize(login=12345, password="pass", server="Demo")
         account = mt5.account_info()
         rates = mt5.copy_rates_from_pos("EURUSD", MT5Constants.TimeFrame.H1, 0, 100)
 
+Async Client Usage (Python):
+    from mt5linux import AsyncMetaTrader5
+
+    async with AsyncMetaTrader5(host="windows-ip", port=50051) as mt5:
+        await mt5.initialize(login=12345, password="pass", server="Demo")
+        account = await mt5.account_info()
+        rates = await mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 100)
+
 Configuration:
     MT5_HOST          - Server host (default: localhost)
-    MT5_RPYC_PORT     - Server port (default: 18812)
+    MT5_GRPC_PORT     - Server port (default: 50051)
 
 Documentation:
     https://www.mql5.com/en/docs/python_metatrader5
@@ -65,7 +72,7 @@ def main() -> int:
     # Check for --server flag
     if "--server" in args or "-s" in args:
         # Remove --server/-s flag and pass remaining args to bridge
-        server_args = [a for a in args if a not in ("--server", "-s")]
+        server_args = [a for a in args if a not in {"--server", "-s"}]
         return bridge_main(server_args)
 
     # Check for help

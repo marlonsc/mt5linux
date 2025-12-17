@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import grpc
 import pytest
 
 from mt5linux import MetaTrader5
 
-from .conftest import TEST_RPYC_PORT
+from .conftest import TEST_GRPC_PORT
 
 
 class TestMetaTrader5Connection:
@@ -17,25 +18,25 @@ class TestMetaTrader5Connection:
     def test_connect_and_close(self, mt5_raw: MetaTrader5) -> None:
         """Test connection and close."""
         # Connection already established by fixture
-        assert mt5_raw._conn is not None
-        mt5_raw.close()
-        assert mt5_raw._conn is None
+        assert mt5_raw._channel is not None
+        mt5_raw.disconnect()
+        assert mt5_raw._channel is None
 
     def test_context_manager(self) -> None:
         """Test context manager opens and closes connection correctly."""
         try:
-            with MetaTrader5(host="localhost", port=TEST_RPYC_PORT) as mt5:
-                assert mt5._conn is not None
+            with MetaTrader5(host="localhost", port=TEST_GRPC_PORT) as mt5:
+                assert mt5._channel is not None
         except (ConnectionError, EOFError, OSError) as e:
             pytest.skip(f"MT5 connection failed: {e}")
-        # After exiting context, connection closed
-        assert mt5._conn is None
+        # After exiting context, channel closed
+        assert mt5._channel is None
 
-    def test_close_idempotent(self, mt5_raw: MetaTrader5) -> None:
-        """Test that close() can be called multiple times."""
-        mt5_raw.close()
-        mt5_raw.close()  # Should not raise
-        assert mt5_raw._conn is None
+    def test_disconnect_idempotent(self, mt5_raw: MetaTrader5) -> None:
+        """Test that disconnect() can be called multiple times."""
+        mt5_raw.disconnect()
+        mt5_raw.disconnect()  # Should not raise
+        assert mt5_raw._channel is None
 
 
 class TestMetaTrader5Initialize:
@@ -141,7 +142,9 @@ class TestMetaTrader5CopyRates:
             rates = mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 10)
         except Exception as e:
             if "pickling is disabled" in str(e):
-                pytest.skip("RPyC pickling disabled - numpy serialization not available")  # noqa: E501
+                pytest.skip(
+                    "RPyC pickling disabled - numpy serialization not available"
+                )  # noqa: E501
             raise
         if rates is None:
             pytest.skip("Market data not available (market may be closed)")
@@ -166,7 +169,9 @@ class TestMetaTrader5CopyRates:
         """Test copy_rates_range with interval."""
         date_to = datetime.now(UTC)
         date_from = date_to - timedelta(days=7)
-        rates = mt5.copy_rates_range("EURUSD", mt5.TIMEFRAME_H1, date_from, date_to)
+        rates = mt5.copy_rates_range(
+            "EURUSD", mt5.TIMEFRAME_H1, date_from, date_to
+        )
         if rates is not None:
             assert len(rates) > 0
             assert hasattr(rates, "dtype")
@@ -179,7 +184,9 @@ class TestMetaTrader5CopyTicks:
         """Test copy_ticks_from returns local array."""
         mt5.symbol_select("EURUSD", True)
         date_from = datetime.now(UTC) - timedelta(hours=1)
-        ticks = mt5.copy_ticks_from("EURUSD", date_from, 100, mt5.COPY_TICKS_ALL)
+        ticks = mt5.copy_ticks_from(
+            "EURUSD", date_from, 100, mt5.COPY_TICKS_ALL
+        )
         if ticks is not None and len(ticks) > 0:
             assert hasattr(ticks, "dtype")
             assert ticks.dtype.names is not None
@@ -191,7 +198,9 @@ class TestMetaTrader5CopyTicks:
         mt5.symbol_select("EURUSD", True)
         date_to = datetime.now(UTC)
         date_from = date_to - timedelta(minutes=10)
-        ticks = mt5.copy_ticks_range("EURUSD", date_from, date_to, mt5.COPY_TICKS_ALL)
+        ticks = mt5.copy_ticks_range(
+            "EURUSD", date_from, date_to, mt5.COPY_TICKS_ALL
+        )
         # May be None or empty if market closed
         if ticks is not None:
             assert hasattr(ticks, "dtype")
@@ -280,7 +289,9 @@ class TestMetaTrader5Login:
         assert account.login == login
 
     @pytest.mark.integration
-    def test_login_with_invalid_credentials(self, mt5_raw: MetaTrader5) -> None:
+    def test_login_with_invalid_credentials(
+        self, mt5_raw: MetaTrader5
+    ) -> None:
         """Test login with invalid credentials returns False."""
         # Initialize first
         init_result = mt5_raw.initialize()
@@ -353,22 +364,24 @@ class TestMetaTrader5Resilience:
         account1 = mt5.account_info()
         assert account1 is not None
 
-        # Force close and verify error on next call
-        mt5._close()
+        # Force disconnect and verify error on next call
+        mt5.disconnect()
 
         # This should raise since connection is closed
-        with pytest.raises((ConnectionError, RuntimeError, AttributeError)):
+        with pytest.raises((ConnectionError, RuntimeError, grpc.RpcError)):
             mt5.account_info()
 
     @pytest.mark.integration
-    def test_close_is_idempotent(self, mt5_raw: MetaTrader5) -> None:
-        """Test that _close() can be called multiple times safely."""
-        mt5_raw._close()
-        mt5_raw._close()  # Should not raise
-        mt5_raw._close()  # Should not raise
+    def test_disconnect_is_idempotent_raw(self, mt5_raw: MetaTrader5) -> None:
+        """Test that disconnect() can be called multiple times safely."""
+        mt5_raw.disconnect()
+        mt5_raw.disconnect()  # Should not raise
+        mt5_raw.disconnect()  # Should not raise
 
     @pytest.mark.integration
-    def test_multiple_operations_same_connection(self, mt5: MetaTrader5) -> None:
+    def test_multiple_operations_same_connection(
+        self, mt5: MetaTrader5
+    ) -> None:
         """Test multiple sequential operations on same connection."""
         # Perform multiple operations
         for _ in range(5):

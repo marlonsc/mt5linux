@@ -4,8 +4,8 @@ requires = ["poetry-core"]
 
 [tool.poetry]
     name = "mt5linux"
-    version = "0.3.0"
-    description = "MetaTrader5 bridge for Linux via rpyc"
+    version = "0.6.0"
+    description = "MetaTrader5 bridge for Linux via gRPC"
     authors = ["Lucas Prett Campagna"]
     license = "MIT"
     readme = "README.md"
@@ -14,11 +14,13 @@ requires = ["poetry-core"]
     packages = [{ include = "mt5linux" }]
 
     [tool.poetry.dependencies]
+        grpcio = ">=1.60.0"
+        grpcio-tools = ">=1.60.0"
         numpy = ">=1.26.4,<2.0"
+        protobuf = ">=4.25.0"
         pydantic = "^2.10.0"
         pydantic-settings = "^2.12.0"
         python = ">=3.13,<3.14"
-        rpyc = "^6.0.2"
         structlog = "^25.5.0"
 
     [tool.poetry.group.dev.dependencies]
@@ -56,10 +58,10 @@ requires = ["poetry-core"]
 
 [tool.mypy]
     exclude = [
-        "*.pyi",
-        "mt5linux/mt5_pb2.py",
-        "mt5linux/mt5_pb2_grpc.py",
-        "typings/",
+        '.*\.pyi$',
+        'mt5linux/mt5_pb2\.py$',
+        'mt5linux/mt5_pb2_grpc\.py$',
+        'typings/',
     ]
     mypy_path = "typings"
     python_version = "3.13"

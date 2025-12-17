@@ -203,9 +203,9 @@ class TestApiLimits:
         """
         # Test incremental group sizes (min_expected based on typical broker)
         test_groups = [
-            ("*USD*", 10),      # Small: USD pairs
-            ("*EUR*", 10),      # Medium: EUR pairs
-            ("*", 100),         # All symbols - should work with optimization
+            ("*USD*", 10),  # Small: USD pairs
+            ("*EUR*", 10),  # Medium: EUR pairs
+            ("*", 100),  # All symbols - should work with optimization
         ]
 
         for group_filter, min_expected in test_groups:
@@ -215,7 +215,9 @@ class TestApiLimits:
                 symbols = mt5.symbols_get(group=group_filter)
 
             if symbols is None:
-                pytest.skip(f"symbols_get(group={group_filter!r}) not available")
+                pytest.skip(
+                    f"symbols_get(group={group_filter!r}) not available"
+                )
 
             count = len(symbols)
             assert count >= min_expected, (
@@ -225,8 +227,12 @@ class TestApiLimits:
             # Verify structure
             if count > 0:
                 symbol = symbols[0]
-                assert hasattr(symbol, "name"), "Symbol missing 'name' attribute"
-                assert hasattr(symbol, "visible"), "Symbol missing 'visible' attribute"
+                assert hasattr(symbol, "name"), (
+                    "Symbol missing 'name' attribute"
+                )
+                assert hasattr(symbol, "visible"), (
+                    "Symbol missing 'visible' attribute"
+                )
 
         # Final verification: all symbols should be > 1000
         all_symbols = mt5.symbols_get()
@@ -260,7 +266,9 @@ class TestApiLimits:
 class TestErrorHandling:
     """Tests for error handling and recovery."""
 
-    def test_last_error_after_invalid_operation(self, mt5: MetaTrader5) -> None:
+    def test_last_error_after_invalid_operation(
+        self, mt5: MetaTrader5
+    ) -> None:
         """Test that last_error is set after failed operation."""
         # Force an error with invalid symbol
         mt5.symbol_info("DEFINITELY_INVALID_SYMBOL")
@@ -341,7 +349,9 @@ class TestErrorHandling:
         account = mt5.account_info()
 
         if account is None:
-            pytest.skip("account_info returned None (MT5 connection may be unstable)")
+            pytest.skip(
+                "account_info returned None (MT5 connection may be unstable)"
+            )
 
         assert account.login > 0
         assert account.balance >= 0

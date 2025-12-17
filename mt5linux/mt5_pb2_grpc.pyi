@@ -1542,7 +1542,10 @@ class MT5ServiceServicer(abc.ABC):
         self,
         request: mt5linux.mt5_pb2.Empty,
         context: _ServicerContext,
-    ) -> mt5linux.mt5_pb2.Empty | collections.abc.Awaitable[mt5linux.mt5_pb2.Empty]: ...
+    ) -> (
+        mt5linux.mt5_pb2.Empty
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.Empty]
+    ): ...
     @abc.abstractmethod
     def Version(
         self,
@@ -1576,7 +1579,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.Empty,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictData | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
+        mt5linux.mt5_pb2.DictData
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
     ): ...
     @abc.abstractmethod
     def AccountInfo(
@@ -1584,7 +1588,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.Empty,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictData | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
+        mt5linux.mt5_pb2.DictData
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
     ): ...
     @abc.abstractmethod
     def SymbolsTotal(
@@ -1610,7 +1615,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.SymbolRequest,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictData | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
+        mt5linux.mt5_pb2.DictData
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
     ): ...
     @abc.abstractmethod
     def SymbolInfoTick(
@@ -1618,7 +1624,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.SymbolRequest,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictData | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
+        mt5linux.mt5_pb2.DictData
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
     ): ...
     @abc.abstractmethod
     def SymbolSelect(
@@ -1698,7 +1705,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.OrderRequest,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictData | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
+        mt5linux.mt5_pb2.DictData
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
     ): ...
     @abc.abstractmethod
     def OrderSend(
@@ -1706,7 +1714,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.OrderRequest,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictData | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
+        mt5linux.mt5_pb2.DictData
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictData]
     ): ...
     @abc.abstractmethod
     def PositionsTotal(
@@ -1723,7 +1732,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.PositionsRequest,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictList | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
+        mt5linux.mt5_pb2.DictList
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
     ): ...
     @abc.abstractmethod
     def OrdersTotal(
@@ -1740,7 +1750,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.OrdersRequest,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictList | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
+        mt5linux.mt5_pb2.DictList
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
     ): ...
     @abc.abstractmethod
     def HistoryOrdersTotal(
@@ -1757,7 +1768,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.HistoryRequest,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictList | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
+        mt5linux.mt5_pb2.DictList
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
     ): ...
     @abc.abstractmethod
     def HistoryDealsTotal(
@@ -1774,7 +1786,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.HistoryRequest,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictList | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
+        mt5linux.mt5_pb2.DictList
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
     ): ...
     @abc.abstractmethod
     def MarketBookAdd(
@@ -1791,7 +1804,8 @@ class MT5ServiceServicer(abc.ABC):
         request: mt5linux.mt5_pb2.SymbolRequest,
         context: _ServicerContext,
     ) -> (
-        mt5linux.mt5_pb2.DictList | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
+        mt5linux.mt5_pb2.DictList
+        | collections.abc.Awaitable[mt5linux.mt5_pb2.DictList]
     ): ...
     @abc.abstractmethod
     def MarketBookRelease(

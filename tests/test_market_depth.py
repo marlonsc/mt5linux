@@ -67,7 +67,9 @@ class TestMarketBook:
                 assert hasattr(entry, "volume")
 
     @pytest.mark.market_depth
-    def test_market_book_get_without_subscription(self, mt5: MetaTrader5) -> None:
+    def test_market_book_get_without_subscription(
+        self, mt5: MetaTrader5
+    ) -> None:
         """Test getting market book without explicit subscription.
 
         Note: Some brokers may provide market depth data even without
@@ -104,7 +106,9 @@ class TestMarketBook:
         assert result is True
 
     @pytest.mark.market_depth
-    def test_market_book_release_not_subscribed(self, mt5: MetaTrader5) -> None:
+    def test_market_book_release_not_subscribed(
+        self, mt5: MetaTrader5
+    ) -> None:
         """Test unsubscribing when not subscribed."""
         result = mt5.market_book_release("USDJPY")
 

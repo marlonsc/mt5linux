@@ -18,7 +18,7 @@ Usage:
 """
 
 from datetime import datetime
-from typing import Any, Self
+from typing import Protocol, Self, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
@@ -27,6 +27,13 @@ from mt5linux.constants import MT5Constants
 
 # Default config instance for model defaults
 _config = MT5Config()
+
+
+@runtime_checkable
+class _NamedTupleProtocol(Protocol):
+    """Protocol for objects with _asdict method (namedtuple-like)."""
+
+    def _asdict(self) -> dict[str, object]: ...
 
 
 class MT5Models:
@@ -56,7 +63,7 @@ class MT5Models:
         model_config = ConfigDict(frozen=True, from_attributes=True)
 
         @classmethod
-        def from_mt5(cls, obj: Any) -> Self | None:
+        def from_mt5(cls, obj: object) -> Self | None:
             """Create model from MT5 object.
 
             Args:
@@ -69,10 +76,9 @@ class MT5Models:
             if obj is None:
                 return None
             # Check for real namedtuple (_asdict returns actual dict)
-            if hasattr(obj, "_asdict") and callable(getattr(obj, "_asdict", None)):
+            if isinstance(obj, _NamedTupleProtocol):
                 result = obj._asdict()
-                if isinstance(result, dict):
-                    return cls.model_validate(result)
+                return cls.model_validate(result)
             # Use from_attributes for objects with direct attribute access
             return cls.model_validate(obj)
 
@@ -105,7 +111,9 @@ class MT5Models:
         comment: str = Field(max_length=31, default="")
         type_time: MT5Constants.OrderTime = Field(default=_config.order_time)
         expiration: datetime | None = None
-        type_filling: MT5Constants.OrderFilling = Field(default=_config.order_filling)
+        type_filling: MT5Constants.OrderFilling = Field(
+            default=_config.order_filling
+        )
         position: int = Field(ge=0, default=0)
         position_by: int = Field(ge=0, default=0)
 
@@ -113,15 +121,20 @@ class MT5Models:
         @property
         def is_market_order(self) -> bool:
             """Check if this is a market order."""
-            market_types = {MT5Constants.OrderType.BUY, MT5Constants.OrderType.SELL}
+            market_types = {
+                MT5Constants.OrderType.BUY,
+                MT5Constants.OrderType.SELL,
+            }
             return self.type in market_types
 
-        def to_mt5_request(self) -> dict[str, Any]:
+        def to_mt5_request(self) -> dict[str, int | float | str]:
             """Export to MT5 API format.
 
-            Returns dict with only non-default, non-zero values for optional fields.
+            Returns:
+                Dict with only non-default, non-zero values for optional fields.
+
             """
-            d: dict[str, Any] = {
+            d: dict[str, int | float | str] = {
                 "action": self.action,
                 "symbol": self.symbol,
                 "volume": self.volume,
@@ -180,10 +193,17 @@ class MT5Models:
             return self.retcode == MT5Constants.TradeRetcode.DONE_PARTIAL
 
         @classmethod
-        def from_mt5(cls, result: Any) -> Self | None:
+        def from_mt5(cls, result: object) -> Self | None:
             """Create from MT5 OrderSendResult.
 
             Special handling: returns error result instead of None for None input.
+
+            Args:
+                result: MT5 OrderSendResult object or dict.
+
+            Returns:
+                OrderResult instance (error result if input is None).
+
             """
             if result is None:
                 return cls(

@@ -65,6 +65,7 @@ def date_range_last_n_days(days: int) -> tuple[datetime, datetime]:
 
     Returns:
         Tuple of (date_from, date_to) in UTC.
+
     """
     date_to = datetime.now(UTC)
     date_from = date_to - timedelta(days=days)
@@ -118,6 +119,7 @@ def build_market_buy_request(
 
     Returns:
         Order request dict (without action/type - add in fixture).
+
     """
     return {
         "symbol": symbol,
@@ -146,6 +148,7 @@ def build_market_sell_request(
 
     Returns:
         Order request dict (without action/type - add in fixture).
+
     """
     return {
         "symbol": symbol,
@@ -176,6 +179,7 @@ def build_limit_order_request(
 
     Returns:
         Order request dict (without action/type - add in fixture).
+
     """
     return {
         "symbol": symbol,
@@ -207,6 +211,7 @@ def build_close_position_request(
 
     Returns:
         Order request dict (without action/type - add in fixture).
+
     """
     return {
         "position": position_ticket,

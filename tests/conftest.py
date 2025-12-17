@@ -8,18 +8,19 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import grpc
 import pytest
 from dotenv import load_dotenv
 
-from mt5linux import AsyncMetaTrader5, MetaTrader5
-from mt5linux import mt5_pb2, mt5_pb2_grpc
+from mt5linux import AsyncMetaTrader5, MetaTrader5, mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Generator
 
 
 def is_docker_available() -> bool:
@@ -39,10 +40,14 @@ def is_docker_available() -> bool:
 
 def has_mt5_credentials() -> bool:
     """Check if MT5 credentials are configured for integration tests."""
-    return bool(os.getenv("MT5_LOGIN") and os.getenv("MT5_PASSWORD") and MT5_LOGIN != 0)
+    return bool(
+        os.getenv("MT5_LOGIN") and os.getenv("MT5_PASSWORD") and MT5_LOGIN != 0
+    )
 
 
-def is_grpc_service_ready(host: str = "localhost", port: int | None = None) -> bool:
+def is_grpc_service_ready(
+    host: str = "localhost", port: int | None = None
+) -> bool:
     """Check if gRPC service is ready (actual connection + HealthCheck call).
 
     Uses gRPC channel to connect and calls HealthCheck to verify MT5Service is ready.
@@ -85,6 +90,7 @@ def wait_for_grpc_service(
 
     Returns:
         True if service is ready, False if timeout reached
+
     """
     grpc_port = port or TEST_GRPC_PORT
     start = time.time()
@@ -121,7 +127,9 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)  # Credentials override
 # Default ports match mt5linux/docker-compose.yaml defaults
 _config = MT5Config()
 TEST_GRPC_HOST = os.getenv("MT5_HOST", "localhost")
-TEST_GRPC_PORT = int(os.getenv("MT5_GRPC_PORT", str(_config.docker_mapped_port)))
+TEST_GRPC_PORT = int(
+    os.getenv("MT5_GRPC_PORT", str(_config.docker_mapped_port))
+)
 TEST_VNC_PORT = int(os.getenv("MT5_VNC_PORT", str(_config.vnc_port)))
 TEST_CONTAINER_NAME = os.getenv("MT5_CONTAINER_NAME", "mt5linux-unit")
 
@@ -154,7 +162,9 @@ def _is_container_healthy(container_name: str) -> bool:
     """Check if container is running and healthy."""
     result = subprocess.run(
         [
-            "docker", "inspect", "--format",
+            "docker",
+            "inspect",
+            "--format",
             "{{.State.Health.Status}}",
             container_name,
         ],
@@ -180,7 +190,9 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
 
     # Check if Docker tests should be skipped
     if os.getenv("SKIP_DOCKER", "0") == "1":
-        logger.info("SKIP_DOCKER=1 - skipping Docker setup, running unit tests only")
+        logger.info(
+            "SKIP_DOCKER=1 - skipping Docker setup, running unit tests only"
+        )
         yield
         return
 
@@ -200,7 +212,9 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
                 TEST_CONTAINER_NAME,
             )
             # Still verify gRPC is ready
-            if wait_for_grpc_service(TEST_GRPC_HOST, TEST_GRPC_PORT, timeout=30):
+            if wait_for_grpc_service(
+                TEST_GRPC_HOST, TEST_GRPC_PORT, timeout=30
+            ):
                 logger.info("gRPC service confirmed ready")
                 yield
                 return
@@ -292,14 +306,20 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
     yield
 
     # No cleanup - container kept running for subsequent test runs
-    logger.info("Tests complete - container %s kept running", TEST_CONTAINER_NAME)
+    logger.info(
+        "Tests complete - container %s kept running", TEST_CONTAINER_NAME
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
     """Configure pytest markers."""
-    config.addinivalue_line("markers", "integration: marks tests requiring MT5 server")
+    config.addinivalue_line(
+        "markers", "integration: marks tests requiring MT5 server"
+    )
     config.addinivalue_line("markers", "slow: marks tests as slow")
-    config.addinivalue_line("markers", "trading: marks tests that place real orders")
+    config.addinivalue_line(
+        "markers", "trading: marks tests that place real orders"
+    )
     config.addinivalue_line(
         "markers", "market_depth: marks tests requiring market depth"
     )
@@ -319,13 +339,14 @@ def mt5_raw() -> Generator[MetaTrader5]:
     call initialize(). Use for testing connection lifecycle.
     Skips if connection fails.
     """
+    mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
     try:
-        mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
+        mt5.connect()
     except Exception as e:
         pytest.skip(f"MT5 connection failed: {e}")
     yield mt5
     with contextlib.suppress(Exception):
-        mt5.close()
+        mt5.disconnect()
 
 
 @pytest.fixture
@@ -510,7 +531,9 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
         # Check for market closed
         if result.retcode == mt5.TRADE_RETCODE_MARKET_CLOSED:
             pytest.skip("Market closed - cannot create history test data")
-        pytest.skip(f"Could not open position: {result.retcode} - {result.comment}")
+        pytest.skip(
+            f"Could not open position: {result.retcode} - {result.comment}"
+        )
 
     order_ticket = result.order
     deal_ticket = result.deal
@@ -618,8 +641,8 @@ async def async_mt5(
 
 # Export symbols for type checking
 __all__ = [
+    "MT5_CONFIG",
+    "TEST_CONTAINER_NAME",
     "TEST_GRPC_HOST",
     "TEST_GRPC_PORT",
-    "TEST_CONTAINER_NAME",
-    "MT5_CONFIG",
 ]

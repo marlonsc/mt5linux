@@ -5,7 +5,7 @@
 #
 # Environment Variables (with defaults):
 #   MT5_CONTAINER_NAME - Container name (default: mt5linux-unit)
-#   MT5_RPYC_PORT     - RPyC server port (default: 38812)
+#   MT5_GRPC_PORT     - gRPC server port (default: 38812)
 #   MT5_VNC_PORT      - VNC port (default: 33000)
 #   MT5_HEALTH_PORT   - Health check port (default: 38002)
 #   MT5_LOGIN         - MT5 account login (default: from .env)
@@ -17,7 +17,7 @@
 #
 # Usage (custom test config):
 #   MT5_CONTAINER_NAME=mt5-custom \
-#   MT5_RPYC_PORT=48812 \
+#   MT5_GRPC_PORT=48812 \
 #   MT5_VNC_PORT=43000 \
 #   MT5_LOGIN=123456 \
 #   MT5_PASSWORD=mypass \
@@ -35,8 +35,8 @@ services:
     container_name: ${MT5_CONTAINER_NAME:-mt5linux-unit}
     ports:
       - "${MT5_VNC_PORT:-33000}:3000"     # VNC
-      - "${MT5_RPYC_PORT:-38812}:8001"   # RPyC server
-      - "${MT5_HEALTH_PORT:-38002}:8002" # Health check
+      - "${MT5_GRPC_PORT:-38812}:8001"    # gRPC server
+      - "${MT5_HEALTH_PORT:-38002}:8002"  # Health check
     volumes:
       # Isolated volumes (not shared with production or neptor)
       - mt5_config:/config:uid=911,gid=911
@@ -50,7 +50,7 @@ services:
     security_opt:
       - seccomp:unconfined
     healthcheck:
-      # Check mt5linux RPyC server (primary API) - port 8001
+      # Check mt5linux gRPC server (primary API) - port 8001
       test: ["CMD", "bash", "-c", "echo >/dev/tcp/localhost/8001"]
       interval: 30s
       timeout: 10s

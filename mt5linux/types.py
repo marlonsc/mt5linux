@@ -14,11 +14,12 @@ Usage:
     >>> from mt5linux.types import MT5Types
     >>> def process_rates(data: MT5Types.RatesArray) -> None: ...
     >>> def create_request() -> MT5Types.OrderRequestDict: ...
+
 """
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
     import numpy as np
@@ -37,23 +38,24 @@ class MT5Types:
     - Protocols: MT5ModuleProtocol
 
     Uses MT5Constants for enum values in TypedDicts.
+
     """
 
     # =========================================================================
     # ARRAY TYPE ALIASES
     # =========================================================================
 
-    RatesArray: TypeAlias = "NDArray[np.void]"
+    type RatesArray = "NDArray[np.void]"
     """NumPy array for OHLCV rate data from copy_rates_* functions."""
 
-    TicksArray: TypeAlias = "NDArray[np.void]"
+    type TicksArray = "NDArray[np.void]"
     """NumPy array for tick data from copy_ticks_* functions."""
 
     # =========================================================================
     # FUNCTION TYPE ALIASES
     # =========================================================================
 
-    MT5Function: TypeAlias = Callable[..., Any]
+    type MT5Function = Callable[..., object]
     """Generic MT5 function callable type."""
 
     # =========================================================================
@@ -65,6 +67,7 @@ class MT5Types:
 
         Used for order_check() and order_send() functions.
         All fields except action and symbol are optional.
+
         """
 
         action: int
@@ -87,6 +90,7 @@ class MT5Types:
         """MT5 tick data structure.
 
         Represents a single price tick from symbol_info_tick().
+
         """
 
         time: int
@@ -102,6 +106,7 @@ class MT5Types:
         """MT5 OHLCV bar structure.
 
         Represents a single bar from copy_rates_* functions.
+
         """
 
         time: int
@@ -123,50 +128,77 @@ class MT5Types:
 
         This allows type-safe calls to the MT5 module without requiring
         the actual MetaTrader5 package to be installed.
+
         """
 
         # Terminal operations
-        def initialize(
+        def initialize(  # noqa: PLR0913
             self,
             path: str | None = ...,
             login: int | None = ...,
             password: str | None = ...,
             server: str | None = ...,
-            timeout: int | None = ...,
+            init_timeout: int | None = ...,
             *,
             portable: bool = ...,
-        ) -> bool: ...
+        ) -> bool:
+            """Initialize MT5 terminal connection."""
+            ...
 
         def login(
             self,
             login: int,
             password: str,
             server: str,
-            timeout: int = ...,
-        ) -> bool: ...
+            login_timeout: int = ...,
+        ) -> bool:
+            """Login to MT5 trading account."""
+            ...
 
-        def shutdown(self) -> None: ...
+        def shutdown(self) -> None:
+            """Shutdown MT5 terminal connection."""
+            ...
 
-        def version(self) -> tuple[int, int, str] | None: ...
+        def version(self) -> tuple[int, int, str] | None:
+            """Get MT5 terminal version."""
+            ...
 
-        def last_error(self) -> tuple[int, str]: ...
+        def last_error(self) -> tuple[int, str]:
+            """Get last error code and description."""
+            ...
 
-        def terminal_info(self) -> Any: ...
+        def terminal_info(self) -> object:
+            """Get terminal information."""
+            ...
 
-        def account_info(self) -> Any: ...
+        def account_info(self) -> object:
+            """Get account information."""
+            ...
 
         # Symbol operations
-        def symbols_total(self) -> int: ...
+        def symbols_total(self) -> int:
+            """Get total number of available symbols."""
+            ...
 
         def symbols_get(
             self, *, group: str | None = ...
-        ) -> tuple[Any, ...] | None: ...
+        ) -> tuple[object, ...] | None:
+            """Get available symbols with optional group filter."""
+            ...
 
-        def symbol_info(self, symbol: str) -> Any: ...
+        def symbol_info(self, symbol: str) -> object:
+            """Get detailed symbol information."""
+            ...
 
-        def symbol_info_tick(self, symbol: str) -> Any: ...
+        def symbol_info_tick(self, symbol: str) -> object:
+            """Get current tick data for a symbol."""
+            ...
 
-        def symbol_select(self, symbol: str, *, enable: bool = ...) -> bool: ...
+        def symbol_select(
+            self, symbol: str, *, enable: bool = ...
+        ) -> bool:
+            """Select or deselect symbol in Market Watch."""
+            ...
 
         # Market data operations
         def copy_rates_from(
@@ -175,7 +207,9 @@ class MT5Types:
             timeframe: int,
             date_from: datetime,
             count: int,
-        ) -> Any: ...
+        ) -> object:
+            """Copy OHLCV rates from a specific date."""
+            ...
 
         def copy_rates_from_pos(
             self,
@@ -183,7 +217,9 @@ class MT5Types:
             timeframe: int,
             start_pos: int,
             count: int,
-        ) -> Any: ...
+        ) -> object:
+            """Copy OHLCV rates from a bar position."""
+            ...
 
         def copy_rates_range(
             self,
@@ -191,7 +227,9 @@ class MT5Types:
             timeframe: int,
             date_from: datetime,
             date_to: datetime,
-        ) -> Any: ...
+        ) -> object:
+            """Copy OHLCV rates in a date range."""
+            ...
 
         def copy_ticks_from(
             self,
@@ -199,7 +237,9 @@ class MT5Types:
             date_from: datetime,
             count: int,
             flags: int,
-        ) -> Any: ...
+        ) -> object:
+            """Copy tick data from a specific date."""
+            ...
 
         def copy_ticks_range(
             self,
@@ -207,7 +247,9 @@ class MT5Types:
             date_from: datetime,
             date_to: datetime,
             flags: int,
-        ) -> Any: ...
+        ) -> object:
+            """Copy tick data in a date range."""
+            ...
 
         # Trading operations
         def order_calc_margin(
@@ -216,7 +258,9 @@ class MT5Types:
             symbol: str,
             volume: float,
             price: float,
-        ) -> float | None: ...
+        ) -> float | None:
+            """Calculate margin required for an order."""
+            ...
 
         def order_calc_profit(
             self,
@@ -225,14 +269,22 @@ class MT5Types:
             volume: float,
             price_open: float,
             price_close: float,
-        ) -> float | None: ...
+        ) -> float | None:
+            """Calculate potential profit for an order."""
+            ...
 
-        def order_check(self, request: dict[str, Any]) -> Any: ...
+        def order_check(self, request: dict[str, object]) -> object:
+            """Check order validity without sending."""
+            ...
 
-        def order_send(self, request: dict[str, Any]) -> Any: ...
+        def order_send(self, request: dict[str, object]) -> object:
+            """Send trading order to MT5."""
+            ...
 
         # Position operations
-        def positions_total(self) -> int: ...
+        def positions_total(self) -> int:
+            """Get total number of open positions."""
+            ...
 
         def positions_get(
             self,
@@ -240,10 +292,14 @@ class MT5Types:
             symbol: str | None = ...,
             group: str | None = ...,
             ticket: int | None = ...,
-        ) -> tuple[Any, ...] | None: ...
+        ) -> tuple[object, ...] | None:
+            """Get open positions with optional filters."""
+            ...
 
         # Order operations
-        def orders_total(self) -> int: ...
+        def orders_total(self) -> int:
+            """Get total number of pending orders."""
+            ...
 
         def orders_get(
             self,
@@ -251,14 +307,18 @@ class MT5Types:
             symbol: str | None = ...,
             group: str | None = ...,
             ticket: int | None = ...,
-        ) -> tuple[Any, ...] | None: ...
+        ) -> tuple[object, ...] | None:
+            """Get pending orders with optional filters."""
+            ...
 
         # History operations
         def history_orders_total(
             self,
             date_from: datetime,
             date_to: datetime,
-        ) -> int | None: ...
+        ) -> int | None:
+            """Get total count of historical orders in date range."""
+            ...
 
         def history_orders_get(
             self,
@@ -268,13 +328,17 @@ class MT5Types:
             group: str | None = ...,
             ticket: int | None = ...,
             position: int | None = ...,
-        ) -> tuple[Any, ...] | None: ...
+        ) -> tuple[object, ...] | None:
+            """Get historical orders with filters."""
+            ...
 
         def history_deals_total(
             self,
             date_from: datetime,
             date_to: datetime,
-        ) -> int | None: ...
+        ) -> int | None:
+            """Get total count of historical deals in date range."""
+            ...
 
         def history_deals_get(
             self,
@@ -284,13 +348,21 @@ class MT5Types:
             group: str | None = ...,
             ticket: int | None = ...,
             position: int | None = ...,
-        ) -> tuple[Any, ...] | None: ...
+        ) -> tuple[object, ...] | None:
+            """Get historical deals with filters."""
+            ...
 
         # Market depth operations
-        def market_book_add(self, symbol: str) -> bool: ...
+        def market_book_add(self, symbol: str) -> bool:
+            """Subscribe to market depth (DOM) for a symbol."""
+            ...
 
-        def market_book_get(self, symbol: str) -> tuple[Any, ...] | None: ...
+        def market_book_get(
+            self, symbol: str
+        ) -> tuple[object, ...] | None:
+            """Get market depth (DOM) data for a symbol."""
+            ...
 
-        def market_book_release(self, symbol: str) -> bool: ...
-
-
+        def market_book_release(self, symbol: str) -> bool:
+            """Unsubscribe from market depth (DOM) for a symbol."""
+            ...

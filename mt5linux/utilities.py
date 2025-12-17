@@ -37,7 +37,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mt5linux.config import MT5Config
@@ -74,6 +74,13 @@ class MT5Utilities:
             """Error that can be retried (transient failure)."""
 
             def __init__(self, code: int, description: str) -> None:
+                """Initialize retryable error.
+
+                Args:
+                    code: MT5 error code.
+                    description: Error description.
+
+                """
                 super().__init__(f"MT5 error {code}: {description}")
                 self.code = code
                 self.description = description
@@ -82,6 +89,13 @@ class MT5Utilities:
             """Error that should not be retried."""
 
             def __init__(self, code: int, description: str) -> None:
+                """Initialize permanent error.
+
+                Args:
+                    code: MT5 error code.
+                    description: Error description.
+
+                """
                 super().__init__(f"MT5 permanent error {code}: {description}")
                 self.code = code
                 self.description = description
@@ -95,7 +109,17 @@ class MT5Utilities:
                 attempts: int,
                 last_error: Exception | None = None,
             ) -> None:
-                msg = f"Operation '{operation}' failed after {attempts} attempts"
+                """Initialize max retries error.
+
+                Args:
+                    operation: Name of the failed operation.
+                    attempts: Number of attempts made.
+                    last_error: The last exception that occurred.
+
+                """
+                msg = (
+                    f"Operation '{operation}' failed after {attempts} attempts"
+                )
                 if last_error:
                     msg += f": {last_error}"
                 super().__init__(msg)
@@ -114,6 +138,13 @@ class MT5Utilities:
                 message: str = "Circuit breaker is open - too many failures",
                 recovery_time: datetime | None = None,
             ) -> None:
+                """Initialize circuit breaker open error.
+
+                Args:
+                    message: Error message.
+                    recovery_time: When the circuit breaker will attempt reset.
+
+                """
                 super().__init__(message)
                 self.recovery_time = recovery_time
 
@@ -129,10 +160,28 @@ class MT5Utilities:
 
             __slots__ = ("_data",)
 
-            def __init__(self, data: dict[str, Any]) -> None:
+            def __init__(self, data: dict[str, object]) -> None:
+                """Initialize wrapper with data dict.
+
+                Args:
+                    data: Dictionary to wrap for attribute access.
+
+                """
                 object.__setattr__(self, "_data", data)
 
-            def __getattr__(self, name: str) -> Any:
+            def __getattr__(self, name: str) -> object:
+                """Get attribute from underlying dict.
+
+                Args:
+                    name: Attribute name to retrieve.
+
+                Returns:
+                    Value from the underlying dictionary.
+
+                Raises:
+                    AttributeError: If key not found in dict.
+
+                """
                 try:
                     return self._data[name]
                 except KeyError:
@@ -140,9 +189,15 @@ class MT5Utilities:
                     raise AttributeError(msg) from None
 
             def __repr__(self) -> str:
+                """Return string representation.
+
+                Returns:
+                    String representation of the wrapper.
+
+                """
                 return f"{type(self).__name__}({self._data})"
 
-            def _asdict(self) -> dict[str, Any]:
+            def _asdict(self) -> dict[str, object]:
                 """Return underlying dict (compatibility with named tuples)."""
                 return self._data
 
@@ -217,33 +272,70 @@ class MT5Utilities:
         # --- Transformations ---
 
         @staticmethod
-        def wrap(d: dict[str, Any] | Any) -> MT5Utilities.Data.Wrapper | Any:
-            """Convert dict to object with attribute access."""
+        def wrap(
+            d: dict[str, object] | object,
+        ) -> MT5Utilities.Data.Wrapper | object:
+            """Convert dict to object with attribute access.
+
+            Args:
+                d: Dictionary or other object.
+
+            Returns:
+                Wrapper if dict, otherwise original object.
+
+            """
             if isinstance(d, dict):
                 return MT5Utilities.Data.Wrapper(d)
             return d
 
         @staticmethod
-        def wrap_many(items: tuple | list | None) -> tuple | None:
-            """Convert tuple/list of dicts to tuple of objects."""
+        def wrap_many(
+            items: tuple[object, ...] | list[object] | None,
+        ) -> tuple[object, ...] | None:
+            """Convert tuple/list of dicts to tuple of objects.
+
+            Args:
+                items: Tuple or list of dictionaries.
+
+            Returns:
+                Tuple of wrapped objects or None.
+
+            """
             if items is None:
                 return None
             return tuple(MT5Utilities.Data.wrap(d) for d in items)
 
         @staticmethod
-        def unwrap_chunks(result: dict[str, Any] | None) -> tuple | None:
-            """Reassemble chunked response from server into tuple of objects."""
+        def unwrap_chunks(
+            result: dict[str, object] | None,
+        ) -> tuple[object, ...] | None:
+            """Reassemble chunked response from server into tuple of objects.
+
+            Args:
+                result: Chunked response dict or None.
+
+            Returns:
+                Tuple of wrapped objects or None.
+
+            """
             if result is None:
                 return None
 
             if isinstance(result, dict) and "chunks" in result:
                 all_items: list[MT5Utilities.Data.Wrapper] = []
-                for chunk in result["chunks"]:
-                    all_items.extend(MT5Utilities.Data.Wrapper(d) for d in chunk)
+                chunks = result["chunks"]
+                if isinstance(chunks, list):
+                    for chunk in chunks:
+                        if isinstance(chunk, list):
+                            all_items.extend(
+                                MT5Utilities.Data.Wrapper(d)
+                                for d in chunk
+                                if isinstance(d, dict)
+                            )
                 return tuple(all_items)
 
             if isinstance(result, tuple | list):
-                return MT5Utilities.Data.wrap_many(result)
+                return MT5Utilities.Data.wrap_many(list(result))
 
             return None
 
@@ -409,10 +501,15 @@ class MT5Utilities:
                 self._last_failure_time = None
                 self._half_open_calls = 0
 
-        def get_status(self) -> dict[str, Any]:
-            """Get circuit breaker status for monitoring."""
+        def get_status(self) -> dict[str, str | int]:
+            """Get circuit breaker status for monitoring.
+
+            Returns:
+                Dictionary with circuit breaker state information.
+
+            """
             with self._lock:
-                status: dict[str, Any] = {
+                status: dict[str, str | int] = {
                     "name": self.name,
                     "state": self._state.name,
                     "failure_count": self._failure_count,
@@ -421,7 +518,9 @@ class MT5Utilities:
                 }
 
                 if self._last_failure_time:
-                    status["last_failure"] = self._last_failure_time.isoformat()
+                    status["last_failure"] = (
+                        self._last_failure_time.isoformat()
+                    )
                     if self._state == MT5Constants.CircuitBreakerState.OPEN:
                         recovery_at = self._last_failure_time + timedelta(
                             seconds=self._config.cb_recovery

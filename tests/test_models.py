@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -119,7 +119,7 @@ class TestOrderRequest:
 
     def test_to_mt5_request_with_expiration(self) -> None:
         """Test to_mt5_request converts expiration to timestamp."""
-        exp = datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        exp = datetime(2025, 12, 31, 23, 59, 59, tzinfo=UTC)
         request = OrderRequest(
             action=MT5Constants.TradeAction.DEAL,
             symbol="EURUSD",

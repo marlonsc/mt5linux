@@ -5,12 +5,12 @@ No helpers, no factories - pure Pydantic 2 BaseSettings.
 
 Hierarchy Level: 1
 - Imports: MT5Constants (Level 0)
-- Used by: MT5Models, MT5Utilities, client.py, server.py
+- Used by: MT5Models, MT5Utilities, client.py, bridge.py
 
 Usage:
     >>> from mt5linux.config import MT5Config
     >>> config = MT5Config()  # loads from env
-    >>> print(config.rpyc_port)  # 18812 or env override
+    >>> print(config.grpc_port)  # 50051 or env override
     >>> delay = config.calculate_retry_delay(attempt=2)
 """
 
@@ -25,7 +25,7 @@ class MT5Config(BaseSettings):
     """MetaTrader5 configuration with automatic env loading.
 
     All fields auto-load from environment variables with MT5_ prefix.
-    Example: MT5_HOST, MT5_RPYC_PORT, MT5_TIMEOUT_CONNECTION
+    Example: MT5_HOST, MT5_GRPC_PORT, MT5_TIMEOUT_CONNECTION
 
     Usage:
         config = MT5Config()  # loads from env
@@ -42,7 +42,7 @@ class MT5Config(BaseSettings):
 
     # Network
     host: str = "localhost"
-    rpyc_port: int = 18812
+    grpc_port: int = 8001
     bridge_port: int = 8001
     docker_mapped_port: int = 38812
     vnc_port: int = 3000
@@ -73,9 +73,9 @@ class MT5Config(BaseSettings):
     restart_delay_multiplier: float = 2.0
     jitter_factor: float = 0.1
 
-    # RPyC Protocol
-    rpyc_max_io_chunk: int = 65355 * 10
-    rpyc_compression_level: int = 0
+    # gRPC Protocol
+    grpc_max_message_size: int = 50 * 1024 * 1024
+    grpc_keepalive_time_ms: int = 30000
 
     # Order defaults (from MT5Constants)
     order_filling: int = MT5Constants.OrderFilling.FOK
@@ -116,7 +116,9 @@ class MT5Config(BaseSettings):
             Delay in seconds with jitter applied.
 
         """
-        delay = self.restart_delay_base * (self.restart_delay_multiplier**attempt)
+        delay = self.restart_delay_base * (
+            self.restart_delay_multiplier**attempt
+        )
         delay = min(delay, self.restart_delay_max)
         # S311: random is fine for jitter - not cryptographic
         jitter = delay * self.jitter_factor * (2 * random.random() - 1)  # noqa: S311

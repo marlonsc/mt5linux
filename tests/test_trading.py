@@ -36,7 +36,9 @@ class TestOrderCheck:
         """
         result = mt5.order_check(buy_order_request)
         if result is None:
-            pytest.skip("order_check returned None (not supported on this account)")
+            pytest.skip(
+                "order_check returned None (not supported on this account)"
+            )
         assert result.retcode in {mt5.TRADE_RETCODE_DONE, 0}
         assert result.balance > 0
         assert result.equity > 0
@@ -53,7 +55,9 @@ class TestOrderCheck:
         """
         result = mt5.order_check(sell_order_request)
         if result is None:
-            pytest.skip("order_check returned None (not supported on this account)")
+            pytest.skip(
+                "order_check returned None (not supported on this account)"
+            )
         assert result.balance > 0
         assert result.equity > 0
 
@@ -124,7 +128,9 @@ class TestOrderSend:
 
         result = mt5.order_send(buy_order_request)
         if result is None:
-            pytest.skip("order_send returned None (not supported on this account)")
+            pytest.skip(
+                "order_send returned None (not supported on this account)"
+            )
 
         # Check for success or common acceptable return codes
         acceptable_codes = [
@@ -164,7 +170,9 @@ class TestOrderSend:
 
         result = mt5.order_send(sell_order_request)
         if result is None:
-            pytest.skip("order_send returned None (not supported on this account)")
+            pytest.skip(
+                "order_send returned None (not supported on this account)"
+            )
 
         acceptable_codes = [
             mt5.TRADE_RETCODE_DONE,
@@ -218,7 +226,9 @@ class TestOrderSend:
 
         result = mt5.order_send(limit_request)
         if result is None:
-            pytest.skip("order_send returned None (not supported on this account)")
+            pytest.skip(
+                "order_send returned None (not supported on this account)"
+            )
 
         if result.retcode == mt5.TRADE_RETCODE_DONE:
             # Cancel the pending order
@@ -245,7 +255,10 @@ class TestOrderSend:
         # Open position
         open_result = mt5.order_send(buy_order_request)
 
-        if open_result is None or open_result.retcode != mt5.TRADE_RETCODE_DONE:
+        if (
+            open_result is None
+            or open_result.retcode != mt5.TRADE_RETCODE_DONE
+        ):
             pytest.skip("Could not open position for close test")
 
         # Get the position

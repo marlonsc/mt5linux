@@ -637,7 +637,9 @@ def add_MT5ServiceServicer_to_server(servicer, server):
         "mt5.MT5Service", rpc_method_handlers
     )
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers("mt5.MT5Service", rpc_method_handlers)
+    server.add_registered_method_handlers(
+        "mt5.MT5Service", rpc_method_handlers
+    )
 
 
 # This class is part of an EXPERIMENTAL API.

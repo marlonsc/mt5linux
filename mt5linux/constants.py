@@ -405,5 +405,3 @@ class MT5Constants:
         CLOSED = 0
         OPEN = 1
         HALF_OPEN = 2
-
-

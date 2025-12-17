@@ -1,27 +1,29 @@
-"""MetaTrader5 client/server library for Linux via RPyC.
+"""MetaTrader5 client/server library for Linux via gRPC.
 
-Client library for connecting to MetaTrader5 running on Windows/Docker
-via RPyC 6.x. Also includes a standalone bridge server for Windows.
+Provides MetaTrader5 class for connecting to MT5 via gRPC.
+Both synchronous and asynchronous clients are available.
 
-Server (run on Windows with MT5):
-    python -m mt5linux --server
-    python -m mt5linux --server --host 0.0.0.0 --port 18812 --debug
-
-Client (run on Linux):
-    >>> from mt5linux import MetaTrader5, MT5Constants
-    >>> with MetaTrader5(host="windows-ip", port=18812) as mt5:
+Usage (Synchronous):
+    >>> from mt5linux import MetaTrader5
+    >>> with MetaTrader5(host="localhost", port=50051) as mt5:
     ...     mt5.initialize(login=12345, password="pass", server="Demo")
     ...     account = mt5.account_info()
+    ...     rates = mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 100)
 
-Async client:
+Usage (Asynchronous):
     >>> from mt5linux import AsyncMetaTrader5
-    >>> async with AsyncMetaTrader5(host="windows-ip", port=18812) as mt5:
+    >>> async with AsyncMetaTrader5(host="localhost", port=50051) as mt5:
     ...     await mt5.initialize(login=12345)
     ...     rates = await mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 100)
 
-For MT5 method documentation, see:
-    https://www.mql5.com/en/docs/python_metatrader5
+Version: 0.6.0 - gRPC Migration
+- Replaced RPyC with gRPC for communication
+- Native async client using grpc.aio
+- Native sync client using grpc.insecure_channel
+- Full MT5 API coverage including Market Depth
 """
+
+__version__ = "0.6.0"
 
 from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.client import MetaTrader5
@@ -39,5 +41,5 @@ __all__ = [
     "MT5Types",
     "MT5Utilities",
     "MetaTrader5",
+    "__version__",
 ]
-__version__ = "0.5.1"

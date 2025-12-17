@@ -29,7 +29,9 @@ class BoolResponse(google.protobuf.message.Message):
         *,
         result: builtins.bool = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["result", b"result"]) -> None: ...
+    def ClearField(
+        self, field_name: typing.Literal["result", b"result"]
+    ) -> None: ...
 
 type Global___BoolResponse = BoolResponse
 
@@ -44,7 +46,9 @@ class IntResponse(google.protobuf.message.Message):
         *,
         value: builtins.int = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["value", b"value"]) -> None: ...
+    def ClearField(
+        self, field_name: typing.Literal["value", b"value"]
+    ) -> None: ...
 
 type Global___IntResponse = IntResponse
 
@@ -153,13 +157,18 @@ class Constants(google.protobuf.message.Message):
     @property
     def values(
         self,
-    ) -> google.protobuf.internal.containers.ScalarMap[builtins.str, builtins.int]: ...
+    ) -> google.protobuf.internal.containers.ScalarMap[
+        builtins.str, builtins.int
+    ]: ...
     def __init__(
         self,
         *,
-        values: collections.abc.Mapping[builtins.str, builtins.int] | None = ...,
+        values: collections.abc.Mapping[builtins.str, builtins.int]
+        | None = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["values", b"values"]) -> None: ...
+    def ClearField(
+        self, field_name: typing.Literal["values", b"values"]
+    ) -> None: ...
 
 type Global___Constants = Constants
 
@@ -468,7 +477,9 @@ class SymbolRequest(google.protobuf.message.Message):
         *,
         symbol: builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["symbol", b"symbol"]) -> None: ...
+    def ClearField(
+        self, field_name: typing.Literal["symbol", b"symbol"]
+    ) -> None: ...
 
 type Global___SymbolRequest = SymbolRequest
 

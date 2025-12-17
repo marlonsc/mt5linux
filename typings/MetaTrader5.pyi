@@ -10,7 +10,9 @@ def initialize(
     timeout: int | None = None,
     portable: bool = False,
 ) -> bool: ...
-def login(login: int, password: str, server: str, timeout: int = 60000) -> bool: ...
+def login(
+    login: int, password: str, server: str, timeout: int = 60000
+) -> bool: ...
 def shutdown() -> None: ...
 def version() -> tuple[int, int, str] | None: ...
 def last_error() -> tuple[int, str]: ...
@@ -30,19 +32,25 @@ def copy_rates_from(
     timeframe: int,
     date_from: datetime | int,
     count: int,
-) -> tuple[tuple[int, float, float, float, float, int, int, int], ...] | None: ...
+) -> (
+    tuple[tuple[int, float, float, float, float, int, int, int], ...] | None
+): ...
 def copy_rates_from_pos(
     symbol: str,
     timeframe: int,
     start_pos: int,
     count: int,
-) -> tuple[tuple[int, float, float, float, float, int, int, int], ...] | None: ...
+) -> (
+    tuple[tuple[int, float, float, float, float, int, int, int], ...] | None
+): ...
 def copy_rates_range(
     symbol: str,
     timeframe: int,
     date_from: datetime | int,
     date_to: datetime | int,
-) -> tuple[tuple[int, float, float, float, float, int, int, int], ...] | None: ...
+) -> (
+    tuple[tuple[int, float, float, float, float, int, int, int], ...] | None
+): ...
 def copy_ticks_from(
     symbol: str,
     date_from: datetime | int,
@@ -70,8 +78,12 @@ def order_calc_profit(
     price_open: float,
     price_close: float,
 ) -> float | None: ...
-def order_check(request: dict[str, int | float | str]) -> OrderCheckResult | None: ...
-def order_send(request: dict[str, int | float | str]) -> OrderSendResult | None: ...
+def order_check(
+    request: dict[str, int | float | str],
+) -> OrderCheckResult | None: ...
+def order_send(
+    request: dict[str, int | float | str],
+) -> OrderSendResult | None: ...
 
 # Position functions
 def positions_total() -> int: ...
@@ -269,6 +281,7 @@ class SymbolInfo:
     path: str
 
     def _asdict(self) -> dict[str, object]: ...
+
 class Tick:
     time: int
     bid: float
@@ -280,6 +293,7 @@ class Tick:
     volume_real: float
 
     def _asdict(self) -> dict[str, object]: ...
+
 class TradePosition:
     ticket: int
     time: int
@@ -302,6 +316,7 @@ class TradePosition:
     external_id: str
 
     def _asdict(self) -> dict[str, object]: ...
+
 class TradeOrder:
     ticket: int
     time_setup: int
@@ -329,6 +344,7 @@ class TradeOrder:
     external_id: str
 
     def _asdict(self) -> dict[str, object]: ...
+
 class TradeDeal:
     ticket: int
     order: int
@@ -350,6 +366,7 @@ class TradeDeal:
     external_id: str
 
     def _asdict(self) -> dict[str, object]: ...
+
 class OrderCheckResult:
     retcode: int
     balance: float
@@ -362,6 +379,7 @@ class OrderCheckResult:
     request: dict[str, int | float | str]
 
     def _asdict(self) -> dict[str, object]: ...
+
 class OrderSendResult:
     retcode: int
     deal: int
