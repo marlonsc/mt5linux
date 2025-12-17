@@ -144,7 +144,7 @@ class TestMetaTrader5CopyRates:
             if "pickling is disabled" in str(e):
                 pytest.skip(
                     "RPyC pickling disabled - numpy serialization not available"
-                )  # noqa: E501
+                )
             raise
         if rates is None:
             pytest.skip("Market data not available (market may be closed)")

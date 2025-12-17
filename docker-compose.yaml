@@ -1,42 +1,42 @@
 # docker-compose.yaml - Parametrized MT5 test container
 #
-# Single source of truth for all test environments
-# Supports multiple test scenarios via environment variables
+# Configuration aligned with MT5Config (mt5linux/config.py) - Single Source of Truth
 #
-# Environment Variables (with defaults):
-#   MT5_CONTAINER_NAME - Container name (default: mt5linux-unit)
-#   MT5_GRPC_PORT     - gRPC server port (default: 38812)
-#   MT5_VNC_PORT      - VNC port (default: 33000)
-#   MT5_HEALTH_PORT   - Health check port (default: 38002)
-#   MT5_LOGIN         - MT5 account login (default: from .env)
-#   MT5_PASSWORD      - MT5 account password (default: from .env)
-#   MT5_SERVER        - MT5 server name (MUST be set in .env)
+# Port Strategy:
+#   - Container INTERNAL ports: 8001 (gRPC), 3000 (VNC), 8002 (health)
+#   - Test defaults (isolated): 28812, 23000, 28002 (matches test_* in MT5Config)
+#   - Docker defaults: 38812, 33000, 38002 (matches docker_* in MT5Config)
 #
-# Usage (production):
+# Environment Variables (with test defaults from MT5Config.test_*):
+#   MT5_CONTAINER_NAME - Container name (default: mt5linux-test)
+#   MT5_GRPC_PORT     - gRPC server port (default: 28812 - isolated for tests)
+#   MT5_VNC_PORT      - VNC port (default: 23000 - isolated for tests)
+#   MT5_HEALTH_PORT   - Health check port (default: 28002 - isolated for tests)
+#   MT5_LOGIN         - MT5 account login (from .env)
+#   MT5_PASSWORD      - MT5 account password (from .env)
+#   MT5_SERVER        - MT5 server name (from .env)
+#
+# Usage (pytest - uses .env.test defaults):
 #   docker compose up -d
 #
-# Usage (custom test config):
-#   MT5_CONTAINER_NAME=mt5-custom \
-#   MT5_GRPC_PORT=48812 \
-#   MT5_VNC_PORT=43000 \
-#   MT5_LOGIN=123456 \
-#   MT5_PASSWORD=mypass \
-#   MT5_SERVER=MyBroker-Live \
+# Usage (production with docker_* ports):
+#   MT5_CONTAINER_NAME=mt5-prod \
+#   MT5_GRPC_PORT=38812 \
+#   MT5_VNC_PORT=33000 \
+#   MT5_HEALTH_PORT=38002 \
 #   docker compose up -d
-#
-# Usage (pytest via conftest.py):
-#   Automatically parametrized by conftest.py
 #
 
 services:
   mt5:
     # Use pre-built image from mt5docker (no build needed)
     image: marlonsc/mt5-docker:debian
-    container_name: ${MT5_CONTAINER_NAME:-mt5linux-unit}
+    container_name: ${MT5_CONTAINER_NAME:-mt5linux-test}
     ports:
-      - "${MT5_VNC_PORT:-33000}:3000"     # VNC
-      - "${MT5_GRPC_PORT:-38812}:8001"    # gRPC server
-      - "${MT5_HEALTH_PORT:-38002}:8002"  # Health check
+      # Defaults aligned with MT5Config.test_* (isolated test ports)
+      - "${MT5_VNC_PORT:-23000}:3000"     # VNC (test default: 23000)
+      - "${MT5_GRPC_PORT:-28812}:8001"    # gRPC server (test default: 28812)
+      - "${MT5_HEALTH_PORT:-28002}:8002"  # Health check (test default: 28002)
     volumes:
       # Isolated volumes (not shared with production or neptor)
       - mt5_config:/config:uid=911,gid=911
@@ -59,6 +59,6 @@ services:
 
 volumes:
   mt5_config:
-    name: ${MT5_CONTAINER_NAME:-mt5linux-unit}_config
+    name: ${MT5_CONTAINER_NAME:-mt5linux-test}_config
     labels:
       description: "MT5 test configuration (isolated)"

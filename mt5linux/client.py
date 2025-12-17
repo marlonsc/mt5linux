@@ -48,19 +48,14 @@ from mt5linux.config import MT5Config
 
 log = logging.getLogger(__name__)
 
-# Default config instance
+# Default config instance - Single Source of Truth
 _config = MT5Config()
 
 # Error message constant
 _NOT_CONNECTED_MSG = "MT5 connection not established - call connect() first"
 
-# gRPC channel options for sync client
-_CHANNEL_OPTIONS: list[tuple[str, int]] = [
-    ("grpc.max_send_message_length", 50 * 1024 * 1024),
-    ("grpc.max_receive_message_length", 50 * 1024 * 1024),
-    ("grpc.keepalive_time_ms", 30000),
-    ("grpc.keepalive_timeout_ms", 10000),
-]
+# gRPC channel options from config (no more hardcoded values)
+_CHANNEL_OPTIONS = _config.get_grpc_channel_options()
 
 # Type alias for JSON values (strict typing, no Any)
 JSONPrimitive = str | int | float | bool | None

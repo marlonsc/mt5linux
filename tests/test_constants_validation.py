@@ -9,7 +9,6 @@ REQUIRES: Docker test container running (use conftest.py fixtures)
 
 from __future__ import annotations
 
-import json
 import socket
 
 import grpc
@@ -146,13 +145,16 @@ def _group_by_class(constants: dict[str, int]) -> dict[str, dict[str, int]]:
 @pytest.fixture(scope="module")
 def mt5_constants() -> dict[str, int]:
     """Fixture that provides real MT5 constants from Docker container."""
-    host = "localhost"
-    port = _config.docker_mapped_port
+    # Use test port from shared conftest configuration
+    from conftest import TEST_GRPC_HOST, TEST_GRPC_PORT
+
+    host = TEST_GRPC_HOST
+    port = TEST_GRPC_PORT
 
     if not _is_grpc_server_available(host, port):
         pytest.skip(
             f"MT5 gRPC server not available on {host}:{port}. "
-            "Start with: docker compose -f tests/fixtures/docker-compose.yaml up -d"
+            "Start with: docker compose up -d"
         )
 
     return _extract_mt5_constants(host, port)

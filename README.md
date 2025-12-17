@@ -1,23 +1,24 @@
 # MetaTrader 5 for Linux
 
-A Python client/server library that uses [rpyc](https://github.com/tomerfiliba-org/rpyc) to connect to
-[MetaTrader5](https://pypi.org/project/MetaTrader5) from Linux systems.
+A Python client/server library that uses [gRPC](https://grpc.io/) to connect to
+[MetaTrader5](https://www.metatrader5.com/) from Linux systems via Docker.
 
 ## Features
 
 - **Sync Client**: `MetaTrader5` - Traditional blocking client
 - **Async Client**: `AsyncMetaTrader5` - Non-blocking client for asyncio
-- **Bridge Server**: Standalone RPyC server for Windows with MT5
+- **Bridge Server**: Standalone gRPC server for Windows/Wine with MT5
 - **Pydantic Models**: Type-safe models for trading data
 - **Python 3.13+**: Modern type hints and features
-- **rpyc 6.x**: Latest rpyc with security fixes
+- **gRPC**: High-performance RPC framework
 
 ## Requirements
 
 - Python 3.13+
-- rpyc 6.0.2+
-- numpy 2.1.0+
+- grpcio 1.60.0+
+- numpy 1.26.4+
 - pydantic 2.10.0+
+- Docker (for MT5 container)
 
 ## Installation
 
@@ -114,46 +115,45 @@ else:
 
 ## Server Setup
 
-### Option 1: Standalone (Windows with MT5)
+### Option 1: Docker (Recommended)
 
-Run the RPyC bridge server directly on Windows with MetaTrader5 installed:
+Use Docker for a containerized MT5 setup:
+
+```bash
+# Start container (uses .env.test defaults: port 28812)
+docker compose up -d
+
+# Or with custom ports (production)
+MT5_GRPC_PORT=38812 MT5_VNC_PORT=33000 docker compose up -d
+```
+
+### Option 2: Standalone (Windows/Wine with MT5)
+
+Run the gRPC bridge server directly on Windows with MetaTrader5 installed:
 
 ```bash
 # Install mt5linux on Windows
 pip install mt5linux
 
-# Start server (default port 18812)
-python -m mt5linux --server
+# Start server (default port 8001, aligned with MT5Config)
+python -m mt5linux.bridge
 
 # With custom options
-python -m mt5linux --server --host 0.0.0.0 --port 18812 --debug
+python -m mt5linux.bridge --host 0.0.0.0 --port 8001 --debug
 ```
 
 Server options:
 - `--host HOST` - Bind address (default: 0.0.0.0)
-- `-p, --port PORT` - Listen port (default: 18812)
-- `--threads N` - Worker threads (default: 10)
-- `--timeout SECS` - Request timeout (default: 300)
+- `-p, --port PORT` - Listen port (default: 8001)
+- `--workers N` - Worker threads (default: 10)
 - `-d, --debug` - Enable debug logging
 
-Or programmatically:
+## Configuration
 
-```python
-from mt5linux import run_server
-run_server(host="0.0.0.0", port=18812, debug=True)
-```
+All configuration is centralized in `mt5linux/config.py` (MT5Config).
+Use environment variables with `MT5_` prefix to override defaults.
 
-### Option 2: Docker (mt5docker)
-
-Use [mt5docker](https://github.com/marlonsc/mt5docker) for a containerized setup:
-
-```bash
-git clone https://github.com/marlonsc/mt5docker.git
-cd mt5docker
-docker compose up -d
-```
-
-See the [mt5docker README](https://github.com/marlonsc/mt5docker) for configuration.
+See `.env.example` for available options.
 
 ## API Reference
 
@@ -260,25 +260,31 @@ logging.basicConfig(level=logging.DEBUG)
 ### Run Tests
 
 ```bash
-# All tests
+# All tests (auto-starts container if needed)
+make test
+
+# Or directly with pytest
 pytest tests/ -v
 
 # Unit tests only (no server)
-pytest tests/test_models.py tests/test_async_client.py -v
+pytest tests/test_models.py -v
 
-# With coverage
-pytest tests/ --cov=mt5linux --cov-report=html
+# With coverage (100% required)
+make coverage
 ```
 
 ### Test Container Isolation
 
-Tests use isolated ports to avoid conflicts:
+Tests use isolated ports (from MT5Config.test_*) to avoid conflicts:
 
-| Resource | Production | Tests |
-|----------|------------|-------|
-| Container | `mt5` | `mt5linux-unit` |
-| RPyC Port | 8001 | 38812 |
-| VNC Port | 3000 | 33000 |
+| Resource | Container Internal | Test (Host) | Production (Host) |
+|----------|-------------------|-------------|-------------------|
+| Container | - | `mt5linux-test` | `mt5` |
+| gRPC Port | 8001 | 28812 | 38812 |
+| VNC Port | 3000 | 23000 | 33000 |
+| Health Port | 8002 | 28002 | 38002 |
+
+Port configuration is centralized in `mt5linux/config.py` (MT5Config).
 
 ## Version History
 

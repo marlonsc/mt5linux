@@ -8,7 +8,8 @@ The container is completely isolated from:
 - neptor tests (neptor-mt5-test, port 18812)
 - mt5docker tests (mt5docker-test, port 48812)
 
-Configuration is loaded from environment variables via .env file.
+Configuration Source: MT5Config (mt5linux/config.py) - Single Source of Truth
+All test_* fields in MT5Config define isolated test environment defaults.
 """
 
 from __future__ import annotations
@@ -31,6 +32,57 @@ from mt5linux.config import MT5Config
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
+
+
+# =============================================================================
+# CONFIGURATION - Single Source of Truth: MT5Config
+# =============================================================================
+# IMPORTANT: Configuration must be loaded BEFORE any functions that use it
+
+# Paths
+TESTS_DIR = Path(__file__).parent
+PROJECT_ROOT = TESTS_DIR.parent
+COMPOSE_FILE = PROJECT_ROOT / "docker-compose.yaml"
+CODEGEN_SCRIPT = PROJECT_ROOT / "scripts" / "codegen_enums.py"
+
+# Load .env.test first (test settings), then .env (credentials override)
+# MT5Config will pick up these values via Pydantic Settings env loading
+load_dotenv(PROJECT_ROOT / ".env.test")
+load_dotenv(PROJECT_ROOT / ".env", override=True)
+
+# Create single config instance - all values come from here
+_config = MT5Config()
+
+# Test container configuration from MT5Config.test_* fields
+# These are isolated from production (8001), neptor (18812), mt5docker (48812)
+TEST_GRPC_HOST = _config.host
+TEST_GRPC_PORT = _config.test_grpc_port
+TEST_VNC_PORT = _config.test_vnc_port
+TEST_HEALTH_PORT = _config.test_health_port
+TEST_CONTAINER_NAME = _config.test_container_name
+
+# Timeouts from MT5Config
+STARTUP_TIMEOUT = _config.test_startup_timeout
+GRPC_TIMEOUT = _config.test_grpc_timeout
+
+# MT5 credentials (loaded via env vars - no defaults in config)
+MT5_LOGIN = int(os.getenv("MT5_LOGIN", "0"))
+MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
+MT5_SERVER: str | None = os.getenv("MT5_SERVER")
+
+# Skip message for tests requiring credentials
+SKIP_NO_CREDENTIALS = (
+    "MT5 credentials not configured. "
+    "To run container tests, create .env file with MT5_LOGIN and MT5_PASSWORD."
+)
+
+MT5_CONFIG: dict[str, str | int | None] = {
+    "host": TEST_GRPC_HOST,
+    "port": TEST_GRPC_PORT,
+    "login": MT5_LOGIN,
+    "password": MT5_PASSWORD,
+    "server": MT5_SERVER,
+}
 
 
 # =============================================================================
@@ -93,6 +145,7 @@ def is_grpc_service_ready(
 
     Returns:
         True if service responds to HealthCheck, False otherwise.
+
     """
     grpc_port = port or TEST_GRPC_PORT
     _log(f"gRPC check: {host}:{grpc_port} (timeout={timeout:.1f}s)...")
@@ -127,6 +180,7 @@ def wait_for_grpc_service(
 
     Returns:
         True if service is ready, False if timeout reached
+
     """
     grpc_port = port or TEST_GRPC_PORT
     wait_timeout = timeout or STARTUP_TIMEOUT
@@ -134,10 +188,11 @@ def wait_for_grpc_service(
     _log(f"WAIT FOR GRPC: max {wait_timeout}s, port {grpc_port}", phase=True)
 
     start = time.time()
-    min_interval = 0.5
-    max_interval = 5.0
+    # Use config values instead of hardcoded defaults
+    min_interval = _config.retry_min_interval
+    max_interval = _config.retry_max_interval
     current_interval = min_interval
-    startup_health_timeout = 30.0  # Longer timeout during startup
+    startup_health_timeout = _config.startup_health_timeout
 
     attempt = 0
     while time.time() - start < wait_timeout:
@@ -158,55 +213,6 @@ def wait_for_grpc_service(
     elapsed = time.time() - start
     _log(f"TIMEOUT: gRPC not ready after {elapsed:.1f}s ({attempt} attempts)")
     return False
-
-
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-
-# Paths
-TESTS_DIR = Path(__file__).parent
-PROJECT_ROOT = TESTS_DIR.parent
-COMPOSE_FILE = PROJECT_ROOT / "docker-compose.yaml"
-CODEGEN_SCRIPT = PROJECT_ROOT / "scripts" / "codegen_enums.py"
-
-# Load environment config from .env.test, then credentials from .env
-# .env.test has test environment settings (ports, container name)
-# .env has credentials (MT5_LOGIN, MT5_PASSWORD, MT5_SERVER)
-load_dotenv(PROJECT_ROOT / ".env.test")  # Environment config first
-load_dotenv(PROJECT_ROOT / ".env", override=True)  # Credentials override
-
-# Test container configuration
-# Default ports: mt5linux tests use 28812 (isolated from other projects)
-_config = MT5Config()
-TEST_GRPC_HOST = os.getenv("MT5_HOST", "localhost")
-TEST_GRPC_PORT = int(os.getenv("MT5_GRPC_PORT", "28812"))
-TEST_VNC_PORT = int(os.getenv("MT5_VNC_PORT", "23000"))
-TEST_HEALTH_PORT = int(os.getenv("MT5_HEALTH_PORT", "28002"))
-TEST_CONTAINER_NAME = os.getenv("MT5_CONTAINER_NAME", "mt5linux-test")
-
-# Timeouts (matches mt5docker pattern)
-STARTUP_TIMEOUT = int(os.getenv("MT5_STARTUP_TIMEOUT", "420"))
-GRPC_TIMEOUT = int(os.getenv("MT5_GRPC_TIMEOUT", "60"))
-
-# MT5 credentials for integration tests (MUST come from .env, no defaults)
-MT5_LOGIN = int(os.getenv("MT5_LOGIN", "0"))
-MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
-MT5_SERVER: str | None = os.getenv("MT5_SERVER")
-
-# Skip message for tests requiring credentials
-SKIP_NO_CREDENTIALS = (
-    "MT5 credentials not configured. "
-    "To run container tests, create .env file with MT5_LOGIN and MT5_PASSWORD."
-)
-
-MT5_CONFIG: dict[str, str | int | None] = {
-    "host": TEST_GRPC_HOST,
-    "port": TEST_GRPC_PORT,
-    "login": MT5_LOGIN,
-    "password": MT5_PASSWORD,
-    "server": MT5_SERVER,
-}
 
 
 # =============================================================================

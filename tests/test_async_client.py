@@ -235,7 +235,7 @@ class TestAsyncMetaTrader5MarketData:
             if "pickling is disabled" in str(e):
                 pytest.skip(
                     "RPyC pickling disabled - numpy serialization not available"
-                )  # noqa: E501
+                )
             raise
         # May return None if market closed or RPyC serialization issue
         if rates is None:

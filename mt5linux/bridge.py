@@ -21,8 +21,8 @@ Features:
 - Numpy arrays serialized as bytes
 
 Usage:
-    wine python.exe -m mt5linux.bridge --host 0.0.0.0 --port 50051
-    wine python.exe bridge.py --host 0.0.0.0 --port 50051 --debug
+    wine python.exe -m mt5linux.bridge --host 0.0.0.0 --port 8001
+    wine python.exe bridge.py --host 0.0.0.0 --port 8001 --debug
 """
 
 from __future__ import annotations
@@ -1509,6 +1509,15 @@ def _setup_logging(*, debug: bool = False) -> None:
     )
 
 
+# Server defaults (aligned with MT5Config in mt5linux/config.py)
+# NOTE: bridge.py is STANDALONE and runs inside Wine, so we can't import MT5Config
+# These values should match config.py: server_host, server_port, thread_pool_size
+_SERVER_HOST = "0.0.0.0"  # noqa: S104
+_SERVER_PORT = 8001  # Aligned with MT5Config.server_port
+_SERVER_WORKERS = 10  # Aligned with MT5Config.thread_pool_size
+_SERVER_GRACE_PERIOD = 5  # Aligned with MT5Config.server_grace_period
+
+
 def _graceful_shutdown(signum: int, frame: FrameType | None) -> None:
     """Handle shutdown signals for clean container stops.
 
@@ -1521,21 +1530,21 @@ def _graceful_shutdown(signum: int, frame: FrameType | None) -> None:
     sig_name = signal.Signals(signum).name
     log.info("Received %s, shutting down gracefully...", sig_name)
     if _server is not None:
-        _server.stop(grace=5)
+        _server.stop(grace=_SERVER_GRACE_PERIOD)
     sys.exit(0)
 
 
 def serve(
-    host: str = "0.0.0.0",  # noqa: S104
-    port: int = 50051,
-    max_workers: int = 10,
+    host: str = _SERVER_HOST,
+    port: int = _SERVER_PORT,
+    max_workers: int = _SERVER_WORKERS,
 ) -> None:
     """Start the gRPC server.
 
     Args:
-        host: Host address to bind to.
-        port: Port number to listen on.
-        max_workers: Maximum number of worker threads.
+        host: Host address to bind to (default: 0.0.0.0).
+        port: Port number to listen on (default: 8001, aligned with MT5Config).
+        max_workers: Maximum number of worker threads (default: 10).
 
     """
     global _server  # noqa: PLW0603
@@ -1566,21 +1575,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="MT5 gRPC Bridge Server")
     parser.add_argument(
         "--host",
-        default="0.0.0.0",  # noqa: S104
-        help="Host to bind (default: 0.0.0.0)",
+        default=_SERVER_HOST,
+        help=f"Host to bind (default: {_SERVER_HOST})",
     )
     parser.add_argument(
         "-p",
         "--port",
         type=int,
-        default=50051,
-        help="Port (default: 50051)",
+        default=_SERVER_PORT,
+        help=f"Port (default: {_SERVER_PORT}, aligned with MT5Config)",
     )
     parser.add_argument(
         "--workers",
         type=int,
-        default=10,
-        help="Worker threads (default: 10)",
+        default=_SERVER_WORKERS,
+        help=f"Worker threads (default: {_SERVER_WORKERS})",
     )
     parser.add_argument(
         "--debug",
