@@ -296,6 +296,7 @@ class MT5Utilities:
             Args:
                 config: MT5Config with cb_threshold, cb_recovery, cb_half_open_max.
                 name: Name for logging purposes.
+
             """
             self._config = config
             self.name = name

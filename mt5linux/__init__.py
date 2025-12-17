@@ -31,38 +31,6 @@ from mt5linux.models import MT5Models
 from mt5linux.types import MT5Types
 from mt5linux.utilities import MT5Utilities
 
-
-def run_server(
-    host: str = "0.0.0.0",  # noqa: S104
-    port: int = 18812,
-    threads: int = 10,
-    timeout: int = 300,
-    debug: bool = False,
-) -> int:
-    """Run the MT5 RPyC bridge server.
-
-    This should be run on Windows with MetaTrader5 installed.
-
-    Args:
-        host: Address to bind (default: 0.0.0.0).
-        port: Port to listen on (default: 18812).
-        threads: Number of worker threads (default: 10).
-        timeout: Request timeout in seconds (default: 300).
-        debug: Enable debug logging.
-
-    Returns:
-        Exit code (0 for success).
-    """
-    args = ["--host", host, "--port", str(port)]
-    args.extend(["--threads", str(threads), "--timeout", str(timeout)])
-    if debug:
-        args.append("--debug")
-
-    from mt5linux.bridge import main as bridge_main
-
-    return bridge_main(args)
-
-
 __all__ = [
     "AsyncMetaTrader5",
     "MT5Config",
@@ -71,6 +39,5 @@ __all__ = [
     "MT5Types",
     "MT5Utilities",
     "MetaTrader5",
-    "run_server",
 ]
 __version__ = "0.5.1"

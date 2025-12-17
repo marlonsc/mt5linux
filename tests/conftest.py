@@ -13,11 +13,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import grpc
 import pytest
-import rpyc
 from dotenv import load_dotenv
 
 from mt5linux import AsyncMetaTrader5, MetaTrader5
+from mt5linux import mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
 
 
@@ -41,63 +42,62 @@ def has_mt5_credentials() -> bool:
     return bool(os.getenv("MT5_LOGIN") and os.getenv("MT5_PASSWORD") and MT5_LOGIN != 0)
 
 
-def is_rpyc_service_ready(host: str = "localhost", port: int | None = None) -> bool:
-    """Check if RPyC service is ready (actual handshake + version call).
+def is_grpc_service_ready(host: str = "localhost", port: int | None = None) -> bool:
+    """Check if gRPC service is ready (actual connection + HealthCheck call).
 
-    Uses rpyc.connect() and calls exposed_version() to verify MT5Service is ready.
-    Uses a 60 second timeout because Wine/Python RPyC server can be slow.
+    Uses gRPC channel to connect and calls HealthCheck to verify MT5Service is ready.
+    Uses a 60 second timeout because Wine/Python gRPC server can be slow.
     """
-    rpyc_port = port or TEST_RPYC_PORT
+    grpc_port = port or TEST_GRPC_PORT
     try:
-        conn = rpyc.connect(
-            host,
-            rpyc_port,
-            config={
-                "sync_request_timeout": 60,
-                "allow_public_attrs": True,
-                "allow_pickle": True,
-                "max_io_chunk": _config.rpyc_max_io_chunk,
-                "compression_level": _config.rpyc_compression_level            },
+        target = f"{host}:{grpc_port}"
+        channel = grpc.insecure_channel(
+            target,
+            options=[
+                ("grpc.max_send_message_length", 50 * 1024 * 1024),
+                ("grpc.max_receive_message_length", 50 * 1024 * 1024),
+            ],
         )
-        # Verify connection works by calling exposed_version (official MT5 method)
-        _ = conn.root.exposed_version()
-        conn.close()
-    except (OSError, ConnectionError, TimeoutError, EOFError):
+        stub = mt5_pb2_grpc.MT5ServiceStub(channel)
+        # Verify connection works by calling HealthCheck
+        response = stub.HealthCheck(mt5_pb2.Empty(), timeout=60)
+        channel.close()
+        # Service is ready if we got a response (even if MT5 not connected)
+        return response is not None
+    except grpc.RpcError:
         return False
-    else:
-        return True
 
 
-def wait_for_rpyc_service(
+def wait_for_grpc_service(
     host: str = "localhost", port: int | None = None, timeout: int = 300
 ) -> bool:
-    """Wait for RPyC service to become ready.
+    """Wait for gRPC service to become ready.
 
-    This function waits until the RPyC service is fully ready to handle requests,
+    This function waits until the gRPC service is fully ready to handle requests,
     not just when the port is listening. The MT5 container needs time to:
-    1. Start the RPyC server (port becomes available)
+    1. Start the gRPC server (port becomes available)
     2. Initialize Wine and MetaTrader5 (service becomes usable)
 
     Args:
-        host: RPyC server host
-        port: RPyC server port (default: TEST_RPYC_PORT)
+        host: gRPC server host
+        port: gRPC server port (default: TEST_GRPC_PORT)
         timeout: Maximum wait time in seconds (default: 300)
 
     Returns:
         True if service is ready, False if timeout reached
     """
-    rpyc_port = port or TEST_RPYC_PORT
+    grpc_port = port or TEST_GRPC_PORT
     start = time.time()
     logger = logging.getLogger(__name__)
     check_interval = 3
 
     while time.time() - start < timeout:
-        if is_rpyc_service_ready(host, rpyc_port):
+        if is_grpc_service_ready(host, grpc_port):
             return True
         elapsed = int(time.time() - start)
         if elapsed % 30 == 0 and elapsed > 0:  # Log every 30 seconds
             logger.info(
-                "Waiting for RPyC service... (%ds elapsed)",
+                "Waiting for gRPC service... (%ds elapsed)",
                 elapsed,
             )
         time.sleep(check_interval)
@@ -120,8 +120,8 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)  # Credentials override
 # Test container configuration
 # Default ports match mt5linux/docker-compose.yaml defaults
 _config = MT5Config()
-TEST_RPYC_HOST = os.getenv("MT5_HOST", "localhost")
-TEST_RPYC_PORT = int(os.getenv("MT5_RPYC_PORT", str(_config.docker_mapped_port)))
+TEST_GRPC_HOST = os.getenv("MT5_HOST", "localhost")
+TEST_GRPC_PORT = int(os.getenv("MT5_GRPC_PORT", str(_config.docker_mapped_port)))
 TEST_VNC_PORT = int(os.getenv("MT5_VNC_PORT", str(_config.vnc_port)))
 TEST_CONTAINER_NAME = os.getenv("MT5_CONTAINER_NAME", "mt5linux-unit")
 
@@ -131,8 +131,8 @@ MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
 MT5_SERVER: str | None = os.getenv("MT5_SERVER")
 
 MT5_CONFIG: dict[str, str | int | None] = {
-    "host": TEST_RPYC_HOST,
-    "port": TEST_RPYC_PORT,
+    "host": TEST_GRPC_HOST,
+    "port": TEST_GRPC_PORT,
     "login": MT5_LOGIN,
     "password": MT5_PASSWORD,
     "server": MT5_SERVER,
@@ -173,7 +173,7 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
     - If SKIP_DOCKER=1, skips Docker setup entirely
     - If Docker is not available, skips Docker-dependent setup but allows unit tests
     - If container is already running and healthy, reuses it (no restart)
-    - If container not running, starts it and waits for RPyC service
+    - If container not running, starts it and waits for gRPC service
     - Container is kept running after tests end (no cleanup)
     """
     logger = logging.getLogger(__name__)
@@ -199,14 +199,14 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
                 "Container %s already running and healthy - reusing",
                 TEST_CONTAINER_NAME,
             )
-            # Still verify RPyC is ready
-            if wait_for_rpyc_service(TEST_RPYC_HOST, TEST_RPYC_PORT, timeout=30):
-                logger.info("RPyC service confirmed ready")
+            # Still verify gRPC is ready
+            if wait_for_grpc_service(TEST_GRPC_HOST, TEST_GRPC_PORT, timeout=30):
+                logger.info("gRPC service confirmed ready")
                 yield
                 return
             else:
                 logger.warning(
-                    "Container healthy but RPyC not responding - will restart"
+                    "Container healthy but gRPC not responding - will restart"
                 )
         else:
             logger.info(
@@ -217,7 +217,7 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
     # Start fresh test container with parametrized environment
     logger.info("Starting test Docker container with configuration...")
     logger.info("Container: %s", TEST_CONTAINER_NAME)
-    logger.info("RPyC Port: %s", TEST_RPYC_PORT)
+    logger.info("gRPC Port: %s", TEST_GRPC_PORT)
     logger.info("VNC Port: %s", TEST_VNC_PORT)
     logger.info("Server: %s", MT5_SERVER)
 
@@ -228,7 +228,7 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
         env.update(
             {
                 "MT5_CONTAINER_NAME": TEST_CONTAINER_NAME,
-                "MT5_RPYC_PORT": str(TEST_RPYC_PORT),
+                "MT5_GRPC_PORT": str(TEST_GRPC_PORT),
                 "MT5_VNC_PORT": str(TEST_VNC_PORT),
                 "MT5_LOGIN": str(MT5_LOGIN),
                 "MT5_PASSWORD": MT5_PASSWORD,
@@ -258,16 +258,16 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901
     except subprocess.TimeoutExpired:
         pytest.fail("Timeout waiting for test container to start")
 
-    # Wait for RPyC service to be ready before running tests/codegen
-    logger.info("Waiting for RPyC service to be ready (up to 300s)...")
-    if not wait_for_rpyc_service(TEST_RPYC_HOST, TEST_RPYC_PORT, timeout=300):
+    # Wait for gRPC service to be ready before running tests/codegen
+    logger.info("Waiting for gRPC service to be ready (up to 300s)...")
+    if not wait_for_grpc_service(TEST_GRPC_HOST, TEST_GRPC_PORT, timeout=300):
         pytest.fail(
-            f"RPyC service not available on {TEST_RPYC_HOST}:{TEST_RPYC_PORT} "
+            f"gRPC service not available on {TEST_GRPC_HOST}:{TEST_GRPC_PORT} "
             "after 300 seconds"
         )
-    logger.info("RPyC service is ready")
+    logger.info("gRPC service is ready")
 
-    # Run codegen only if Docker is available and RPyC service is ready
+    # Run codegen only if Docker is available and gRPC service is ready
     logger.info("Running codegen_enums.py...")
     try:
         result = subprocess.run(
@@ -315,12 +315,12 @@ def mt5_config() -> dict[str, str | int | None]:
 def mt5_raw() -> Generator[MetaTrader5]:
     """Return raw MT5 connection (no initialize).
 
-    This fixture creates a connection to the rpyc server but does NOT
+    This fixture creates a connection to the gRPC server but does NOT
     call initialize(). Use for testing connection lifecycle.
     Skips if connection fails.
     """
     try:
-        mt5 = MetaTrader5(host=TEST_RPYC_HOST, port=TEST_RPYC_PORT)
+        mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
     except Exception as e:
         pytest.skip(f"MT5 connection failed: {e}")
     yield mt5
@@ -568,11 +568,11 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
 async def async_mt5_raw() -> AsyncGenerator[AsyncMetaTrader5]:
     """Return raw async MT5 connection (no initialize).
 
-    This fixture creates an async connection to the rpyc server but does NOT
+    This fixture creates an async connection to the gRPC server but does NOT
     call initialize(). Use for testing connection lifecycle.
     Skips if connection fails.
     """
-    client = AsyncMetaTrader5(host=TEST_RPYC_HOST, port=TEST_RPYC_PORT)
+    client = AsyncMetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
     try:
         await client.connect()
     except Exception as e:
@@ -618,8 +618,8 @@ async def async_mt5(
 
 # Export symbols for type checking
 __all__ = [
-    "TEST_RPYC_HOST",
-    "TEST_RPYC_PORT",
+    "TEST_GRPC_HOST",
+    "TEST_GRPC_PORT",
     "TEST_CONTAINER_NAME",
     "MT5_CONFIG",
 ]

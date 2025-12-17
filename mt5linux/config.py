@@ -95,6 +95,7 @@ class MT5Config(BaseSettings):
 
         Returns:
             Delay in seconds before next retry.
+
         """
         delay = min(
             self.retry_initial_delay * (self.retry_exponential_base**attempt),
@@ -113,6 +114,7 @@ class MT5Config(BaseSettings):
 
         Returns:
             Delay in seconds with jitter applied.
+
         """
         delay = self.restart_delay_base * (self.restart_delay_multiplier**attempt)
         delay = min(delay, self.restart_delay_max)

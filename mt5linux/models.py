@@ -64,6 +64,7 @@ class MT5Models:
 
             Returns:
                 Model instance or None if obj is None.
+
             """
             if obj is None:
                 return None
@@ -87,6 +88,7 @@ class MT5Models:
             ...     price=1.1000,
             ... )
             >>> mt5.order_send(request.to_mt5_request())
+
         """
 
         model_config = ConfigDict(frozen=True, use_enum_values=True)
@@ -151,6 +153,7 @@ class MT5Models:
             >>> order_result = MT5Models.OrderResult.from_mt5(result)
             >>> if order_result.is_success:
             ...     print(f"Order placed: {order_result.order}")
+
         """
 
         retcode: int

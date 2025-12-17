@@ -20,6 +20,7 @@ Usage:
 import sys
 
 from mt5linux import __version__
+from mt5linux.bridge import main as bridge_main
 
 
 def _print_info() -> None:
@@ -65,8 +66,6 @@ def main() -> int:
     if "--server" in args or "-s" in args:
         # Remove --server/-s flag and pass remaining args to bridge
         server_args = [a for a in args if a not in ("--server", "-s")]
-        from mt5linux.bridge import main as bridge_main
-
         return bridge_main(server_args)
 
     # Check for help

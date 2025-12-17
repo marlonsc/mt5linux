@@ -133,6 +133,7 @@ class MT5Types:
             password: str | None = ...,
             server: str | None = ...,
             timeout: int | None = ...,
+            *,
             portable: bool = ...,
         ) -> bool: ...
 
@@ -165,7 +166,7 @@ class MT5Types:
 
         def symbol_info_tick(self, symbol: str) -> Any: ...
 
-        def symbol_select(self, symbol: str, enable: bool = ...) -> bool: ...
+        def symbol_select(self, symbol: str, *, enable: bool = ...) -> bool: ...
 
         # Market data operations
         def copy_rates_from(
