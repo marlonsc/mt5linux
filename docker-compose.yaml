@@ -31,7 +31,7 @@
 services:
   mt5:
     # Use pre-built image from mt5docker (no build needed)
-    image: marlonsc/mt5-docker:local
+    image: marlonsc/mt5-docker:debian
     container_name: ${MT5_CONTAINER_NAME:-mt5linux-unit}
     ports:
       - "${MT5_VNC_PORT:-33000}:3000"     # VNC
