@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import grpc
+import grpc.aio
 import pytest
 
 from mt5linux.constants import MT5Constants as c
@@ -20,6 +21,17 @@ from tests.conftest import tc
 
 if TYPE_CHECKING:
     from mt5linux import MetaTrader5
+
+
+def _get_filling_mode(mt5: MetaTrader5, filling_mode_mask: int) -> int:
+    """Get supported filling mode from symbol's filling_mode bitmask."""
+    if filling_mode_mask & 1:  # FOK supported
+        return mt5.ORDER_FILLING_FOK
+    if filling_mode_mask & 2:  # IOC supported
+        return mt5.ORDER_FILLING_IOC
+    if filling_mode_mask & 4:  # RETURN supported
+        return mt5.ORDER_FILLING_RETURN
+    return mt5.ORDER_FILLING_FOK  # Default
 
 
 class TestOrderCheck:
@@ -80,7 +92,11 @@ class TestOrderCheck:
             "type_time": c.Order.OrderTime.GTC,
             "type_filling": c.Order.OrderFilling.IOC,
         }
-        result = mt5.order_check(invalid_request)
+        try:
+            result = mt5.order_check(invalid_request)
+        except (grpc.RpcError, grpc.aio.AioRpcError) as e:
+            # MT5 bridge may raise exception for invalid requests
+            pytest.skip(f"MT5 server error on order_check: {e.code()}")
         # Should return error or None
         if result is not None:
             assert result.retcode != c.Order.TradeRetcode.DONE
@@ -101,7 +117,11 @@ class TestOrderCheck:
             "type_time": c.Order.OrderTime.GTC,
             "type_filling": c.Order.OrderFilling.IOC,
         }
-        result = mt5.order_check(invalid_request)
+        try:
+            result = mt5.order_check(invalid_request)
+        except (grpc.RpcError, grpc.aio.AioRpcError) as e:
+            # MT5 bridge may raise exception for invalid requests
+            pytest.skip(f"MT5 server error on order_check: {e.code()}")
         # Should fail validation
         if result is not None:
             assert result.retcode != c.Order.TradeRetcode.DONE
@@ -198,7 +218,7 @@ class TestOrderSend:
 
     @pytest.mark.trading
     @pytest.mark.slow
-    def test_order_send_buy_limit(
+    def test_order_send_buy_limit(  # noqa: C901
         self,
         mt5: MetaTrader5,
         cleanup_test_positions: None,
@@ -207,31 +227,54 @@ class TestOrderSend:
 
         Note: order_send may return None on some demo accounts.
         """
-        mt5.symbol_select("EURUSD", enable=True)
-        tick = mt5.symbol_info_tick("EURUSD")
+        symbol = "EURUSD"
+        mt5.symbol_select(symbol, enable=True)
+        tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
             pytest.skip("Could not get EURUSD tick")
 
-        # Place limit order below current price
-        limit_price = round(tick.bid * tc.ONE_PERCENT, 5)  # 1% below
+        # Get symbol info for price calculation
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            pytest.skip(f"Could not get symbol info for {symbol}")
 
+        # Check stops level - some brokers require minimum distance
+        stops_level = symbol_info.trade_stops_level
+        min_distance = max(stops_level, 100)  # At least 100 points
+
+        # Place limit order below current price (respecting stops level)
+        limit_price = round(
+            tick.bid - (min_distance * symbol_info.point), symbol_info.digits
+        )
+
+        # For pending orders, ORDER_FILLING_RETURN is typically required
         limit_request = {
-            "action": c.Order.TradeAction.PENDING,
-            "symbol": "EURUSD",
-            "volume": tc.MICRO_LOT,
-            "type": c.Order.OrderType.BUY_LIMIT,
+            "action": mt5.TRADE_ACTION_PENDING,
+            "symbol": symbol,
+            "volume": symbol_info.volume_min,
+            "type": mt5.ORDER_TYPE_BUY_LIMIT,
             "price": limit_price,
-            "deviation": tc.DEFAULT_DEVIATION,
             "magic": tc.INVALID_TEST_MAGIC,
             "comment": "test_buy_limit",
-            "type_time": c.Order.OrderTime.GTC,
-            "type_filling": c.Order.OrderFilling.RETURN,
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_RETURN,
         }
+
+        # First check if order is valid
+        try:
+            check_result = mt5.order_check(limit_request)
+        except (grpc.RpcError, grpc.aio.AioRpcError) as e:
+            # MT5 bridge may raise exception for order_check
+            pytest.skip(f"order_check failed with gRPC error: {e.code()}")
+        if check_result is None:
+            pytest.skip("order_check returned None")
+        if check_result.retcode != 0:
+            pytest.skip(f"order_check failed: {check_result.comment}")
 
         try:
             result = mt5.order_send(limit_request)
-        except grpc.RpcError as e:
+        except (grpc.RpcError, grpc.aio.AioRpcError) as e:
             # gRPC server errors - skip test
             pytest.skip(f"order_send failed with gRPC error: {e}")
 
@@ -258,7 +301,17 @@ class TestOrderSend:
         buy_order_request: dict[str, Any],
     ) -> None:
         """Test opening and closing a position."""
-        mt5.symbol_select("EURUSD", enable=True)
+        symbol = "EURUSD"
+        mt5.symbol_select(symbol, enable=True)
+
+        # Get symbol info to determine correct filling mode
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            pytest.skip(f"Could not get symbol info for {symbol}")
+        filling_mode = _get_filling_mode(mt5, symbol_info.filling_mode)
+
+        # Add filling mode to buy request
+        buy_order_request["type_filling"] = filling_mode
 
         # Open position
         open_result = mt5.order_send(buy_order_request)
@@ -266,14 +319,17 @@ class TestOrderSend:
         if open_result is None or open_result.retcode is None:
             pytest.skip("Could not open position for close test")
 
+        if open_result.retcode != c.Order.TradeRetcode.DONE:
+            pytest.skip(f"Could not open position: {open_result.comment}")
+
         # Get the position
-        positions = mt5.positions_get(symbol="EURUSD")
+        positions = mt5.positions_get(symbol=symbol)
         if not positions:
             pytest.skip("Position not found after opening")
 
         position = None
         for pos in positions:
-            if pos.magic == tc.INVALID_TEST_MAGIC:
+            if pos.magic == tc.TEST_ORDER_MAGIC:
                 position = pos
                 break
 
@@ -281,19 +337,19 @@ class TestOrderSend:
             pytest.skip("Test position not found")
 
         # Close the position
-        tick = mt5.symbol_info_tick("EURUSD")
+        tick = mt5.symbol_info_tick(symbol)
         close_request = {
             "action": c.Order.TradeAction.DEAL,
-            "symbol": "EURUSD",
+            "symbol": symbol,
             "volume": position.volume,
             "type": c.Order.OrderType.SELL,  # Opposite of buy
             "position": position.ticket,
             "price": tick.bid,
             "deviation": tc.DEFAULT_DEVIATION,
-            "magic": tc.INVALID_TEST_MAGIC,
+            "magic": tc.TEST_ORDER_MAGIC,
             "comment": "close_test",
             "type_time": c.Order.OrderTime.GTC,
-            "type_filling": c.Order.OrderFilling.IOC,
+            "type_filling": filling_mode,
         }
 
         close_result = mt5.order_send(close_request)

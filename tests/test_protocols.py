@@ -23,17 +23,16 @@ class TestSyncClientProtocol:
         assert isinstance(client, SyncClientProtocol)
 
     def test_sync_client_has_all_required_methods(self) -> None:
-        """Verify SyncClientProtocol defines all required methods."""
+        """Verify SyncClientProtocol defines all required methods.
+
+        Note: connect, disconnect, is_connected, and health_check are mt5linux
+        extensions NOT part of the standard MT5Protocol (MetaTrader5 PyPI).
+        """
         required_methods = {
-            # Connection
-            "connect",
-            "disconnect",
-            "is_connected",
-            # Terminal
+            # Terminal (Protocol methods only - 32 methods matching MT5 PyPI)
             "initialize",
             "login",
             "shutdown",
-            "health_check",
             "version",
             "last_error",
             "terminal_info",
@@ -109,17 +108,16 @@ class TestAsyncClientProtocol:
         assert isinstance(client, AsyncClientProtocol)
 
     def test_async_client_has_all_required_methods(self) -> None:
-        """Verify AsyncClientProtocol defines all required methods."""
+        """Verify AsyncClientProtocol defines all required methods.
+
+        Note: connect, disconnect, is_connected, and health_check are mt5linux
+        extensions NOT part of the standard MT5Protocol (MetaTrader5 PyPI).
+        """
         required_methods = {
-            # Connection
-            "connect",
-            "disconnect",
-            "is_connected",
-            # Terminal
+            # Terminal (Protocol methods only - 32 methods matching MT5 PyPI)
             "initialize",
             "login",
             "shutdown",
-            "health_check",
             "version",
             "last_error",
             "terminal_info",

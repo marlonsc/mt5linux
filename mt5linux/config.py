@@ -157,6 +157,25 @@ class MT5Config(BaseSettings):
             Delay in seconds before next retry.
 
         """
+        delay = min(
+            self.retry_initial_delay * (self.retry_exponential_base**attempt),
+            self.retry_max_delay,
+        )
+        if self.retry_jitter:
+            # Add 0-100% jitter (S311: random is fine for jitter)
+            delay *= 0.5 + random.random()
+        return delay
+
+    def calculate_backoff_delay(self, attempt: int) -> float:
+        """Calculate server restart backoff delay with jitter.
+
+        Args:
+            attempt: Current attempt number (0-indexed).
+
+        Returns:
+            Delay in seconds with jitter applied.
+
+        """
         delay = self.restart_delay_base * (self.restart_delay_multiplier**attempt)
         delay = min(delay, self.restart_delay_max)
         # S311: random is fine for jitter - not cryptographic

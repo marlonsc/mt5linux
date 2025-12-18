@@ -572,17 +572,49 @@ def mt5_raw(_mt5_session_raw: MetaTrader5) -> MetaTrader5:
     This fixture returns the session-scoped connection without initialize.
     Use for testing connection lifecycle.
     """
+    # Resilience: reconnect if connection was lost (e.g., by other tests)
+    if not _mt5_session_raw.is_connected:
+        _log("RESILIENCE: Reconnecting raw MT5 connection")
+        _mt5_session_raw.connect()
     return _mt5_session_raw
 
 
 @pytest.fixture
 def mt5(_mt5_session_initialized: MetaTrader5) -> MetaTrader5:
-    """Return fully initialized MT5 client.
+    """Return fully initialized MT5 client with auto-reconnect.
 
     This fixture returns the session-scoped initialized connection.
+    Includes resilience: auto-reconnects if connection was lost by other tests.
     Skips test if MT5_LOGIN is not configured (=0), credentials missing,
     or if initialization fails.
     """
+    # Resilience: reconnect if connection was lost
+    if not _mt5_session_initialized.is_connected:
+        _log("RESILIENCE: Reconnecting MT5 connection")
+        try:
+            _mt5_session_initialized.connect()
+        except (grpc.RpcError, ConnectionError, OSError) as e:
+            pytest.skip(f"MT5 reconnection failed: {e}")
+
+    # Resilience: re-initialize if terminal state lost
+    try:
+        info = _mt5_session_initialized.terminal_info()
+        if info is None:
+            raise RuntimeError("Terminal not initialized")  # noqa: TRY301
+    except Exception:
+        _log("RESILIENCE: Re-initializing MT5 terminal")
+        try:
+            result = _mt5_session_initialized.initialize(
+                login=MT5_LOGIN,
+                password=MT5_PASSWORD,
+                server=MT5_SERVER,
+            )
+            if not result:
+                error = _mt5_session_initialized.last_error()
+                pytest.skip(f"MT5 re-initialize failed: {error}")
+        except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
+            pytest.skip(f"MT5 re-initialize failed: {e}")
+
     return _mt5_session_initialized
 
 
@@ -693,8 +725,19 @@ def cleanup_test_positions(mt5: MetaTrader5) -> Generator[None]:
 # =============================================================================
 
 
+def _get_filling_mode(mt5: MetaTrader5, filling_mode_mask: int) -> int:
+    """Get supported filling mode from symbol's filling_mode bitmask."""
+    if filling_mode_mask & 1:  # FOK supported
+        return mt5.ORDER_FILLING_FOK
+    if filling_mode_mask & 2:  # IOC supported
+        return mt5.ORDER_FILLING_IOC
+    if filling_mode_mask & 4:  # RETURN supported
+        return mt5.ORDER_FILLING_RETURN
+    return mt5.ORDER_FILLING_FOK  # Default
+
+
 @pytest.fixture
-def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
+def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa: C901
     """Create a test order and close it to populate history.
 
     This fixture places a buy order, immediately closes it, creating
@@ -710,6 +753,12 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
     if tick is None:
         pytest.skip("Could not get tick data for history test")
 
+    # Get symbol filling mode to use correct one
+    symbol_info = mt5.symbol_info(symbol)
+    if symbol_info is None:
+        pytest.skip(f"Could not get symbol info for {symbol}")
+    filling_mode = _get_filling_mode(mt5, symbol_info.filling_mode)
+
     # Place buy order
     buy_request = {
         "action": mt5.TRADE_ACTION_DEAL,
@@ -721,7 +770,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
         "magic": c.Test.Order.HISTORY_MAGIC,
         "comment": "pytest history test",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": filling_mode,
     }
 
     result = mt5.order_send(buy_request)
@@ -764,7 +813,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
         "magic": c.Test.Order.HISTORY_MAGIC,
         "comment": "pytest history close",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": filling_mode,  # Use same filling mode as open
     }
 
     close_result = mt5.order_send(close_request)

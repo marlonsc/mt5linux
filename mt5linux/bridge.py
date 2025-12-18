@@ -29,6 +29,7 @@ from __future__ import annotations
 
 # pylint: disable=no-member  # Protobuf generated code has dynamic members
 import argparse
+import inspect
 import logging
 import signal
 import sys
@@ -39,8 +40,6 @@ from typing import TYPE_CHECKING
 import grpc
 import MetaTrader5  # pyright: ignore[reportMissingImports]
 import orjson
-
-from mt5linux.types import MT5Types
 
 from . import mt5_pb2, mt5_pb2_grpc
 
@@ -97,12 +96,12 @@ def _call_mt5_with_timeout(
 
 
 # =============================================================================
-# JSON Value Types (from centralized types.py)
+# JSON Value Types (standalone - no external dependencies)
 # =============================================================================
 
-# Type aliases from centralized types.py (single source of truth)
-JSONPrimitive = MT5Types.JSONPrimitive
-JSONValue = MT5Types.JSONValue
+# JSON-compatible value types for serialization (PEP 695 type statements)
+type JSONPrimitive = str | int | float | bool | None
+type JSONValue = JSONPrimitive | list[JSONValue] | dict[str, JSONValue]
 
 
 def _json_serialize(data: dict[str, JSONValue]) -> str:
@@ -516,7 +515,11 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         request: mt5_pb2.Empty,
         context: grpc.ServicerContext,
     ) -> mt5_pb2.Constants:
-        """Get all MT5 constants for client-side usage.
+        """Get all MT5 constants dynamically from the MetaTrader5 module.
+
+        Extracts ALL integer constants from the MetaTrader5 module by
+        inspecting its attributes. This ensures we always return the
+        complete set of constants from the actual MT5 PyPI package.
 
         Args:
             request: Empty request.
@@ -531,108 +534,193 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         mt5 = self._mt5_module
         constants: dict[str, int] = {}
 
-        constant_names = [
-            # Timeframes
-            "TIMEFRAME_M1",
-            "TIMEFRAME_M2",
-            "TIMEFRAME_M3",
-            "TIMEFRAME_M4",
-            "TIMEFRAME_M5",
-            "TIMEFRAME_M6",
-            "TIMEFRAME_M10",
-            "TIMEFRAME_M12",
-            "TIMEFRAME_M15",
-            "TIMEFRAME_M20",
-            "TIMEFRAME_M30",
-            "TIMEFRAME_H1",
-            "TIMEFRAME_H2",
-            "TIMEFRAME_H3",
-            "TIMEFRAME_H4",
-            "TIMEFRAME_H6",
-            "TIMEFRAME_H8",
-            "TIMEFRAME_H12",
-            "TIMEFRAME_D1",
-            "TIMEFRAME_W1",
-            "TIMEFRAME_MN1",
-            # Order types
-            "ORDER_TYPE_BUY",
-            "ORDER_TYPE_SELL",
-            "ORDER_TYPE_BUY_LIMIT",
-            "ORDER_TYPE_SELL_LIMIT",
-            "ORDER_TYPE_BUY_STOP",
-            "ORDER_TYPE_SELL_STOP",
-            "ORDER_TYPE_BUY_STOP_LIMIT",
-            "ORDER_TYPE_SELL_STOP_LIMIT",
-            "ORDER_TYPE_CLOSE_BY",
-            # Trade actions
-            "TRADE_ACTION_DEAL",
-            "TRADE_ACTION_PENDING",
-            "TRADE_ACTION_SLTP",
-            "TRADE_ACTION_MODIFY",
-            "TRADE_ACTION_REMOVE",
-            "TRADE_ACTION_CLOSE_BY",
-            # Order filling modes
-            "ORDER_FILLING_FOK",
-            "ORDER_FILLING_IOC",
-            "ORDER_FILLING_RETURN",
-            "ORDER_FILLING_BOC",
-            # Order time types
-            "ORDER_TIME_GTC",
-            "ORDER_TIME_DAY",
-            "ORDER_TIME_SPECIFIED",
-            "ORDER_TIME_SPECIFIED_DAY",
-            # Position types
-            "POSITION_TYPE_BUY",
-            "POSITION_TYPE_SELL",
-            # Deal types
-            "DEAL_TYPE_BUY",
-            "DEAL_TYPE_SELL",
-            "DEAL_TYPE_BALANCE",
-            "DEAL_TYPE_CREDIT",
-            "DEAL_TYPE_CHARGE",
-            "DEAL_TYPE_CORRECTION",
-            "DEAL_TYPE_BONUS",
-            "DEAL_TYPE_COMMISSION",
-            # Copy ticks flags
-            "COPY_TICKS_ALL",
-            "COPY_TICKS_INFO",
-            "COPY_TICKS_TRADE",
-            # Book types
-            "BOOK_TYPE_SELL",
-            "BOOK_TYPE_BUY",
-            "BOOK_TYPE_SELL_MARKET",
-            "BOOK_TYPE_BUY_MARKET",
-            # Trade return codes
-            "TRADE_RETCODE_REQUOTE",
-            "TRADE_RETCODE_REJECT",
-            "TRADE_RETCODE_CANCEL",
-            "TRADE_RETCODE_PLACED",
-            "TRADE_RETCODE_DONE",
-            "TRADE_RETCODE_DONE_PARTIAL",
-            "TRADE_RETCODE_ERROR",
-            "TRADE_RETCODE_TIMEOUT",
-            "TRADE_RETCODE_INVALID",
-            "TRADE_RETCODE_INVALID_VOLUME",
-            "TRADE_RETCODE_INVALID_PRICE",
-            "TRADE_RETCODE_INVALID_STOPS",
-            "TRADE_RETCODE_TRADE_DISABLED",
-            "TRADE_RETCODE_MARKET_CLOSED",
-            "TRADE_RETCODE_NO_MONEY",
-            "TRADE_RETCODE_PRICE_CHANGED",
-            "TRADE_RETCODE_PRICE_OFF",
-            "TRADE_RETCODE_INVALID_EXPIRATION",
-            "TRADE_RETCODE_ORDER_CHANGED",
-            "TRADE_RETCODE_TOO_MANY_REQUESTS",
-        ]
+        # Dynamically extract ALL integer constants from MetaTrader5 module
+        # This includes: TIMEFRAME_*, ORDER_*, TRADE_*, POSITION_*, DEAL_*,
+        # ACCOUNT_*, SYMBOL_*, BOOK_*, TICK_*, COPY_TICKS_*, DAY_OF_WEEK_*, etc.
+        for name in dir(mt5):
+            # Skip private/magic attributes
+            if name.startswith("_"):
+                continue
 
-        for name in constant_names:
-            if hasattr(mt5, name):
-                value = getattr(mt5, name)
-                if isinstance(value, int):
-                    constants[name] = value
+            # Only include UPPERCASE names (constants convention)
+            if not name.isupper():
+                continue
+
+            # Skip callable objects (functions/methods)
+            attr = getattr(mt5, name, None)
+            if callable(attr):
+                continue
+
+            # Only include integer values
+            if isinstance(attr, int):
+                constants[name] = attr
 
         log.debug("GetConstants: returned %s constants", len(constants))
         return mt5_pb2.Constants(values=constants)
+
+    def GetMethods(
+        self,
+        request: mt5_pb2.Empty,
+        context: grpc.ServicerContext,
+    ) -> mt5_pb2.MethodsResponse:
+        """Get all callable methods from the MetaTrader5 module.
+
+        Introspects the real MetaTrader5 PyPI module to extract method signatures,
+        parameter info, and return types. Used by tests to validate protocol
+        compliance against the actual MT5 API.
+
+        Args:
+            request: Empty request.
+            context: gRPC servicer context.
+
+        Returns:
+            MethodsResponse with all method information.
+
+        """
+        self._ensure_mt5_loaded()
+        log.debug("GetMethods: called")
+        mt5 = self._mt5_module
+        methods: list[mt5_pb2.MethodInfo] = []
+
+        for name in dir(mt5):
+            # Skip private/magic attributes
+            if name.startswith("_"):
+                continue
+
+            attr = getattr(mt5, name, None)
+
+            # Only include callable functions (not constants, not classes)
+            if not callable(attr):
+                continue
+
+            # Skip classes (we handle them in GetModels)
+            if inspect.isclass(attr):
+                continue
+
+            try:
+                sig = inspect.signature(attr)
+                params: list[mt5_pb2.ParameterInfo] = []
+
+                for param_name, param in sig.parameters.items():
+                    # Get type hint as string
+                    type_hint = ""
+                    if param.annotation != inspect.Parameter.empty:
+                        type_hint = str(param.annotation)
+
+                    # Get parameter kind
+                    kind = param.kind.name  # POSITIONAL_ONLY, KEYWORD_ONLY, etc.
+
+                    # Get default value
+                    has_default = param.default != inspect.Parameter.empty
+                    default_value = ""
+                    if has_default:
+                        default_value = repr(param.default)
+
+                    params.append(
+                        mt5_pb2.ParameterInfo(
+                            name=param_name,
+                            type_hint=type_hint,
+                            kind=kind,
+                            has_default=has_default,
+                            default_value=default_value,
+                        )
+                    )
+
+                # Get return type
+                return_type = ""
+                if sig.return_annotation != inspect.Signature.empty:
+                    return_type = str(sig.return_annotation)
+
+                methods.append(
+                    mt5_pb2.MethodInfo(
+                        name=name,
+                        parameters=params,
+                        return_type=return_type,
+                        is_callable=True,
+                    )
+                )
+            except (ValueError, TypeError):
+                # Some built-in methods may not have inspectable signatures
+                methods.append(
+                    mt5_pb2.MethodInfo(
+                        name=name,
+                        parameters=[],
+                        return_type="",
+                        is_callable=True,
+                    )
+                )
+
+        log.debug("GetMethods: returned %s methods", len(methods))
+        return mt5_pb2.MethodsResponse(methods=methods, total=len(methods))
+
+    def GetModels(
+        self,
+        request: mt5_pb2.Empty,
+        context: grpc.ServicerContext,
+    ) -> mt5_pb2.ModelsResponse:
+        """Get all model (namedtuple) types from the MetaTrader5 module.
+
+        Introspects the real MetaTrader5 PyPI module to extract model structures.
+        MT5 returns namedtuples for things like AccountInfo, SymbolInfo, etc.
+        This method discovers them by looking for classes with _fields attribute.
+
+        Args:
+            request: Empty request.
+            context: gRPC servicer context.
+
+        Returns:
+            ModelsResponse with all model information.
+
+        """
+        self._ensure_mt5_loaded()
+        log.debug("GetModels: called")
+        mt5 = self._mt5_module
+        models: list[mt5_pb2.ModelInfo] = []
+
+        for name in dir(mt5):
+            # Skip private/magic attributes
+            if name.startswith("_"):
+                continue
+
+            attr = getattr(mt5, name, None)
+
+            # Look for namedtuple-like classes (have _fields attribute)
+            if not inspect.isclass(attr):
+                continue
+
+            # Check if it's a namedtuple (has _fields)
+            if not hasattr(attr, "_fields"):
+                continue
+
+            fields: list[mt5_pb2.FieldInfo] = []
+            field_names = getattr(attr, "_fields", ())
+
+            # Get field annotations if available
+            annotations = getattr(attr, "__annotations__", {})
+
+            for idx, field_name in enumerate(field_names):
+                type_hint = ""
+                if field_name in annotations:
+                    type_hint = str(annotations[field_name])
+
+                fields.append(
+                    mt5_pb2.FieldInfo(
+                        name=field_name,
+                        type_hint=type_hint,
+                        index=idx,
+                    )
+                )
+
+            models.append(
+                mt5_pb2.ModelInfo(
+                    name=name,
+                    fields=fields,
+                    is_namedtuple=True,
+                )
+            )
+
+        log.debug("GetModels: returned %s models", len(models))
+        return mt5_pb2.ModelsResponse(models=models, total=len(models))
 
     # =========================================================================
     # ACCOUNT/TERMINAL INFO

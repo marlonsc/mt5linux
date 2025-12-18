@@ -35,25 +35,19 @@ class TestAsyncMetaTrader5Connection:
         assert async_mt5_raw.is_connected is True
 
     @pytest.mark.asyncio
-    async def test_context_manager(self) -> None:
-        """Test async context manager with real connection."""
-        try:
-            async with AsyncMetaTrader5(
-                host=TEST_GRPC_HOST, port=TEST_GRPC_PORT
-            ) as client:
-                assert client.is_connected is True
-                version = await client.version()
-                if version is None:
-                    pytest.skip("version() returned None (connection unstable)")
-        except (ConnectionError, EOFError, OSError, TimeoutError) as e:
-            pytest.skip(f"MT5 connection failed: {e}")
-        except Exception as e:
-            if "timeout" in str(e).lower() or "grpc" in str(e).lower():
-                pytest.skip(f"gRPC timeout: {e}")
-            raise
+    async def test_context_manager(self, async_mt5: AsyncMetaTrader5) -> None:
+        """Test async context manager with initialized connection.
 
-        # After exit, should be disconnected
-        assert client.is_connected is False
+        Uses fixture that already called initialize() - like official MT5.
+        """
+        # Fixture provides initialized connection
+        assert async_mt5.is_connected is True
+
+        # version() works after initialize() - like official MT5
+        version = await async_mt5.version()
+        assert version is not None
+        assert isinstance(version, tuple)
+        assert len(version) == 3
 
     @pytest.mark.asyncio
     async def test_concurrent_connect_is_safe(self) -> None:
@@ -177,9 +171,9 @@ class TestAsyncMetaTrader5Symbols:
         usd_symbols = await async_mt5.symbols_get(group="*USD*")
         assert usd_symbols is not None
         assert len(usd_symbols) > 0
-        # All returned symbols should contain USD (symbols_get returns dicts)
+        # All returned symbols should contain USD (SymbolInfo models)
         for sym in usd_symbols:
-            assert "USD" in sym.get("name", "")
+            assert "USD" in sym.name
 
     @pytest.mark.asyncio
     async def test_symbol_info(self, async_mt5: AsyncMetaTrader5) -> None:

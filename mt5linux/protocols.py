@@ -1,14 +1,21 @@
-"""Client protocol definitions for mt5linux.
+"""Unified protocol definitions for mt5linux.
 
-Defines abstract interfaces for both sync and async MT5 clients.
-Ensures API consistency across implementations.
+Defines ONE protocol that EXACTLY matches the MetaTrader5 PyPI interface.
+Both sync and async clients implement the same protocol structure.
 
-Hierarchy Level: 2
-- Imports: MT5Types (Level 1) - for type aliases
-- Used by: client.py, async_client.py (implementation validation)
+Protocol contains 32 methods matching MetaTrader5 PyPI:
+- Terminal: initialize, login, shutdown, version, last_error, terminal_info, account_info
+- Symbol: symbols_total, symbols_get, symbol_info, symbol_info_tick, symbol_select
+- Market Data: copy_rates_from, copy_rates_from_pos, copy_rates_range,
+              copy_ticks_from, copy_ticks_range
+- Trading: order_calc_margin, order_calc_profit, order_check, order_send
+- Positions: positions_total, positions_get
+- Orders: orders_total, orders_get
+- History: history_orders_total, history_orders_get, history_deals_total, history_deals_get
+- Market Depth: market_book_add, market_book_get, market_book_release
 
-Protocols are extracted from async_client.py (source of truth) and ensure
-that both sync and async implementations have identical method signatures.
+Note: connect(), disconnect(), health_check(), is_connected are NOT in the protocol.
+These are mt5linux-specific extensions in the client implementations.
 
 Uses @runtime_checkable for both static (mypy/pyright) and runtime (isinstance)
 validation of client implementations.
@@ -27,54 +34,27 @@ if TYPE_CHECKING:
 
     from mt5linux.models import MT5Models
 
-from mt5linux.types import (
-    MT5Types,
-)
-
-# Type alias for convenience (single source of truth)
-JSONValue = MT5Types.JSONValue
+# Type alias for JSON values (single source of truth)
+type JSONPrimitive = str | int | float | bool | None
+type JSONValue = JSONPrimitive | list[JSONValue] | dict[str, JSONValue]
 
 
 @runtime_checkable
-class SyncClientProtocol(Protocol):
-    """Protocol for synchronous MT5 client implementations.
+class MT5Protocol(Protocol):
+    """Protocol matching MetaTrader5 PyPI interface with Pydantic return types.
 
-    Defines the complete interface for blocking MT5 operations.
-    All implementations must provide these exact signatures.
+    Defines the complete interface for MT5 operations.
+    All implementations must provide these exact 32 method signatures.
 
-    All signatures extracted from async_client.py (source of truth).
-    Implements both static typing (mypy) and runtime checking (isinstance).
+    This protocol does NOT include:
+    - connect() / disconnect() - mt5linux-specific gRPC connection
+    - health_check() - mt5linux-specific health monitoring
+    - is_connected - mt5linux-specific connection state
 
     """
 
     # =========================================================================
-    # CONNECTION MANAGEMENT
-    # =========================================================================
-
-    def connect(self) -> None:
-        """Connect to gRPC server.
-
-        Thread-safe: uses threading.Lock to prevent race conditions.
-
-        """
-        ...
-
-    def disconnect(self) -> None:
-        """Disconnect from gRPC server."""
-        ...
-
-    @property
-    def is_connected(self) -> bool:
-        """Check if client is connected to gRPC server.
-
-        Returns:
-            True if connected, False otherwise.
-
-        """
-        ...
-
-    # =========================================================================
-    # TERMINAL OPERATIONS
+    # TERMINAL OPERATIONS (7 methods)
     # =========================================================================
 
     def initialize(
@@ -83,7 +63,7 @@ class SyncClientProtocol(Protocol):
         login: int | None = None,
         password: str | None = None,
         server: str | None = None,
-        init_timeout: int | None = None,
+        timeout: int | None = None,
         *,
         portable: bool = False,
     ) -> bool:
@@ -94,7 +74,7 @@ class SyncClientProtocol(Protocol):
             login: Trading account number.
             password: Account password.
             server: Trade server name.
-            init_timeout: Connection timeout in milliseconds.
+            timeout: Connection timeout in milliseconds.
             portable: Use portable mode.
 
         Returns:
@@ -106,8 +86,8 @@ class SyncClientProtocol(Protocol):
     def login(
         self,
         login: int,
-        password: str,
-        server: str,
+        password: str | None = None,
+        server: str | None = None,
         timeout: int = 60000,
     ) -> bool:
         """Login to MT5 account.
@@ -125,26 +105,7 @@ class SyncClientProtocol(Protocol):
         ...
 
     def shutdown(self) -> None:
-        """Shutdown MT5 terminal connection.
-
-        No-op if not connected (graceful degradation).
-
-        """
-        ...
-
-    def health_check(self) -> dict[str, bool | int | str]:
-        """Check MT5 service health status.
-
-        Returns:
-            Dict with health status fields:
-            - healthy: bool - Overall service health
-            - mt5_available: bool - MT5 module loaded
-            - connected: bool - Terminal connected
-            - trade_allowed: bool - Trading enabled
-            - build: int - Terminal build number
-            - reason: str - Error reason if unhealthy
-
-        """
+        """Shutdown MT5 terminal connection."""
         ...
 
     def version(self) -> tuple[int, int, str] | None:
@@ -169,7 +130,7 @@ class SyncClientProtocol(Protocol):
         """Get terminal information.
 
         Returns:
-            TerminalInfo object or None.
+            TerminalInfo model or None.
 
         """
         ...
@@ -178,13 +139,13 @@ class SyncClientProtocol(Protocol):
         """Get account information.
 
         Returns:
-            AccountInfo object or None.
+            AccountInfo model or None.
 
         """
         ...
 
     # =========================================================================
-    # SYMBOL OPERATIONS
+    # SYMBOL OPERATIONS (5 methods)
     # =========================================================================
 
     def symbols_total(self) -> int:
@@ -198,14 +159,14 @@ class SyncClientProtocol(Protocol):
 
     def symbols_get(
         self, group: str | None = None
-    ) -> tuple[dict[str, JSONValue], ...] | None:
+    ) -> tuple[MT5Models.SymbolInfo, ...] | None:
         """Get available symbols with optional group filter.
 
         Args:
-            group: Optional group filter pattern.
+            group: Optional group filter pattern (e.g., "*USD*").
 
         Returns:
-            Tuple of symbol dictionaries or None.
+            Tuple of SymbolInfo models or None.
 
         """
         ...
@@ -217,7 +178,7 @@ class SyncClientProtocol(Protocol):
             symbol: Symbol name (e.g., "EURUSD").
 
         Returns:
-            SymbolInfo object or None.
+            SymbolInfo model or None.
 
         """
         ...
@@ -229,7 +190,7 @@ class SyncClientProtocol(Protocol):
             symbol: Symbol name (e.g., "EURUSD").
 
         Returns:
-            Tick object or None.
+            Tick model or None.
 
         """
         ...
@@ -248,7 +209,7 @@ class SyncClientProtocol(Protocol):
         ...
 
     # =========================================================================
-    # MARKET DATA OPERATIONS
+    # MARKET DATA OPERATIONS (5 methods)
     # =========================================================================
 
     def copy_rates_from(
@@ -327,7 +288,7 @@ class SyncClientProtocol(Protocol):
             symbol: Symbol name.
             date_from: Start date as datetime or Unix timestamp.
             count: Number of ticks to copy.
-            flags: Copy ticks flags.
+            flags: Copy ticks flags (e.g., COPY_TICKS_ALL).
 
         Returns:
             NumPy structured array with tick data or None.
@@ -357,7 +318,7 @@ class SyncClientProtocol(Protocol):
         ...
 
     # =========================================================================
-    # TRADING OPERATIONS
+    # TRADING OPERATIONS (4 methods)
     # =========================================================================
 
     def order_calc_margin(
@@ -413,7 +374,7 @@ class SyncClientProtocol(Protocol):
             request: Order request dictionary.
 
         Returns:
-            OrderCheckResult object or None.
+            OrderCheckResult model or None.
 
         """
         ...
@@ -425,13 +386,13 @@ class SyncClientProtocol(Protocol):
             request: Order request dictionary.
 
         Returns:
-            OrderResult object or None.
+            OrderResult model or None.
 
         """
         ...
 
     # =========================================================================
-    # POSITIONS OPERATIONS
+    # POSITIONS OPERATIONS (2 methods)
     # =========================================================================
 
     def positions_total(self) -> int:
@@ -457,13 +418,13 @@ class SyncClientProtocol(Protocol):
             ticket: Specific position ticket.
 
         Returns:
-            Tuple of Position objects or None.
+            Tuple of Position models or None.
 
         """
         ...
 
     # =========================================================================
-    # ORDERS OPERATIONS
+    # ORDERS OPERATIONS (2 methods)
     # =========================================================================
 
     def orders_total(self) -> int:
@@ -489,13 +450,13 @@ class SyncClientProtocol(Protocol):
             ticket: Specific order ticket.
 
         Returns:
-            Tuple of Order objects or None.
+            Tuple of Order models or None.
 
         """
         ...
 
     # =========================================================================
-    # HISTORY OPERATIONS
+    # HISTORY OPERATIONS (4 methods)
     # =========================================================================
 
     def history_orders_total(
@@ -533,7 +494,7 @@ class SyncClientProtocol(Protocol):
             position: Position ID filter.
 
         Returns:
-            Tuple of Order objects or None.
+            Tuple of Order models or None.
 
         """
         ...
@@ -573,13 +534,13 @@ class SyncClientProtocol(Protocol):
             position: Position ID filter.
 
         Returns:
-            Tuple of Deal objects or None.
+            Tuple of Deal models or None.
 
         """
         ...
 
     # =========================================================================
-    # MARKET DEPTH (DOM) OPERATIONS
+    # MARKET DEPTH (DOM) OPERATIONS (3 methods)
     # =========================================================================
 
     def market_book_add(self, symbol: str) -> bool:
@@ -605,7 +566,7 @@ class SyncClientProtocol(Protocol):
             symbol: Symbol name to get market depth for.
 
         Returns:
-            Tuple of BookEntry objects or None.
+            Tuple of BookEntry models or None.
 
         """
         ...
@@ -624,41 +585,21 @@ class SyncClientProtocol(Protocol):
 
 
 @runtime_checkable
-class AsyncClientProtocol(Protocol):
-    """Protocol for asynchronous MT5 client implementations.
+class AsyncMT5Protocol(Protocol):
+    """Async protocol matching MetaTrader5 PyPI interface with Pydantic return types.
 
-    Defines the complete interface for async MT5 operations.
-    All async implementations must provide these exact signatures.
+    Identical to MT5Protocol but with async/await keywords.
+    All implementations must provide these exact 32 method signatures.
 
-    All signatures extracted from async_client.py (source of truth).
-    Identical to SyncClientProtocol but with async/await keywords.
+    This protocol does NOT include:
+    - connect() / disconnect() - mt5linux-specific gRPC connection
+    - health_check() - mt5linux-specific health monitoring
+    - is_connected - mt5linux-specific connection state
 
     """
 
     # =========================================================================
-    # CONNECTION MANAGEMENT
-    # =========================================================================
-
-    async def connect(self) -> None:
-        """Connect to gRPC server (async version)."""
-        ...
-
-    async def disconnect(self) -> None:
-        """Disconnect from gRPC server (async version)."""
-        ...
-
-    @property
-    def is_connected(self) -> bool:
-        """Check if client is connected to gRPC server.
-
-        Returns:
-            True if connected, False otherwise.
-
-        """
-        ...
-
-    # =========================================================================
-    # TERMINAL OPERATIONS
+    # TERMINAL OPERATIONS (7 methods)
     # =========================================================================
 
     async def initialize(
@@ -667,75 +608,71 @@ class AsyncClientProtocol(Protocol):
         login: int | None = None,
         password: str | None = None,
         server: str | None = None,
-        init_timeout: int | None = None,
+        timeout: int | None = None,
         *,
         portable: bool = False,
     ) -> bool:
-        """Initialize MT5 terminal connection (async version)."""
+        """Initialize MT5 terminal connection (async)."""
         ...
 
     async def login(
         self,
         login: int,
-        password: str,
-        server: str,
+        password: str | None = None,
+        server: str | None = None,
         timeout: int = 60000,
     ) -> bool:
-        """Login to MT5 account (async version)."""
+        """Login to MT5 account (async)."""
         ...
 
     async def shutdown(self) -> None:
-        """Shutdown MT5 terminal connection (async version)."""
-        ...
-
-    async def health_check(self) -> dict[str, bool | int | str]:
-        """Check MT5 service health status (async version)."""
+        """Shutdown MT5 terminal connection (async)."""
         ...
 
     async def version(self) -> tuple[int, int, str] | None:
-        """Get MT5 terminal version (async version)."""
+        """Get MT5 terminal version (async)."""
         ...
 
     async def last_error(self) -> tuple[int, str]:
-        """Get last error code and description (async version)."""
+        """Get last error code and description (async)."""
         ...
 
     async def terminal_info(self) -> MT5Models.TerminalInfo | None:
-        """Get terminal information (async version)."""
+        """Get terminal information (async)."""
         ...
 
     async def account_info(self) -> MT5Models.AccountInfo | None:
-        """Get account information (async version)."""
+        """Get account information (async)."""
         ...
 
     # =========================================================================
-    # SYMBOL OPERATIONS
+    # SYMBOL OPERATIONS (5 methods)
     # =========================================================================
 
     async def symbols_total(self) -> int:
-        """Get total number of available symbols (async version)."""
+        """Get total number of available symbols (async)."""
         ...
 
     async def symbols_get(
         self, group: str | None = None
-    ) -> tuple[dict[str, JSONValue], ...] | None:
-        """Get available symbols with optional group filter (async version)."""
+    ) -> tuple[MT5Models.SymbolInfo, ...] | None:
+        """Get available symbols with optional group filter (async)."""
         ...
 
     async def symbol_info(self, symbol: str) -> MT5Models.SymbolInfo | None:
-        """Get detailed symbol information (async version)."""
+        """Get detailed symbol information (async)."""
         ...
 
     async def symbol_info_tick(self, symbol: str) -> MT5Models.Tick | None:
-        """Get current tick data for a symbol (async version)."""
+        """Get current tick data for a symbol (async)."""
         ...
 
     async def symbol_select(self, symbol: str, *, enable: bool = True) -> bool:
-        """Select/deselect symbol in Market Watch (async version)."""
+        """Select/deselect symbol in Market Watch (async)."""
         ...
 
     # =========================================================================
-    # MARKET DATA OPERATIONS
+    # MARKET DATA OPERATIONS (5 methods)
     # =========================================================================
 
     async def copy_rates_from(
@@ -745,7 +682,7 @@ class AsyncClientProtocol(Protocol):
         date_from: datetime | int,
         count: int,
     ) -> NDArray[np.void] | None:
-        """Copy OHLCV rates from a specific date (async version)."""
+        """Copy OHLCV rates from a specific date (async)."""
         ...
 
     async def copy_rates_from_pos(
@@ -755,7 +692,7 @@ class AsyncClientProtocol(Protocol):
         start_pos: int,
         count: int,
     ) -> NDArray[np.void] | None:
-        """Copy OHLCV rates from a bar position (async version)."""
+        """Copy OHLCV rates from a bar position (async)."""
         ...
 
     async def copy_rates_range(
@@ -765,7 +702,7 @@ class AsyncClientProtocol(Protocol):
         date_from: datetime | int,
         date_to: datetime | int,
     ) -> NDArray[np.void] | None:
-        """Copy OHLCV rates in a date range (async version)."""
+        """Copy OHLCV rates in a date range (async)."""
         ...
 
     async def copy_ticks_from(
@@ -775,7 +712,7 @@ class AsyncClientProtocol(Protocol):
         count: int,
         flags: int,
     ) -> NDArray[np.void] | None:
-        """Copy tick data from a specific date (async version)."""
+        """Copy tick data from a specific date (async)."""
         ...
 
     async def copy_ticks_range(
@@ -785,11 +722,11 @@ class AsyncClientProtocol(Protocol):
         date_to: datetime | int,
         flags: int,
     ) -> NDArray[np.void] | None:
-        """Copy tick data in a date range (async version)."""
+        """Copy tick data in a date range (async)."""
         ...
 
     # =========================================================================
-    # TRADING OPERATIONS
+    # TRADING OPERATIONS (4 methods)
     # =========================================================================
 
     async def order_calc_margin(
@@ -799,7 +736,7 @@ class AsyncClientProtocol(Protocol):
         volume: float,
         price: float,
     ) -> float | None:
-        """Calculate margin required for an order (async version)."""
+        """Calculate margin required for an order (async)."""
         ...
 
     async def order_calc_profit(
@@ -810,27 +747,27 @@ class AsyncClientProtocol(Protocol):
         price_open: float,
         price_close: float,
     ) -> float | None:
-        """Calculate potential profit for an order (async version)."""
+        """Calculate potential profit for an order (async)."""
         ...
 
     async def order_check(
         self, request: dict[str, JSONValue]
     ) -> MT5Models.OrderCheckResult | None:
-        """Check order validity without sending (async version)."""
+        """Check order validity without sending (async)."""
         ...
 
     async def order_send(
         self, request: dict[str, JSONValue]
     ) -> MT5Models.OrderResult | None:
-        """Send trading order to MT5 (async version)."""
+        """Send trading order to MT5 (async)."""
         ...
 
     # =========================================================================
-    # POSITIONS OPERATIONS
+    # POSITIONS OPERATIONS (2 methods)
     # =========================================================================
 
     async def positions_total(self) -> int:
-        """Get total number of open positions (async version)."""
+        """Get total number of open positions (async)."""
         ...
 
     async def positions_get(
@@ -839,15 +776,15 @@ class AsyncClientProtocol(Protocol):
         group: str | None = None,
         ticket: int | None = None,
     ) -> tuple[MT5Models.Position, ...] | None:
-        """Get open positions with optional filters (async version)."""
+        """Get open positions with optional filters (async)."""
         ...
 
     # =========================================================================
-    # ORDERS OPERATIONS
+    # ORDERS OPERATIONS (2 methods)
     # =========================================================================
 
     async def orders_total(self) -> int:
-        """Get total number of pending orders (async version)."""
+        """Get total number of pending orders (async)."""
         ...
 
     async def orders_get(
@@ -856,11 +793,11 @@ class AsyncClientProtocol(Protocol):
         group: str | None = None,
         ticket: int | None = None,
     ) -> tuple[MT5Models.Order, ...] | None:
-        """Get pending orders with optional filters (async version)."""
+        """Get pending orders with optional filters (async)."""
         ...
 
     # =========================================================================
-    # HISTORY OPERATIONS
+    # HISTORY OPERATIONS (4 methods)
     # =========================================================================
 
     async def history_orders_total(
@@ -868,7 +805,7 @@ class AsyncClientProtocol(Protocol):
         date_from: datetime | int,
         date_to: datetime | int,
     ) -> int:
-        """Get total count of historical orders in date range (async version)."""
+        """Get total count of historical orders in date range (async)."""
         ...
 
     async def history_orders_get(
@@ -879,7 +816,7 @@ class AsyncClientProtocol(Protocol):
         ticket: int | None = None,
         position: int | None = None,
     ) -> tuple[MT5Models.Order, ...] | None:
-        """Get historical orders with filters (async version)."""
+        """Get historical orders with filters (async)."""
         ...
 
     async def history_deals_total(
@@ -887,7 +824,7 @@ class AsyncClientProtocol(Protocol):
         date_from: datetime | int,
         date_to: datetime | int,
     ) -> int:
-        """Get total count of historical deals in date range (async version)."""
+        """Get total count of historical deals in date range (async)."""
         ...
 
     async def history_deals_get(
@@ -898,23 +835,28 @@ class AsyncClientProtocol(Protocol):
         ticket: int | None = None,
         position: int | None = None,
     ) -> tuple[MT5Models.Deal, ...] | None:
-        """Get historical deals with filters (async version)."""
+        """Get historical deals with filters (async)."""
         ...
 
     # =========================================================================
-    # MARKET DEPTH (DOM) OPERATIONS
+    # MARKET DEPTH (DOM) OPERATIONS (3 methods)
     # =========================================================================
 
     async def market_book_add(self, symbol: str) -> bool:
-        """Subscribe to market depth (DOM) for a symbol (async version)."""
+        """Subscribe to market depth (DOM) for a symbol (async)."""
         ...
 
     async def market_book_get(
         self, symbol: str
     ) -> tuple[MT5Models.BookEntry, ...] | None:
-        """Get market depth (DOM) data for a symbol (async version)."""
+        """Get market depth (DOM) data for a symbol (async)."""
         ...
 
     async def market_book_release(self, symbol: str) -> bool:
-        """Unsubscribe from market depth (DOM) for a symbol (async version)."""
+        """Unsubscribe from market depth (DOM) for a symbol (async)."""
         ...
+
+
+# Backwards compatibility aliases (deprecated, will be removed)
+SyncClientProtocol = MT5Protocol
+AsyncClientProtocol = AsyncMT5Protocol

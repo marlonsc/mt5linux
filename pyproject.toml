@@ -59,12 +59,15 @@ select = ["ALL"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "S101",    # assert ok in tests
-    "PLR2004", # magic values ok in tests
-    "SLF001",  # private member access ok in tests
     "ARG001",  # unused arguments in fixtures
     "ARG002",  # unused arguments in fixtures
+    "B017",
+    "PLR2004", # magic values ok in tests
+    "PT011",
+    "S101",    # assert ok in tests
+    "SLF001",  # private member access ok in tests
     "TRY301",  # raise in inner function not needed in tests
+
 ]
 "mt5linux/bridge.py" = [
     "ARG002",  # unused arguments are required by gRPC framework (request, context)
@@ -74,15 +77,16 @@ select = ["ALL"]
     "TRY400",  # log.error before raise - not in exception handler
 ]
 "mt5linux/protocols.py" = [
-    "PLR0913",  # too many arguments - protocol methods require specific signatures
     "ASYNC109", # async function with timeout - required for protocol compatibility
+    "PLR0913",  # too many arguments - protocol methods require specific signatures
 ]
 "mt5linux/config.py" = [
     "S104", # binding to all interfaces is intentional for server configuration
     "S311", # random usage is for jitter/backoff, not cryptography
 ]
 "mt5linux/async_client.py" = [
-    "PLR0913", # too many arguments - MT5 API requires specific method signatures
+    "ASYNC109",
+    "PLR0913",  # too many arguments - MT5 API requires specific method signatures
 ]
 
 [tool.mypy]

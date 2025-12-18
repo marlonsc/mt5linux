@@ -41,7 +41,7 @@ import orjson
 from mt5linux import mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
 from mt5linux.models import MT5Models
-from mt5linux.protocols import AsyncClientProtocol
+from mt5linux.protocols import AsyncMT5Protocol
 from mt5linux.types import MT5Types
 from mt5linux.utilities import MT5Utilities
 
@@ -72,12 +72,15 @@ _CHANNEL_OPTIONS = _config.get_grpc_channel_options()
 JSONValue = MT5Types.JSONValue
 
 
-class AsyncMetaTrader5(AsyncClientProtocol):
+class AsyncMetaTrader5(AsyncMT5Protocol):
     """Async wrapper for MetaTrader5 client using native gRPC async.
 
     Uses grpc.aio.insecure_channel for true async operations.
-    Implements AsyncClientProtocol for type-safe async MT5 operations.
+    Implements AsyncMT5Protocol (32 methods matching MetaTrader5 PyPI exactly).
     All MT5 operations are executed via native gRPC async stubs.
+
+    Note: connect(), disconnect(), health_check(), is_connected are mt5linux
+    extensions NOT part of the AsyncMT5Protocol (not in MetaTrader5 PyPI).
 
     Attributes:
         TIMEFRAME_M1, TIMEFRAME_H1, etc.: MT5 timeframe constants (via __getattr__)
@@ -533,23 +536,26 @@ class AsyncMetaTrader5(AsyncClientProtocol):
 
     def _unwrap_symbols_chunks(
         self, response: mt5_pb2.SymbolsResponse
-    ) -> tuple[dict[str, JSONValue], ...] | None:
+    ) -> tuple[MT5Models.SymbolInfo, ...] | None:
         """Unwrap chunked symbols response.
 
         Args:
             response: SymbolsResponse with chunked JSON data.
 
         Returns:
-            Tuple of symbol dictionaries or None if empty.
+            Tuple of SymbolInfo objects or None if empty.
 
         """
         if response.total == 0:
             return None
-        result: list[dict[str, JSONValue]] = []
+        result: list[MT5Models.SymbolInfo] = []
         for chunk in response.chunks:
             chunk_data: list[dict[str, JSONValue]] = orjson.loads(chunk)
-            result.extend(chunk_data)
-        return tuple(result)
+            for symbol_dict in chunk_data:
+                symbol_info = MT5Models.SymbolInfo.from_mt5(symbol_dict)
+                if symbol_info is not None:
+                    result.append(symbol_info)
+        return tuple(result) if result else None
 
     def _to_timestamp(self, dt: datetime | int) -> int:
         """Convert datetime or int to Unix timestamp.
@@ -575,7 +581,7 @@ class AsyncMetaTrader5(AsyncClientProtocol):
         login: int | None = None,
         password: str | None = None,
         server: str | None = None,
-        init_timeout: int | None = None,
+        timeout: int | None = None,
         *,
         portable: bool = False,
     ) -> bool:
@@ -588,7 +594,7 @@ class AsyncMetaTrader5(AsyncClientProtocol):
             login: Trading account number.
             password: Account password.
             server: Trade server name.
-            init_timeout: Connection timeout in milliseconds.
+            timeout: Connection timeout in milliseconds.
             portable: Use portable mode.
 
         Returns:
@@ -609,8 +615,8 @@ class AsyncMetaTrader5(AsyncClientProtocol):
                 request.password = password
             if server is not None:
                 request.server = server
-            if init_timeout is not None:
-                request.timeout = init_timeout
+            if timeout is not None:
+                request.timeout = timeout
             response = await stub.Initialize(request, timeout=self._timeout)
             return response.result
 
@@ -619,9 +625,9 @@ class AsyncMetaTrader5(AsyncClientProtocol):
     async def login(
         self,
         login: int,
-        password: str,
-        server: str,
-        login_timeout: int = 60000,
+        password: str | None = None,
+        server: str | None = None,
+        timeout: int = 60000,
     ) -> bool:
         """Login to MT5 account.
 
@@ -629,7 +635,7 @@ class AsyncMetaTrader5(AsyncClientProtocol):
             login: Trading account number.
             password: Account password.
             server: Trade server name.
-            login_timeout: Login timeout in milliseconds.
+            timeout: Login timeout in milliseconds.
 
         Returns:
             True if login successful, False otherwise.
@@ -638,12 +644,11 @@ class AsyncMetaTrader5(AsyncClientProtocol):
 
         async def _call() -> bool:
             stub = self._ensure_connected()
-            request = mt5_pb2.LoginRequest(
-                login=login,
-                password=password,
-                server=server,
-                timeout=login_timeout,
-            )
+            request = mt5_pb2.LoginRequest(login=login, timeout=timeout)
+            if password is not None:
+                request.password = password
+            if server is not None:
+                request.server = server
             response = await stub.Login(request, timeout=self._timeout)
             return response.result
 
@@ -771,18 +776,18 @@ class AsyncMetaTrader5(AsyncClientProtocol):
 
     async def symbols_get(
         self, group: str | None = None
-    ) -> tuple[dict[str, JSONValue], ...] | None:
+    ) -> tuple[MT5Models.SymbolInfo, ...] | None:
         """Get available symbols with optional group filter.
 
         Args:
             group: Optional group filter pattern.
 
         Returns:
-            Tuple of symbol dictionaries or None.
+            Tuple of SymbolInfo objects or None.
 
         """
 
-        async def _call() -> tuple[dict[str, JSONValue], ...] | None:
+        async def _call() -> tuple[MT5Models.SymbolInfo, ...] | None:
             stub = self._ensure_connected()
             request = mt5_pb2.SymbolsRequest()
             if group is not None:

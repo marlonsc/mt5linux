@@ -114,8 +114,7 @@ METALS = [
 INDICES = [
     "US30",  # Dow Jones
     "US500",  # S&P 500
-    "US100",  # NASDAQ 100
-    "GER40",  # DAX 40
+    "GER30",  # DAX 40
     "UK100",  # FTSE 100
 ]
 

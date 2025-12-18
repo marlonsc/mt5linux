@@ -300,6 +300,9 @@ class MT5Models:
         trade_calc_mode: int = 0
         trade_stops_level: int = 0
         trade_freeze_level: int = 0
+        filling_mode: int = 0  # Bitmask: 1=FOK, 2=IOC, 4=RETURN
+        expiration_mode: int = 0
+        order_mode: int = 0
         bid: float = 0.0
         ask: float = 0.0
         last: float = 0.0

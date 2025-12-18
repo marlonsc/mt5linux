@@ -376,13 +376,19 @@ class TestAsyncReconnectWithBackoff:
 class TestAsyncClientResilience:
     """Tests for resilience features in AsyncMetaTrader5."""
 
-    def test_circuit_breaker_created_when_enabled(self) -> None:
-        """Circuit breaker is created when config enables it."""
+    def test_circuit_breaker_matches_config(self) -> None:
+        """Circuit breaker state matches config setting."""
         from mt5linux.async_client import AsyncMetaTrader5
+        from mt5linux.config import MT5Config
 
-        # Test with default config (disabled)
+        # Circuit breaker should match config state
         client = AsyncMetaTrader5()
-        assert client._circuit_breaker is None
+        config = MT5Config()
+
+        if config.enable_circuit_breaker:
+            assert client._circuit_breaker is not None
+        else:
+            assert client._circuit_breaker is None
 
     def test_health_monitor_not_running_by_default(self) -> None:
         """Health monitor is not running by default."""
