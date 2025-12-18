@@ -89,7 +89,7 @@ class TestCircuitBreakerIntegration:
 
         # Verify circuit breaker is enabled (from .env.test)
         if mt5._async_client._circuit_breaker is None:
-            pytest.skip("Circuit breaker not enabled in config")
+            pytest.fail("Circuit breaker not enabled in config")
 
         return mt5
 
@@ -164,7 +164,7 @@ class TestAutoReconnect:
             server=MT5_SERVER,
         )
         if not result:
-            pytest.skip("Could not initialize MT5")
+            pytest.fail("Could not initialize MT5")
 
         yield mt5
 

@@ -381,7 +381,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         if self._circuit_breaker is not None:
             self._circuit_breaker.record_success()
 
-    def _record_circuit_failure(self) -> None:
+    def _record_circuit_failure(self, _error: Exception | None = None) -> None:
         """Record failed operation in circuit breaker."""
         if self._circuit_breaker is not None:
             self._circuit_breaker.record_failure()
@@ -408,8 +408,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
     ) -> T:
         """Execute gRPC call with circuit breaker AND retry protection.
 
-        Integrates CircuitBreaker and retry with exponential backoff.
-        Only retries transient errors (gRPC UNAVAILABLE, connection issues, etc).
+        Delegates to MT5Utilities.CircuitBreaker.async_retry_with_backoff()
+        with circuit breaker hooks for unified retry logic.
 
         Args:
             operation: Name of the operation for logging.
@@ -424,65 +424,33 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             Exception: Non-retryable exceptions propagate immediately.
 
         """
-        # 1. Check if circuit allows execution
+        # 1. Check if circuit allows execution BEFORE retry loop
         self._check_circuit_breaker(operation)
 
-        last_exception: Exception | None = None
-        max_attempts = _config.retry_max_attempts
-
-        for attempt in range(max_attempts):
-            try:
-                # 2. Execute the operation
-                result = await call_factory()
-            except Exception as e:
-                last_exception = e
-
-                # 4. Check if retryable
-                if not MT5Utilities.CircuitBreaker.is_retryable_exception(e):
-                    # Non-retryable: record failure and propagate
-                    self._record_circuit_failure()
-                    raise
-
-                # 5. Retryable error - check if more attempts
-                if attempt < max_attempts - 1:
-                    delay = _config.calculate_retry_delay(attempt)
+        # 2. Define before_retry callback for reconnection
+        # CRITICAL FIX: Don't suppress ALL exceptions - log failures for visibility
+        async def _before_retry() -> None:
+            if not self.is_connected:
+                try:
+                    await self._reconnect_with_backoff()
+                except Exception as reconnect_error:  # noqa: BLE001
+                    # Log but don't raise - let the main retry continue
+                    # This prevents silent hangs while allowing retry attempts
                     log.warning(
-                        "%s failed (attempt %d/%d), retrying in %.2fs: %s",
-                        operation,
-                        attempt + 1,
-                        max_attempts,
-                        delay,
-                        e,
+                        "Reconnection failed before retry: %s",
+                        reconnect_error,
                     )
-                    await asyncio.sleep(delay)
 
-                    # Reconnect if needed
-                    if not self.is_connected:
-                        with suppress(Exception):
-                            await self._reconnect_with_backoff()
-                else:
-                    # Last attempt failed
-                    self._record_circuit_failure()
-                    log.exception(
-                        "%s failed after %d attempts",
-                        operation,
-                        max_attempts,
-                    )
-                    raise MT5Utilities.Exceptions.MaxRetriesError(
-                        operation, max_attempts, last_exception
-                    ) from e
-            else:
-                # 3. Record success (in else block per TRY300)
-                self._record_circuit_success()
-                return result
-
-        # Should not reach here, but satisfy type checker
-        if last_exception:
-            raise MT5Utilities.Exceptions.MaxRetriesError(
-                operation, max_attempts, last_exception
-            )
-        msg = f"Retry failed for '{operation}' with no exception recorded"
-        raise RuntimeError(msg)
+        # 3. Delegate to unified retry implementation with CB hooks
+        return await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+            call_factory,
+            _config,
+            operation,
+            should_retry=MT5Utilities.CircuitBreaker.is_retryable_exception,
+            on_success=self._record_circuit_success,
+            on_failure=self._record_circuit_failure,
+            before_retry=_before_retry,
+        )
 
     # =========================================================================
     # Public connection methods
@@ -1114,8 +1082,52 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
                 # EXECUTION: Send order via gRPC
                 result = await self._execute_order_grpc(request, attempt)
+
+                # CRITICAL FIX: EmptyResponse means order MAY have executed but
+                # response was lost. MUST verify state instead of blindly retrying
+                # (which could create duplicate orders).
                 if result is None:
-                    raise MT5Utilities.Exceptions.EmptyResponseError(operation)  # noqa: TRY301
+                    log.warning(
+                        "TX_EMPTY_RESPONSE: Empty result for order_send, "
+                        "verifying state before retry (request_id=%s)",
+                        request_id,
+                    )
+                    # Create synthetic result for verification
+                    # (we don't have order/deal IDs, so verification will
+                    # rely on request_id in comment field)
+                    synthetic_result = MT5Models.OrderResult(
+                        retcode=0,  # Unknown
+                        deal=0,
+                        order=0,
+                        volume=0.0,
+                        price=0.0,
+                        bid=0.0,
+                        ask=0.0,
+                        comment="",
+                        request_id=0,
+                    )
+                    verified = await self._verify_order_state(
+                        synthetic_result, request_id
+                    )
+                    if verified:
+                        log.info(
+                            "TX_EMPTY_RESPONSE: Order found via verification, "
+                            "avoiding duplicate (request_id=%s)",
+                            request_id,
+                        )
+                        self._record_circuit_success()
+                        return verified
+                    # Not found - safe to retry (record failure and continue)
+                    log.warning(
+                        "TX_EMPTY_RESPONSE: Order not found via verification, "
+                        "safe to retry (request_id=%s)",
+                        request_id,
+                    )
+                    self._record_circuit_failure()
+                    delay = self._config.calculate_critical_retry_delay(attempt)
+                    await asyncio.sleep(delay)
+                    continue  # Retry
+
                 last_result = result
 
                 # CLASSIFY and HANDLE
@@ -1125,11 +1137,15 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                     c.Resilience.TransactionOutcome.SUCCESS,
                     c.Resilience.TransactionOutcome.PARTIAL,
                 ):
-                    th.handle_success(self._circuit_breaker, result, outcome)
+                    # FIX: Use safe wrapper instead of direct CB call
+                    self._record_circuit_success()
+                    if outcome == c.Resilience.TransactionOutcome.PARTIAL:
+                        log.warning("Order partially filled: %s", result)
                     return result
 
                 if outcome == c.Resilience.TransactionOutcome.PERMANENT_FAILURE:
-                    self._circuit_breaker.record_failure()
+                    # FIX: Use safe wrapper instead of direct CB call
+                    self._record_circuit_failure()
                     th.raise_permanent(result.retcode, result.comment)
 
                 if outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED:
@@ -1140,16 +1156,19 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                     )
                     verified = await self._verify_order_state(result, request_id)
                     if verified:
-                        self._circuit_breaker.record_success()
+                        # FIX: Use safe wrapper instead of direct CB call
+                        self._record_circuit_success()
                         return verified
-                    self._circuit_breaker.record_failure()
+                    # FIX: Use safe wrapper instead of direct CB call
+                    self._record_circuit_failure()
                     th.raise_permanent(
                         result.retcode,
                         f"Verification failed: {request_id}",
                     )
 
                 # RETRY: Record failure and delay
-                self._circuit_breaker.record_failure()
+                # FIX: Use safe wrapper instead of direct CB call
+                self._record_circuit_failure()
                 delay = self._config.calculate_critical_retry_delay(attempt)
                 log.warning(
                     "Retryable error %d, attempt %d/%d, retrying in %.2fs",
@@ -1165,9 +1184,11 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             except Exception as e:
                 last_error = e
                 if not MT5Utilities.CircuitBreaker.is_retryable_exception(e):
-                    self._circuit_breaker.record_failure()
+                    # FIX: Use safe wrapper instead of direct CB call
+                    self._record_circuit_failure()
                     raise
-                self._circuit_breaker.record_failure()
+                # FIX: Use safe wrapper instead of direct CB call
+                self._record_circuit_failure()
                 delay = self._config.calculate_critical_retry_delay(attempt)
                 log.warning(
                     "Exception in order_send: %s, attempt %d/%d, retrying in %.2fs",
@@ -1216,6 +1237,51 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             )
         return result
 
+    async def _execute_with_timeout_and_cancel(
+        self,
+        coro: object,
+        timeout: float,
+        operation_name: str,
+    ) -> tuple[object | None, bool]:
+        """Execute coroutine with timeout and proper task cancellation.
+
+        CRITICAL FIX: asyncio.wait_for() doesn't guarantee cleanup of child tasks.
+        This helper ensures:
+        1. Task is explicitly created for tracking
+        2. On timeout, task is explicitly cancelled
+        3. We wait for cancellation to complete (no orphan tasks)
+
+        Args:
+            coro: Coroutine to execute.
+            timeout: Timeout in seconds.
+            operation_name: Name for logging.
+
+        Returns:
+            Tuple of (result, timed_out) where:
+            - result: Result of coroutine, or None on timeout/cancel
+            - timed_out: True if operation timed out, False otherwise
+
+        Raises:
+            Exception: Any non-timeout exception from the coroutine.
+
+        """
+        task = asyncio.create_task(coro)  # type: ignore[arg-type]
+        try:
+            result = await asyncio.wait_for(task, timeout=timeout)
+            return result, False
+        except TimeoutError:
+            # CRITICAL: Explicitly cancel the task to prevent orphan execution
+            task.cancel()
+            # Wait for cancellation to complete (suppress CancelledError)
+            with suppress(asyncio.CancelledError):
+                await task
+            log.debug(
+                "TX_VERIFY: %s cancelled after %.1fs timeout",
+                operation_name,
+                timeout,
+            )
+            return None, True
+
     async def _verify_order_state(  # noqa: C901, PLR0912
         self,
         result: MT5Models.OrderResult,
@@ -1230,6 +1296,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         - Initial propagation delay (500ms) for MT5 internal sync
         - Multiple verification attempts with delay between
         - Verification by comment field (request_id) for definitive match
+        - CRITICAL FIX: Explicit task cancellation on timeout
+        - CRITICAL FIX: Circuit breaker failure recorded on each verify error
 
         Args:
             result: The ambiguous result from order_send.
@@ -1242,24 +1310,33 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         if not self._config.tx_verify_on_ambiguous:
             return None
 
-        # Get verification timeout from config (default 5.0s)
+        # Get verification settings from config
         verify_timeout = self._config.tx_verify_timeout
+        max_attempts = self._config.tx_verify_max_attempts
+        propagation_delay = self._config.tx_verify_propagation_delay
 
-        # Initial propagation delay - MT5 may not have synced yet
-        await asyncio.sleep(0.5)
-
-        # Retry verification up to 3 times with delay
-        for attempt in range(3):
-            if attempt > 0:
-                await asyncio.sleep(0.5)  # Delay between retries
+        # Retry verification up to max_attempts times with delay
+        for attempt in range(max_attempts):
+            # Propagation delay before each attempt (MT5 may not have synced yet)
+            await asyncio.sleep(propagation_delay)
 
             try:
                 # Check 1: Pending orders (if we have order ticket)
                 if result.order:
-                    orders = await asyncio.wait_for(
+                    orders, timed_out = await self._execute_with_timeout_and_cancel(
                         self.orders_get(ticket=result.order),
-                        timeout=verify_timeout,
+                        verify_timeout,
+                        f"orders_get({result.order})",
                     )
+                    if timed_out:
+                        # CRITICAL FIX: Record CB failure on each timeout
+                        self._record_circuit_failure()
+                        log.warning(
+                            "TX_VERIFY attempt %d: orders_get timeout after %.1fs",
+                            attempt + 1,
+                            verify_timeout,
+                        )
+                        continue
                     if orders:
                         log.info(
                             "TX_VERIFY: Order %d found pending (attempt %d)",
@@ -1279,10 +1356,19 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                         )
 
                     # Check 2: History orders
-                    history = await asyncio.wait_for(
+                    history, timed_out = await self._execute_with_timeout_and_cancel(
                         self.history_orders_get(ticket=result.order),
-                        timeout=verify_timeout,
+                        verify_timeout,
+                        f"history_orders_get({result.order})",
                     )
+                    if timed_out:
+                        # CRITICAL FIX: Record CB failure on each timeout
+                        self._record_circuit_failure()
+                        log.warning(
+                            "TX_VERIFY attempt %d: history_orders_get timeout",
+                            attempt + 1,
+                        )
+                        continue
                     if history:
                         log.info(
                             "TX_VERIFY: Order %d found in history (attempt %d)",
@@ -1303,10 +1389,19 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
                 # Check 3: Deals (definitive execution proof)
                 if result.deal:
-                    deals = await asyncio.wait_for(
+                    deals, timed_out = await self._execute_with_timeout_and_cancel(
                         self.history_deals_get(ticket=result.deal),
-                        timeout=verify_timeout,
+                        verify_timeout,
+                        f"history_deals_get({result.deal})",
                     )
+                    if timed_out:
+                        # CRITICAL FIX: Record CB failure on each timeout
+                        self._record_circuit_failure()
+                        log.warning(
+                            "TX_VERIFY attempt %d: history_deals_get timeout",
+                            attempt + 1,
+                        )
+                        continue
                     if deals:
                         log.info(
                             "TX_VERIFY: Deal %d confirmed (attempt %d)",
@@ -1327,10 +1422,19 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
                 # Check 4: Verify by comment field (if we have request_id)
                 if request_id:
-                    verified = await asyncio.wait_for(
+                    verified, timed_out = await self._execute_with_timeout_and_cancel(
                         self._verify_by_comment(request_id, result),
-                        timeout=verify_timeout,
+                        verify_timeout,
+                        f"verify_by_comment({request_id})",
                     )
+                    if timed_out:
+                        # CRITICAL FIX: Record CB failure on each timeout
+                        self._record_circuit_failure()
+                        log.warning(
+                            "TX_VERIFY attempt %d: verify_by_comment timeout",
+                            attempt + 1,
+                        )
+                        continue
                     if verified:
                         log.info(
                             "TX_VERIFY: Found by comment %s (attempt %d)",
@@ -1339,16 +1443,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                         )
                         return verified
 
-            except TimeoutError:
-                # Transient - verification timed out, retry
-                log.warning(
-                    "TX_VERIFY attempt %d: timeout after %.1fs",
-                    attempt + 1,
-                    verify_timeout,
-                )
-                continue
             except grpc.RpcError as e:
-                # Transient - gRPC error, retry
+                # CRITICAL FIX: Record CB failure on gRPC errors during verify
+                self._record_circuit_failure()
                 log.warning(
                     "TX_VERIFY attempt %d: gRPC error: %s",
                     attempt + 1,
@@ -1364,7 +1461,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 log.exception("TX_VERIFY unexpected error")
                 raise
 
-        log.warning("TX_VERIFY: Could not verify after 3 attempts")
+        log.warning("TX_VERIFY: Could not verify after %d attempts", max_attempts)
         return None
 
     async def _verify_by_comment(
@@ -1387,8 +1484,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         """
         now = datetime.now(UTC)
-        # Use 15-minute window to handle clock skew and propagation delays
-        from_time = now - timedelta(minutes=15)
+        # Use configurable window to handle clock skew and propagation delays
+        search_window = self._config.tx_verify_search_window_minutes
+        from_time = now - timedelta(minutes=search_window)
 
         # Search recent deals by comment
         deals = await self.history_deals_get(date_from=from_time, date_to=now)

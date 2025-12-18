@@ -33,7 +33,7 @@ class TestMetaTrader5Connection:
             with MetaTrader5(host="localhost", port=TEST_GRPC_PORT) as mt5:
                 assert mt5._channel is not None
         except (ConnectionError, EOFError, OSError) as e:
-            pytest.skip(f"MT5 connection failed: {e}")
+            pytest.fail("MT5 connection failed: e")
         # After exiting context, channel closed
         assert mt5._channel is None
 
@@ -98,7 +98,7 @@ class TestMetaTrader5AccountInfo:
         """Test account_info returns valid data."""
         account = mt5.account_info()
         if account is None:
-            pytest.skip("account_info returned None (MT5 connection unstable)")
+            pytest.fail("account_info returned None (MT5 connection unstable)")
         assert account.login > 0
         assert account.balance >= 0
         assert account.currency in {"USD", "EUR", "GBP"}
@@ -107,7 +107,7 @@ class TestMetaTrader5AccountInfo:
         """Test terminal_info returns valid data."""
         terminal = mt5.terminal_info()
         if terminal is None:
-            pytest.skip("terminal_info returned None (MT5 connection unstable)")
+            pytest.fail("terminal_info returned None (MT5 connection unstable)")
         assert terminal.connected is True
         assert terminal.build > 0
 
@@ -120,14 +120,14 @@ class TestMetaTrader5Symbols:
         total = mt5.symbols_total()
         assert isinstance(total, int)
         if total == 0:
-            pytest.skip("symbols_total returned 0 (MT5 connection issue)")
+            pytest.fail("symbols_total returned 0 (MT5 connection issue)")
         assert total > 0
 
     def test_symbol_info(self, mt5: MetaTrader5) -> None:
         """Test symbol info."""
         info = mt5.symbol_info("EURUSD")
         if info is None:
-            pytest.skip("symbol_info returned None (MT5 connection unstable)")
+            pytest.fail("symbol_info returned None (MT5 connection unstable)")
         assert info.name == "EURUSD"
         assert info.bid > 0
         assert info.ask > 0
@@ -140,7 +140,7 @@ class TestMetaTrader5Symbols:
         mt5.symbol_select("EURUSD", enable=True)
         tick = mt5.symbol_info_tick("EURUSD")
         if tick is None:
-            pytest.skip("symbol_info_tick returned None (market may be closed)")
+            pytest.fail("symbol_info_tick returned None (market may be closed)")
         assert tick.bid > 0
         assert tick.ask > 0
 
@@ -162,12 +162,10 @@ class TestMetaTrader5CopyRates:
             )
         except Exception as e:
             if "pickling is disabled" in str(e):
-                pytest.skip(
-                    "RPyC pickling disabled - numpy serialization not available"
-                )
+                pytest.fail("RPyC pickling disabled - numpy serialization not available")
             raise
         if rates is None:
-            pytest.skip("Market data not available (market may be closed)")
+            pytest.fail("Market data not available (market may be closed)")
         assert len(rates) > 0
         # Verify it's a local numpy array (not netref)
         assert hasattr(rates, "dtype")
@@ -291,12 +289,12 @@ class TestMetaTrader5Login:
         server = os.getenv("MT5_SERVER", "")
 
         if not all([login, password, server]):
-            pytest.skip("MT5 credentials not configured")
+            pytest.fail("MT5 credentials not configured")
 
         # Initialize first (required before login)
         init_result = mt5_raw.initialize()
         if not init_result:
-            pytest.skip("MT5 initialize failed")
+            pytest.fail("MT5 initialize failed")
 
         result = mt5_raw.login(login, password, server)
         assert result is True
@@ -312,7 +310,7 @@ class TestMetaTrader5Login:
         # Initialize first
         init_result = mt5_raw.initialize()
         if not init_result:
-            pytest.skip("MT5 initialize failed")
+            pytest.fail("MT5 initialize failed")
 
         result = mt5_raw.login(tc.MT5.INVALID_LOGIN, "wrong_password", "InvalidServer")
         assert result is False
@@ -327,12 +325,12 @@ class TestMetaTrader5Login:
         server = os.getenv("MT5_SERVER", "")
 
         if not all([login, password, server]):
-            pytest.skip("MT5 credentials not configured")
+            pytest.fail("MT5 credentials not configured")
 
         # Already initialized via fixture, login should work
         result = mt5.login(login, password, server)
         if result is not True:
-            pytest.skip("login returned False (MT5 connection may be unstable)")
+            pytest.fail("login returned False (MT5 connection may be unstable)")
 
 
 class TestMetaTrader5HealthCheck:
@@ -422,12 +420,12 @@ class TestMetaTrader5Resilience:
         for i in range(tc.FIVE_ITERATIONS):
             account = mt5.account_info()
             if account is None:
-                pytest.skip(f"account_info() returned None at iteration {i}")
+                pytest.fail("account_info() returned None at iteration i")
 
             symbols = mt5.symbols_total()
             if symbols == 0:
-                pytest.skip(f"symbols_total() returned 0 at iteration {i}")
+                pytest.fail("symbols_total() returned 0 at iteration i")
 
             terminal = mt5.terminal_info()
             if terminal is None:
-                pytest.skip(f"terminal_info() returned None at iteration {i}")
+                pytest.fail("terminal_info() returned None at iteration i")

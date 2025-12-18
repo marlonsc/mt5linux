@@ -724,20 +724,37 @@ class MT5Utilities:
                     self._state = c.Resilience.CircuitBreakerState.OPEN
 
         def can_execute(self) -> bool:
-            """Check if a request is allowed through the circuit."""
-            current_state = self.state
+            """Check if a request is allowed through the circuit.
 
-            if current_state == c.Resilience.CircuitBreakerState.CLOSED:
-                return True
+            CRITICAL FIX: Entire operation is now under lock to prevent race
+            conditions where state could change between read and decision.
+            Previously, reset() could be called between state read and action.
+            """
+            with self._lock:
+                # Inline state check (don't call property which also locks)
+                if (
+                    self._state == c.Resilience.CircuitBreakerState.OPEN
+                    and self._should_attempt_reset()
+                ):
+                    log.info(
+                        "Circuit breaker '%s' transitioning OPEN -> HALF_OPEN",
+                        self.name,
+                    )
+                    self._state = c.Resilience.CircuitBreakerState.HALF_OPEN
+                    self._half_open_calls = 0
 
-            if current_state == c.Resilience.CircuitBreakerState.HALF_OPEN:
-                with self._lock:
+                current_state = self._state
+
+                if current_state == c.Resilience.CircuitBreakerState.CLOSED:
+                    return True
+
+                if current_state == c.Resilience.CircuitBreakerState.HALF_OPEN:
                     if self._half_open_calls < self._config.cb_half_open_max:
                         self._half_open_calls += 1
                         return True
-                return False
+                    return False
 
-            return False  # OPEN state
+                return False  # OPEN state
 
         def reset(self) -> None:
             """Manually reset the circuit breaker to closed state."""
@@ -956,69 +973,121 @@ class MT5Utilities:
             coro_factory: Callable[[], Awaitable[T]],
             config: MT5Config,
             operation_name: str = "operation",
+            *,
+            should_retry: Callable[[Exception], bool] | None = None,
+            on_success: Callable[[], None] | None = None,
+            on_failure: Callable[[Exception], None] | None = None,
+            before_retry: Callable[[], Awaitable[None]] | None = None,
+            max_attempts_override: int | None = None,
         ) -> T:
             """Execute async operation with exponential backoff retry.
 
             Part of CircuitBreaker since retry is a resilience pattern.
             Uses MT5Config values for retry parameters.
 
+            This is the SINGLE implementation of retry logic used by both
+            generic operations and MT5-specific operations (via hooks).
+
             Args:
                 coro_factory: Callable that returns an awaitable (not a coroutine).
                 config: MT5Config with retry_* settings.
                 operation_name: Name for logging purposes.
+                should_retry: Optional predicate to decide if exception is retryable.
+                    If None, all exceptions are retryable. If returns False,
+                    exception is raised immediately without retry.
+                on_success: Optional callback invoked on successful execution.
+                    Used by circuit breaker to record success.
+                on_failure: Optional callback invoked when non-retryable exception
+                    occurs or all retries exhausted. Used by circuit breaker.
+                before_retry: Optional async callback invoked before each retry.
+                    Used for reconnection attempts.
+                max_attempts_override: Override config.retry_max_attempts.
+                    Used by _resilient_call for different attempt counts.
 
             Returns:
                 Result of successful operation.
 
             Raises:
                 MT5Utilities.Exceptions.MaxRetriesError: If all retries fail.
+                Exception: Non-retryable exceptions propagate immediately.
 
             Example:
+                >>> # Simple retry (all exceptions retryable)
                 >>> async def fetch():
                 ...     return await client.get_data()
                 >>> result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
                 ...     fetch, config, "get_data"
                 ... )
 
+                >>> # With circuit breaker hooks
+                >>> result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+                ...     fetch, config, "get_data",
+                ...     should_retry=is_retryable_exception,
+                ...     on_success=cb.record_success,
+                ...     on_failure=cb.record_failure,
+                ... )
+
             """
             last_exception: Exception | None = None
+            max_attempts = max_attempts_override or config.retry_max_attempts
 
-            for attempt in range(config.retry_max_attempts):
+            for attempt in range(max_attempts):
                 try:
-                    return await coro_factory()
+                    result = await coro_factory()
                 except Exception as e:
                     last_exception = e
-                    if attempt == config.retry_max_attempts - 1:
+
+                    # Check if retryable (default: all exceptions are retryable)
+                    if should_retry is not None and not should_retry(e):
+                        # Non-retryable: record failure and propagate
+                        if on_failure:
+                            on_failure(e)
+                        raise
+
+                    # Check if more attempts available
+                    if attempt < max_attempts - 1:
+                        # Calculate backoff delay using config
+                        delay = config.calculate_retry_delay(attempt)
+
+                        log.warning(
+                            "Operation '%s' attempt %d/%d failed: %s. Retrying in %.2fs",
+                            operation_name,
+                            attempt + 1,
+                            max_attempts,
+                            e,
+                            delay,
+                        )
+
+                        await asyncio.sleep(delay)
+
+                        # Before retry callback (e.g., reconnection)
+                        if before_retry:
+                            await before_retry()
+                    else:
+                        # Last attempt failed
+                        if on_failure:
+                            on_failure(e)
                         log.exception(
                             "Operation '%s' failed after %d attempts",
                             operation_name,
-                            config.retry_max_attempts,
+                            max_attempts,
                         )
                         raise MT5Utilities.Exceptions.MaxRetriesError(
                             operation_name,
-                            config.retry_max_attempts,
+                            max_attempts,
                             last_exception,
                         ) from e
-
-                    # Calculate backoff delay using config
-                    delay = config.calculate_retry_delay(attempt)
-
-                    log.warning(
-                        "Operation '%s' attempt %d/%d failed: %s. Retrying in %.2fs",
-                        operation_name,
-                        attempt + 1,
-                        config.retry_max_attempts,
-                        e,
-                        delay,
-                    )
-
-                    await asyncio.sleep(delay)
+                else:
+                    # Success - invoke callback and return
+                    if on_success:
+                        on_success()
+                    return result
 
             # Should not reach here, but satisfy type checker
             if last_exception:
                 raise MT5Utilities.Exceptions.MaxRetriesError(
                     operation_name,
-                    config.retry_max_attempts,
+                    max_attempts,
                     last_exception,
                 )
             msg = f"Retry failed for '{operation_name}' with no exception recorded"
@@ -1166,20 +1235,56 @@ class MT5Utilities:
                     return f"{request_id}|{comment[:max_original]}"
                 return request_id
 
+            # Expected request_id length: RQ + 10 hex chars = 12 chars
+            REQUEST_ID_LENGTH = 12
+            REQUEST_ID_PREFIX = "RQ"
+            REQUEST_ID_HEX_LENGTH = 10
+
             @staticmethod
             def extract_request_id(comment: str | None) -> str | None:
                 """Extract request_id from marked comment field.
+
+                CRITICAL FIX: Added validation to prevent false matches:
+                - Length must be exactly 12 chars (RQ + 10 hex)
+                - Must start with "RQ"
+                - Remaining 10 chars must be valid hex
+                This prevents matching corrupted/concatenated comments.
 
                 Args:
                     comment: Comment field from order/deal.
 
                 Returns:
-                    Request ID if found, None otherwise.
+                    Request ID if found and valid, None otherwise.
 
                 """
-                if comment and comment.startswith("RQ"):
-                    return comment.split("|")[0]
-                return None
+                tracker = MT5Utilities.TransactionHandler.RequestTracker
+                if not comment or not comment.startswith(tracker.REQUEST_ID_PREFIX):
+                    return None
+
+                # Extract candidate (before separator if present)
+                candidate = comment.split("|")[0]
+
+                # Validate length
+                if len(candidate) != tracker.REQUEST_ID_LENGTH:
+                    log.debug(
+                        "Invalid request_id length: %d (expected %d)",
+                        len(candidate),
+                        tracker.REQUEST_ID_LENGTH,
+                    )
+                    return None
+
+                # Validate hex portion (chars 2-12 should be hex)
+                hex_part = candidate[len(tracker.REQUEST_ID_PREFIX) :]
+                try:
+                    int(hex_part, 16)  # Validate hex
+                except ValueError:
+                    log.debug(
+                        "Invalid request_id hex portion: %s",
+                        hex_part,
+                    )
+                    return None
+
+                return candidate
 
         @staticmethod
         def prepare_request(
@@ -1215,15 +1320,37 @@ class MT5Utilities:
         def classify_result(
             retcode: int,
         ) -> c.Resilience.TransactionOutcome:
-            """Classify result retcode into transaction outcome.
+            """Classify result retcode into transaction outcome (PUBLIC API).
 
-            Maps ErrorClassification to TransactionOutcome for simpler handling.
+            This is the BRIDGE function between:
+            - ErrorClassification (7 values, internal, detailed)
+            - TransactionOutcome (5 values, public, simplified)
+
+            Mapping:
+                SUCCESS → SUCCESS
+                PARTIAL → PARTIAL
+                RETRYABLE → RETRY
+                VERIFY_REQUIRED → VERIFY_REQUIRED
+                PERMANENT → PERMANENT_FAILURE
+                CONDITIONAL → VERIFY_REQUIRED (conservative, verify state)
+                UNKNOWN → VERIFY_REQUIRED (conservative, verify state)
+
+            Why CONDITIONAL/UNKNOWN → VERIFY_REQUIRED (not PERMANENT_FAILURE)?
+            - These represent ambiguous states where order MAY have executed
+            - Conservative approach: verify state before deciding
+            - Prevents both: double execution (retry when executed) AND
+              missed execution (fail when actually succeeded)
 
             Args:
                 retcode: MT5 TradeRetcode value.
 
             Returns:
-                TransactionOutcome indicating next action.
+                TransactionOutcome indicating next action for caller.
+
+            Example:
+                >>> outcome = TransactionHandler.classify_result(10012)  # TIMEOUT
+                >>> outcome == TransactionOutcome.VERIFY_REQUIRED
+                True
 
             """
             classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(retcode)
@@ -1238,7 +1365,7 @@ class MT5Utilities:
                 return c.Resilience.TransactionOutcome.VERIFY_REQUIRED
             if classification == c.Resilience.ErrorClassification.PERMANENT:
                 return c.Resilience.TransactionOutcome.PERMANENT_FAILURE
-            # CONDITIONAL and UNKNOWN - treat as retry with verification
+            # CONDITIONAL and UNKNOWN - verify state (conservative approach)
             return c.Resilience.TransactionOutcome.VERIFY_REQUIRED
 
         @staticmethod

@@ -221,7 +221,7 @@ class TestSymbolCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available on this server")
+            pytest.fail("Symbol symbol not available on this server")
         # Broker may add suffix (e.g., EURUSD.a), so check symbol is contained
         assert symbol in info.name or info.name.startswith(symbol)
         assert info.bid > 0 or info.ask > 0  # At least one price
@@ -233,7 +233,7 @@ class TestSymbolCoverage:
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
-            pytest.skip(f"Symbol {symbol} tick not available on this server")
+            pytest.fail("Symbol symbol tick not available on this server")
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS)
@@ -280,7 +280,7 @@ class TestSymbolCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available on this server")
+            pytest.fail("Symbol symbol not available on this server")
         # Broker may add suffix (e.g., GBPAUD.c), so check symbol is contained
         assert symbol in info.name or info.name.startswith(symbol)
         assert info.bid > 0 or info.ask > 0
@@ -292,7 +292,7 @@ class TestSymbolCoverage:
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
-            pytest.skip(f"Symbol {symbol} tick not available on this server")
+            pytest.fail("Symbol symbol tick not available on this server")
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", CROSS_PAIRS)
@@ -320,7 +320,7 @@ class TestSymbolCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.skip(f"Metal {symbol} not available on this server")
+            pytest.fail("Metal symbol not available on this server")
         # Broker may add suffix (e.g., XAUUSD.a), so check symbol is contained
         assert symbol in info.name or info.name.startswith(symbol)
         # Metals have much higher prices than forex
@@ -333,7 +333,7 @@ class TestSymbolCoverage:
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
-            pytest.skip(f"Metal {symbol} tick not available on this server")
+            pytest.fail("Metal symbol tick not available on this server")
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", METALS)
@@ -364,7 +364,7 @@ class TestSymbolCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.skip(f"Index {symbol} not available on this server")
+            pytest.fail("Index symbol not available on this server")
         # Broker may add suffix (e.g., US30.a), so check symbol is contained
         assert symbol in info.name or info.name.startswith(symbol)
         assert info.bid > 0 or info.ask > 0
@@ -376,7 +376,7 @@ class TestSymbolCoverage:
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
-            pytest.skip(f"Index {symbol} tick not available on this server")
+            pytest.fail("Index symbol tick not available on this server")
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", INDICES)
@@ -489,7 +489,7 @@ class TestCombinedCoverage:
         if not result:
             info = mt5.symbol_info(symbol)
             if info is None:
-                pytest.skip(f"Symbol {symbol} not available on this server")
+                pytest.fail("Symbol symbol not available on this server")
 
     @pytest.mark.slow
     @pytest.mark.parametrize("symbol", ALL_SYMBOLS)
@@ -502,7 +502,7 @@ class TestCombinedCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available on this server")
+            pytest.fail("Symbol symbol not available on this server")
 
         # Try to subscribe to market depth
         result = mt5.market_book_add(symbol)
@@ -577,7 +577,7 @@ class TestHypothesisProperties:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None or ask is None or ask <= 0:
-            pytest.skip(f"Symbol {symbol} or price not available")
+            pytest.fail("Symbol symbol or price not available")
 
         request = {
             "action": c.Order.TradeAction.DEAL,
@@ -726,14 +726,14 @@ class TestLotSizeCoverage:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         if ask is None or ask <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         # Check lot size is within broker limits
         if lot_size < info.volume_min or lot_size > info.volume_max:
-            return  # Lot size outside broker limits - test passes
+            pytest.fail("Lot size outside broker limits")
 
         request = {
             "action": c.Order.TradeAction.DEAL,
@@ -765,16 +765,13 @@ class TestLotSizeCoverage:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         if ask is None or ask <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         if lot_size < info.volume_min or lot_size > info.volume_max:
-            pytest.skip(
-                f"Lot size {lot_size} outside broker limits "
-                f"({info.volume_min}-{info.volume_max})"
-            )
+            pytest.fail("Lot size outside broker limits")
 
         request = {
             "action": c.Order.TradeAction.DEAL,
@@ -801,7 +798,7 @@ class TestLotSizeCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         # Volume limits should be positive and make sense
         assert info.volume_min > 0
@@ -818,10 +815,10 @@ class TestLotSizeCoverage:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         if ask is None or ask <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         # Test with minimum lot
         margin_min = mt5.order_calc_margin(
@@ -955,7 +952,7 @@ class TestAllTimeframes:
         try:
             timeframe = getattr(mt5, timeframe_name)
         except AttributeError:
-            pytest.skip(f"Timeframe {timeframe_name} not available")
+            pytest.fail("Timeframe timeframe_name not available")
 
         mt5.symbol_select("EURUSD", enable=True)
         rates = mt5.copy_rates_from_pos("EURUSD", timeframe, 0, tc.EXTRA_LARGE_COUNT)
@@ -1077,11 +1074,11 @@ class TestOrderTypeCombinations:
         info, bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         price = ask if order_type == c.Order.OrderType.BUY else bid
         if price is None or price <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         request = {
             "action": c.Order.TradeAction.DEAL,
@@ -1122,10 +1119,10 @@ class TestOrderTypeCombinations:
         info, bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         if bid is None or ask is None or bid <= 0 or ask <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         # Set price based on order type
         if order_type_name in {"ORDER_TYPE_BUY_LIMIT", "ORDER_TYPE_SELL_STOP"}:
@@ -1165,10 +1162,10 @@ class TestOrderTypeCombinations:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         if ask is None or ask <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         request = {
             "action": c.Order.TradeAction.DEAL,
@@ -1209,13 +1206,13 @@ class TestProfitCalculation:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         if ask is None or ask <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         if lot_size < info.volume_min or lot_size > info.volume_max:
-            pytest.skip(f"Lot size {lot_size} outside limits")
+            pytest.fail("Lot size lot_size outside limits")
 
         # Calculate profit for a winning trade
         price_open = ask
@@ -1236,10 +1233,10 @@ class TestProfitCalculation:
         info, bid, _ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         if bid is None or bid <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         lot = info.volume_min
         price1 = bid
@@ -1281,13 +1278,13 @@ class TestMarginCalculation:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         if ask is None or ask <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         if lot_size < info.volume_min or lot_size > info.volume_max:
-            pytest.skip(f"Lot size {lot_size} outside limits")
+            pytest.fail("Lot size lot_size outside limits")
 
         margin = mt5.order_calc_margin(c.Order.OrderType.BUY, symbol, lot_size, ask)
 
@@ -1301,16 +1298,16 @@ class TestMarginCalculation:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.skip(f"Symbol {symbol} not available")
+            pytest.fail("Symbol symbol not available")
 
         if ask is None or ask <= 0:
-            pytest.skip(f"No price available for {symbol}")
+            pytest.fail("No price available for symbol")
 
         lot1 = info.volume_min
         lot2 = lot1 * 2
 
         if lot2 > info.volume_max:
-            pytest.skip("Cannot test with doubled lot size")
+            pytest.fail("Cannot test with doubled lot size")
 
         margin1 = mt5.order_calc_margin(c.Order.OrderType.BUY, symbol, lot1, ask)
         margin2 = mt5.order_calc_margin(c.Order.OrderType.BUY, symbol, lot2, ask)

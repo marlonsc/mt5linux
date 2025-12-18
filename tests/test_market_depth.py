@@ -29,7 +29,7 @@ class TestMarketBook:
 
         # market_book_add returns True on success, False if not available
         if not result:
-            pytest.skip("Market depth not available on this server/symbol")
+            pytest.fail("Market depth not available on this server/symbol")
 
         # Cleanup
         mt5.market_book_release(symbol)
@@ -95,7 +95,7 @@ class TestMarketBook:
         # Subscribe first
         add_result = mt5.market_book_add(symbol)
         if not add_result:
-            pytest.skip("Market depth not available on this server/symbol")
+            pytest.fail("Market depth not available on this server/symbol")
 
         # Unsubscribe
         result = mt5.market_book_release(symbol)
@@ -121,7 +121,7 @@ class TestMarketBook:
         # Step 1: Subscribe
         add_result = mt5.market_book_add(symbol)
         if not add_result:
-            pytest.skip("Market depth not available on this server/symbol")
+            pytest.fail("Market depth not available on this server/symbol")
 
         # Step 2: Get data
         book = mt5.market_book_get(symbol)
@@ -152,7 +152,7 @@ class TestMarketBook:
                 subscribed_symbols.append(symbol)
 
         if not subscribed_symbols:
-            pytest.skip("Market depth not available on this server/account")
+            pytest.fail("Market depth not available on this server/account")
 
         # Get data from subscribed symbols
         for symbol in subscribed_symbols:

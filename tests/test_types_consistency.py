@@ -106,7 +106,7 @@ class TestRatesDataStructure:
         rates = mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 10)
 
         if rates is None:
-            pytest.skip("copy_rates_from_pos returned None")
+            pytest.fail("copy_rates_from_pos returned None")
 
         # Should be numpy array with dtype
         assert hasattr(rates, "dtype")
@@ -123,7 +123,7 @@ class TestRatesDataStructure:
         rates = mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_H1, 0, 10)
 
         if rates is None or len(rates) == 0:
-            pytest.skip("No rates data available")
+            pytest.fail("No rates data available")
 
         # Check a sample row
         row = rates[0]
@@ -150,7 +150,7 @@ class TestTicksDataStructure:
         ticks = mt5.copy_ticks_from("EURUSD", date_from, 100, mt5.COPY_TICKS_ALL)
 
         if ticks is None:
-            pytest.skip("copy_ticks_from returned None")
+            pytest.fail("copy_ticks_from returned None")
 
         # Should be numpy array with dtype
         assert hasattr(ticks, "dtype")
@@ -171,7 +171,7 @@ class TestTicksDataStructure:
         ticks = mt5.copy_ticks_from("EURUSD", date_from, 100, mt5.COPY_TICKS_ALL)
 
         if ticks is None or len(ticks) == 0:
-            pytest.skip("No ticks data available")
+            pytest.fail("No ticks data available")
 
         # Check a sample row
         row = ticks[0]

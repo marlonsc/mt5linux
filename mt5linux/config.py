@@ -115,11 +115,23 @@ class MT5Config(BaseSettings):
     tx_verify_on_ambiguous: bool = True
     """Verify order state when receiving CONDITIONAL/UNKNOWN retcodes."""
 
+    tx_verify_max_attempts: int = 3
+    """Max verification attempts after ambiguous response (TIMEOUT/CONNECTION)."""
+
+    tx_verify_propagation_delay: float = 0.5
+    """Delay in seconds for MT5 internal sync before/between verifications."""
+
+    tx_verify_search_window_minutes: int = 15
+    """Time window in minutes for comment-based deal verification."""
+
     critical_retry_max_attempts: int = 5
     """Max retry attempts for CRITICAL operations (more than standard)."""
 
     critical_retry_initial_delay: float = 0.1
     """Initial retry delay for CRITICAL ops (faster than standard)."""
+
+    critical_retry_max_delay: float | None = None
+    """Max delay for CRITICAL retries. If None, uses retry_max_delay/2."""
 
     # =========================================================================
     # RESILIENCE FEATURE FLAGS (opt-in for backward compatibility)
@@ -219,10 +231,16 @@ class MT5Config(BaseSettings):
             Delay in seconds before next retry (shorter than standard).
 
         """
+        # Use explicit max_delay if set, otherwise half of normal max
+        max_delay = (
+            self.critical_retry_max_delay
+            if self.critical_retry_max_delay is not None
+            else self.retry_max_delay / 2
+        )
         delay = min(
             self.critical_retry_initial_delay
             * (self.retry_exponential_base**attempt),
-            self.retry_max_delay / 2,  # Cap at half normal max
+            max_delay,
         )
         if self.retry_jitter:
             # Add 0-100% jitter (S311: random is fine for jitter)

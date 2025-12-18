@@ -119,7 +119,7 @@ class TestRealMT5Methods:
         """get_methods() should return method information."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         assert methods, "get_methods() returned empty list"
         assert len(methods) > 0, "Expected at least one method"
 
@@ -127,7 +127,7 @@ class TestRealMT5Methods:
         """Real MT5 module should have all expected public methods."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         method_names = {m["name"] for m in methods}
 
         # All expected methods should exist in real MT5
@@ -140,7 +140,7 @@ class TestRealMT5Methods:
         """All protocol methods should exist in real MT5 module."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_method_names = {m["name"] for m in methods}
 
         # Get protocol method names (exclude private/magic)
@@ -158,7 +158,7 @@ class TestRealMT5Methods:
         """Real MT5 should have at least 32 public methods."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         # Filter to only public methods we care about
         public_methods = [m for m in methods if m["name"] in MT5_PUBLIC_METHODS]
         assert len(public_methods) >= 32, (
@@ -169,7 +169,7 @@ class TestRealMT5Methods:
         """Methods should have parameter information."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         # Check some key methods have parameters
         for method in methods:
             if method["name"] == "login":
@@ -189,7 +189,7 @@ class TestRealMT5Models:
         """get_models() should return model information."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         assert models, "get_models() returned empty list"
         assert len(models) > 0, "Expected at least one model"
 
@@ -197,7 +197,7 @@ class TestRealMT5Models:
         """Real MT5 module should have expected namedtuple types."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         model_names = {m["name"] for m in models}
 
         # All expected models should exist in real MT5
@@ -210,13 +210,13 @@ class TestRealMT5Models:
         """Our AccountInfo model should have same fields as real MT5."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_account_info = next(
             (m for m in models if m["name"] == "AccountInfo"), None
         )
 
         if real_account_info is None:
-            pytest.skip("AccountInfo not found in real MT5 models")
+            pytest.fail("AccountInfo not found in real MT5 models")
 
         real_fields = {f["name"] for f in real_account_info["fields"]}
         our_fields = set(MT5Models.AccountInfo.model_fields.keys())
@@ -231,11 +231,11 @@ class TestRealMT5Models:
         """Our SymbolInfo model should have same fields as real MT5."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_symbol_info = next((m for m in models if m["name"] == "SymbolInfo"), None)
 
         if real_symbol_info is None:
-            pytest.skip("SymbolInfo not found in real MT5 models")
+            pytest.fail("SymbolInfo not found in real MT5 models")
 
         real_fields = {f["name"] for f in real_symbol_info["fields"]}
         our_fields = set(MT5Models.SymbolInfo.model_fields.keys())
@@ -250,11 +250,11 @@ class TestRealMT5Models:
         """Our Tick model should have same fields as real MT5."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_tick = next((m for m in models if m["name"] == "Tick"), None)
 
         if real_tick is None:
-            pytest.skip("Tick not found in real MT5 models")
+            pytest.fail("Tick not found in real MT5 models")
 
         real_fields = {f["name"] for f in real_tick["fields"]}
         our_fields = set(MT5Models.Tick.model_fields.keys())
@@ -267,11 +267,11 @@ class TestRealMT5Models:
         """Our Position model should have same fields as real MT5 TradePosition."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_position = next((m for m in models if m["name"] == "TradePosition"), None)
 
         if real_position is None:
-            pytest.skip("TradePosition not found in real MT5 models")
+            pytest.fail("TradePosition not found in real MT5 models")
 
         real_fields = {f["name"] for f in real_position["fields"]}
         our_fields = set(MT5Models.Position.model_fields.keys())
@@ -286,11 +286,11 @@ class TestRealMT5Models:
         """Our Order model should have same fields as real MT5 TradeOrder."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_order = next((m for m in models if m["name"] == "TradeOrder"), None)
 
         if real_order is None:
-            pytest.skip("TradeOrder not found in real MT5 models")
+            pytest.fail("TradeOrder not found in real MT5 models")
 
         real_fields = {f["name"] for f in real_order["fields"]}
         our_fields = set(MT5Models.Order.model_fields.keys())
@@ -305,11 +305,11 @@ class TestRealMT5Models:
         """Our Deal model should have same fields as real MT5 TradeDeal."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_deal = next((m for m in models if m["name"] == "TradeDeal"), None)
 
         if real_deal is None:
-            pytest.skip("TradeDeal not found in real MT5 models")
+            pytest.fail("TradeDeal not found in real MT5 models")
 
         real_fields = {f["name"] for f in real_deal["fields"]}
         our_fields = set(MT5Models.Deal.model_fields.keys())
@@ -324,11 +324,11 @@ class TestRealMT5Models:
         """Our TerminalInfo model should have same fields as real MT5."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_terminal = next((m for m in models if m["name"] == "TerminalInfo"), None)
 
         if real_terminal is None:
-            pytest.skip("TerminalInfo not found in real MT5 models")
+            pytest.fail("TerminalInfo not found in real MT5 models")
 
         real_fields = {f["name"] for f in real_terminal["fields"]}
         our_fields = set(MT5Models.TerminalInfo.model_fields.keys())
@@ -347,11 +347,11 @@ class TestRealMT5ModelFieldOrder:
         """AccountInfo field order should match real MT5."""
         models = _get_models_safe(mt5)
         if models is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_model = next((m for m in models if m["name"] == "AccountInfo"), None)
 
         if real_model is None:
-            pytest.skip("AccountInfo not found in real MT5 models")
+            pytest.fail("AccountInfo not found in real MT5 models")
 
         # Get fields in order
         real_fields = sorted(real_model["fields"], key=operator.itemgetter("index"))
@@ -376,11 +376,11 @@ class TestMethodParameterValidation:
         """login() parameters should match real MT5."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         login_method = next((m for m in methods if m["name"] == "login"), None)
 
         if login_method is None:
-            pytest.skip("login method not found")
+            pytest.fail("login method not found")
 
         params = login_method["parameters"]
         param_names = [p["name"] for p in params]
@@ -398,11 +398,11 @@ class TestMethodParameterValidation:
         """symbol_select() parameters should match real MT5."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         method = next((m for m in methods if m["name"] == "symbol_select"), None)
 
         if method is None:
-            pytest.skip("symbol_select method not found")
+            pytest.fail("symbol_select method not found")
 
         params = method["parameters"]
         param_names = [p["name"] for p in params]
@@ -414,11 +414,11 @@ class TestMethodParameterValidation:
         """copy_rates_from() parameters should match real MT5."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         method = next((m for m in methods if m["name"] == "copy_rates_from"), None)
 
         if method is None:
-            pytest.skip("copy_rates_from method not found")
+            pytest.fail("copy_rates_from method not found")
 
         params = method["parameters"]
         param_names = [p["name"] for p in params]
@@ -438,7 +438,7 @@ class TestRealVsProtocolConsistency:
         """Protocol should have same method count as real MT5 public API."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_public = {m["name"] for m in methods if m["name"] in MT5_PUBLIC_METHODS}
 
         protocol_methods = {
@@ -459,7 +459,7 @@ class TestRealVsProtocolConsistency:
         """Protocol methods should exactly match real MT5 public methods."""
         methods = _get_methods_safe(mt5)
         if methods is None:
-            pytest.skip(SKIP_UNIMPLEMENTED)
+            pytest.fail("SKIP_UNIMPLEMENTED")
         real_public = {m["name"] for m in methods if m["name"] in MT5_PUBLIC_METHODS}
 
         protocol_methods = {

@@ -92,7 +92,39 @@ class MT5Constants:
         class ErrorClassification(IntEnum):
             """Classification of MT5 retcodes for error handling.
 
-            Determines how each error should be handled:
+            ARCHITECTURE NOTE: ErrorClassification vs TransactionOutcome
+            ===========================================================
+
+            Two classification enums exist by design:
+
+            1. ErrorClassification (7 values) - INTERNAL use only
+               - Used by CircuitBreaker.classify_mt5_retcode()
+               - Fine-grained classification for all MT5 retcodes
+               - Includes CONDITIONAL and UNKNOWN for edge cases
+               - Internal implementation detail
+
+            2. TransactionOutcome (5 values) - PUBLIC API
+               - Used by TransactionHandler.classify_result()
+               - Simplified result for callers (clients)
+               - Maps CONDITIONAL/UNKNOWN → PERMANENT_FAILURE (conservative)
+               - What callers should use to decide next action
+
+            Mapping (classify_result does this):
+            - SUCCESS → SUCCESS
+            - PARTIAL → PARTIAL
+            - RETRYABLE → RETRY
+            - VERIFY_REQUIRED → VERIFY_REQUIRED
+            - CONDITIONAL → PERMANENT_FAILURE (conservative)
+            - PERMANENT → PERMANENT_FAILURE
+            - UNKNOWN → PERMANENT_FAILURE (conservative)
+
+            Why two enums?
+            - ErrorClassification: Detailed, for internal error analysis
+            - TransactionOutcome: Simple, for callers to decide actions
+            - Callers don't need to handle CONDITIONAL/UNKNOWN complexity
+            - Conservative mapping ensures safety (fail rather than retry)
+
+            Classification values:
             - SUCCESS: Operation completed successfully
             - PARTIAL: Partially completed (may need follow-up)
             - RETRYABLE: Transient error, safe to retry (order NOT executed)
@@ -126,14 +158,34 @@ class MT5Constants:
             CRITICAL = 3
 
         class TransactionOutcome(IntEnum):
-            """Outcome of a transaction attempt.
+            """Outcome of a transaction attempt - PUBLIC API.
 
-            Used by TransactionHandler to communicate result to caller:
+            Used by TransactionHandler.classify_result() to communicate
+            result to caller. This is the simplified classification that
+            clients should use to decide next action.
+
+            See ErrorClassification docstring for the full architecture
+            explanation of why two classification enums exist.
+
+            Values:
             - SUCCESS: Order executed successfully
             - PARTIAL: Order partially filled
             - RETRY: Safe to retry (order NOT executed)
             - VERIFY_REQUIRED: Must verify state (order MAY have executed)
-            - PERMANENT_FAILURE: Do not retry
+            - PERMANENT_FAILURE: Do not retry (includes CONDITIONAL/UNKNOWN)
+
+            Usage:
+                outcome = TransactionHandler.classify_result(retcode)
+                if outcome == TransactionOutcome.SUCCESS:
+                    return result
+                elif outcome == TransactionOutcome.RETRY:
+                    await sleep(delay)
+                    continue
+                elif outcome == TransactionOutcome.VERIFY_REQUIRED:
+                    verified = await verify_order_state()
+                    if verified: return verified
+                elif outcome == TransactionOutcome.PERMANENT_FAILURE:
+                    raise PermanentError()
             """
 
             SUCCESS = 0

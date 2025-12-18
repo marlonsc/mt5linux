@@ -71,8 +71,7 @@ class TestHistoryDeals:
         ticket = create_test_history["deal_ticket"]
 
         if ticket is None:
-            # Fixture couldn't create history data - test passes
-            return
+            pytest.fail("Fixture couldn't create history data")
 
         # Query by ticket
         deal = mt5.history_deals_get(ticket=ticket)
@@ -102,8 +101,7 @@ class TestHistoryDeals:
         position_id = create_test_history["position_id"]
 
         if position_id is None:
-            # Fixture couldn't create history data - test passes
-            return
+            pytest.fail("Fixture couldn't create history data")
 
         # Query by position
         position_deals = mt5.history_deals_get(position=position_id)
@@ -164,8 +162,7 @@ class TestHistoryOrders:
         ticket = create_test_history["order_ticket"]
 
         if ticket is None:
-            # Fixture couldn't create history data - test passes
-            return
+            pytest.fail("Fixture couldn't create history data")
 
         # Query by ticket
         order = mt5.history_orders_get(ticket=ticket)
@@ -195,8 +192,7 @@ class TestHistoryOrders:
         position_id = create_test_history["position_id"]
 
         if position_id is None:
-            # Fixture couldn't create history data - test passes
-            return
+            pytest.fail("Fixture couldn't create history data")
 
         # Query by position
         position_orders = mt5.history_orders_get(position=position_id)
@@ -222,13 +218,12 @@ class TestHistoryCombined:
         deals_total = mt5.history_deals_total(date_from, date_to)
         orders_total = mt5.history_orders_total(date_from, date_to)
 
-        # If no history data available, test passes (nothing to verify)
+        # If no history data available, fail the test
         if deals_total is None or orders_total is None:
-            return
+            pytest.fail("history_deals_total or history_orders_total returned None")
 
         if deals_total == 0 and orders_total == 0:
-            # No historical data - test passes
-            return
+            pytest.fail("No historical data")
 
         # Both should be non-negative integers
         assert isinstance(deals_total, int)
@@ -246,8 +241,6 @@ class TestHistoryCombined:
 
         # API timing may cause mismatches - accept as pass (transient)
         if deals_count != deals_total:
-            # API timing issue - test passes
-            return
+            pytest.fail("API timing issue")
         if orders_count != orders_total:
-            # API timing issue - test passes
-            return
+            pytest.fail("API timing issue")

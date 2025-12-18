@@ -221,7 +221,7 @@ class TestApiLimits:
                 symbols = mt5.symbols_get(group=group_filter)
 
             if symbols is None:
-                pytest.skip(f"symbols_get(group={group_filter!r}) not available")
+                pytest.fail("symbols_get(group=group_filter!r) not available")
 
             count = len(symbols)
             assert count >= min_expected, (
@@ -251,7 +251,7 @@ class TestApiLimits:
         total = mt5.symbols_total()
 
         if total is None:
-            pytest.skip("symbols_total not available on this server")
+            pytest.fail("symbols_total not available on this server")
         assert isinstance(total, int)
         # Demo servers have fewer symbols; production may have 1000+
         # Just verify we get some symbols (at least 1)
@@ -290,7 +290,7 @@ class TestErrorHandling:
         info = mt5.symbol_info("EURUSD")
 
         if info is None:
-            pytest.skip("EURUSD not available on this server")
+            pytest.fail("EURUSD not available on this server")
 
         error = mt5.last_error()
         assert error is not None
@@ -322,7 +322,7 @@ class TestErrorHandling:
         version = mt5.version()
 
         if version is None:
-            pytest.skip("version() returned None (MT5 connection may be unstable)")
+            pytest.fail("version() returned None (MT5 connection may be unstable)")
 
         assert isinstance(version, tuple)
         assert len(version) == c.Test.Validation.TUPLE_LENGTH_VERSION
@@ -344,7 +344,7 @@ class TestErrorHandling:
         terminal = mt5.terminal_info()
 
         if terminal is None:
-            pytest.skip("terminal_info() returned None (MT5 connection unstable)")
+            pytest.fail("terminal_info() returned None (MT5 connection unstable)")
 
         assert terminal.connected is True
         assert terminal.build > 0
@@ -357,7 +357,7 @@ class TestErrorHandling:
         account = mt5.account_info()
 
         if account is None:
-            pytest.skip("account_info returned None (MT5 connection may be unstable)")
+            pytest.fail("account_info returned None (MT5 connection may be unstable)")
 
         assert account.login > 0
         assert account.balance >= 0

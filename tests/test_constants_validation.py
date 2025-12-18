@@ -162,7 +162,7 @@ def mt5_constants() -> dict[str, int]:
     port = TEST_GRPC_PORT
 
     if not _is_grpc_server_available(host, port):
-        pytest.skip(
+        raise RuntimeError(
             f"MT5 gRPC server not available on {host}:{port}. "
             "Start with: docker compose up -d"
         )

@@ -54,13 +54,10 @@ class TestAsyncMetaTrader5Connection:
         """Test that concurrent _connect() calls are thread-safe."""
         client = AsyncMetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
 
-        try:
-            # Simulate many concurrent connect calls
-            await asyncio.gather(
-                *[client._connect() for _ in range(tc.CONCURRENT_CONNECTIONS)]
-            )
-        except (ConnectionError, EOFError, OSError) as e:
-            pytest.skip(f"MT5 connection failed: {e}")
+        # Simulate many concurrent connect calls - should not raise
+        await asyncio.gather(
+            *[client._connect() for _ in range(tc.CONCURRENT_CONNECTIONS)]
+        )
 
         # Should be connected with no errors
         assert client.is_connected is True
@@ -143,8 +140,7 @@ class TestAsyncMetaTrader5Account:
     async def test_account_info(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async account_info retrieval."""
         account = await async_mt5.account_info()
-        if account is None:
-            pytest.skip("account_info returned None (MT5 connection may be unstable)")
+        assert account is not None, "account_info returned None"
         assert account.login > 0
         assert account.balance >= 0
         assert hasattr(account, "equity")
@@ -160,9 +156,7 @@ class TestAsyncMetaTrader5Symbols:
         """Test async symbols_total."""
         total = await async_mt5.symbols_total()
         assert isinstance(total, int)
-        if total == 0:
-            pytest.skip("symbols_total returned 0 (MT5 connection issue)")
-        assert total > 0
+        assert total > 0, "symbols_total returned 0"
 
     @pytest.mark.asyncio
     async def test_symbols_get(self, async_mt5: AsyncMetaTrader5) -> None:
@@ -180,8 +174,7 @@ class TestAsyncMetaTrader5Symbols:
         """Test async symbol_info."""
         await async_mt5.symbol_select("EURUSD", enable=True)
         info = await async_mt5.symbol_info("EURUSD")
-        if info is None:
-            pytest.skip("symbol_info returned None (MT5 connection issue)")
+        assert info is not None, "symbol_info returned None"
         assert info.name == "EURUSD"
         assert hasattr(info, "bid")
         assert hasattr(info, "ask")
@@ -193,8 +186,7 @@ class TestAsyncMetaTrader5Symbols:
         """Test async symbol_info_tick."""
         await async_mt5.symbol_select("EURUSD", enable=True)
         tick = await async_mt5.symbol_info_tick("EURUSD")
-        if tick is None:
-            pytest.skip("symbol_info_tick returned None (market may be closed)")
+        assert tick is not None, "symbol_info_tick returned None"
         assert tick.bid > 0 or tick.ask > 0
         assert hasattr(tick, "time")
         assert hasattr(tick, "volume")
@@ -204,8 +196,7 @@ class TestAsyncMetaTrader5Symbols:
         """Test async symbol_select."""
         # Enable EURUSD in Market Watch
         result = await async_mt5.symbol_select("EURUSD", enable=True)
-        if result is not True:
-            pytest.skip("symbol_select returned False (MT5 connection unstable)")
+        assert result is True, "symbol_select returned False"
 
     @pytest.mark.asyncio
     async def test_getattr_proxies_constants(self, async_mt5: AsyncMetaTrader5) -> None:
@@ -233,13 +224,11 @@ class TestAsyncMetaTrader5MarketData:
             )
         except Exception as e:
             if "pickling is disabled" in str(e):
-                pytest.skip(
-                    "RPyC pickling disabled - numpy serialization not available"
-                )
+                pytest.fail("RPyC pickling disabled - numpy serialization unavailable")
             raise
         # May return None if market closed or RPyC serialization issue
         if rates is None:
-            pytest.skip("Market data not available (market may be closed)")
+            pytest.fail("Market data not available (market may be closed)")
         assert len(rates) > 0
         assert hasattr(rates, "dtype")
         # Verify rate structure
@@ -261,7 +250,7 @@ class TestAsyncMetaTrader5MarketData:
         )
         # May return None if market closed or no data for period
         if rates is None:
-            pytest.skip("Market data not available (market may be closed)")
+            pytest.fail("Market data not available (market may be closed)")
         assert len(rates) > 0
 
     @pytest.mark.asyncio
@@ -275,7 +264,7 @@ class TestAsyncMetaTrader5MarketData:
         )
         # May return None if market closed or no data for period
         if rates is None:
-            pytest.skip("Market data not available (market may be closed)")
+            pytest.fail("Market data not available (market may be closed)")
         assert len(rates) > 0
 
     @pytest.mark.asyncio
@@ -390,7 +379,7 @@ class TestAsyncMetaTrader5Trading:
         await async_mt5.symbol_select("EURUSD", enable=True)
         tick = await async_mt5.symbol_info_tick("EURUSD")
         if tick is None:
-            pytest.skip("symbol_info_tick returned None (market may be closed)")
+            pytest.fail("symbol_info_tick returned None (market may be closed)")
 
         margin = await async_mt5.order_calc_margin(
             async_mt5.ORDER_TYPE_BUY,
@@ -409,7 +398,7 @@ class TestAsyncMetaTrader5Trading:
         await async_mt5.symbol_select("EURUSD", enable=True)
         tick = await async_mt5.symbol_info_tick("EURUSD")
         if tick is None:
-            pytest.skip("Could not get tick data")
+            pytest.fail("Could not get tick data")
 
         # Simulate 10 pip profit
         profit = await async_mt5.order_calc_profit(
@@ -429,7 +418,7 @@ class TestAsyncMetaTrader5Trading:
         await async_mt5.symbol_select("EURUSD", enable=True)
         tick = await async_mt5.symbol_info_tick("EURUSD")
         if tick is None:
-            pytest.skip("Could not get tick data")
+            pytest.fail("Could not get tick data")
 
         request = {
             "action": async_mt5.TRADE_ACTION_DEAL,
@@ -445,7 +434,7 @@ class TestAsyncMetaTrader5Trading:
         result = await async_mt5.order_check(request)
         # May return None if market is closed or trading disabled
         if result is None:
-            pytest.skip("Order check not available (market may be closed)")
+            pytest.fail("Order check not available (market may be closed)")
         # Check result has expected fields
         assert hasattr(result, "retcode")
 
@@ -473,7 +462,7 @@ class TestAsyncMetaTrader5Concurrent:
             for r in results:
                 if isinstance(r, Exception):
                     if "timeout" in str(r).lower() or "grpc" in str(r).lower():
-                        pytest.skip(f"gRPC timeout during concurrent fetch: {r}")
+                        pytest.fail("gRPC timeout during concurrent fetch: r")
                     non_timeout_exception = r
                 else:
                     valid_results.append(r)
@@ -488,7 +477,7 @@ class TestAsyncMetaTrader5Concurrent:
                     assert result.name == symbols[i]
         except Exception as e:
             if "timeout" in str(e).lower() or "grpc" in str(e).lower():
-                pytest.skip(f"gRPC timeout: {e}")
+                pytest.fail("gRPC timeout: e")
             raise
 
     @pytest.mark.asyncio
@@ -505,7 +494,7 @@ class TestAsyncMetaTrader5Concurrent:
 
         # Skip if MT5 connection is unstable
         if account is None or symbol is None or tick is None:
-            pytest.skip("Concurrent data fetch returned None (MT5 connection issue)")
+            pytest.fail("Concurrent data fetch returned None (MT5 connection issue)")
 
         assert account.balance >= 0
         assert symbol.name == "EURUSD"
@@ -534,17 +523,17 @@ class TestAsyncMetaTrader5Concurrent:
                 # Skip exceptions (RPyC pickling may fail)
                 if isinstance(rates, Exception):
                     if "timeout" in str(rates).lower():
-                        pytest.skip(f"gRPC timeout: {rates}")
+                        pytest.fail("gRPC timeout: rates")
                     continue
                 if rates is not None:
                     assert len(rates) > 0
                     success_count += 1
             # At least one should succeed, or skip if all failed
             if success_count == 0:
-                pytest.skip("Market data not available (market may be closed)")
+                pytest.fail("Market data not available (market may be closed)")
         except Exception as e:
             if "timeout" in str(e).lower() or "grpc" in str(e).lower():
-                pytest.skip(f"gRPC timeout: {e}")
+                pytest.fail("gRPC timeout: e")
             raise
 
 
@@ -564,12 +553,12 @@ class TestAsyncMetaTrader5Login:
         server = os.getenv("MT5_SERVER", "")
 
         if not all([login, password, server]):
-            pytest.skip("MT5 credentials not configured")
+            pytest.fail("MT5 credentials not configured")
 
         # Initialize first
         init_result = await async_mt5_raw.initialize()
         if not init_result:
-            pytest.skip("MT5 initialize failed")
+            pytest.fail("MT5 initialize failed")
 
         result = await async_mt5_raw.login(login, password, server)
         assert result is True
@@ -586,7 +575,7 @@ class TestAsyncMetaTrader5HealthCheck:
 
         assert isinstance(health, dict)
         if health.get("healthy") is not True:
-            pytest.skip(f"health_check returned unhealthy: {health}")
+            pytest.fail("health_check returned unhealthy: health")
 
     @pytest.mark.integration
     @pytest.mark.asyncio

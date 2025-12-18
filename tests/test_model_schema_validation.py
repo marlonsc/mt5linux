@@ -161,15 +161,14 @@ class TestModelFieldStructure:
                 f"{model_name}.{field_name} should be required but has default"
             )
 
-    @pytest.mark.parametrize("model_name", list(REQUIRED_FIELDS.keys()))
+    @pytest.mark.parametrize(
+        "model_name",
+        [name for name, fields in REQUIRED_FIELDS.items() if fields],
+    )
     def test_missing_required_field_raises_error(self, model_name: str) -> None:
         """Creating model without required field must raise ValidationError."""
         model_cls = getattr(MT5Models, model_name)
         required = REQUIRED_FIELDS[model_name]
-
-        if not required:
-            # Model has no required fields - nothing to validate, test passes
-            return
 
         # Try to create without any required fields
         with pytest.raises(ValidationError) as exc_info:
@@ -596,7 +595,7 @@ class TestModelWithRealMT5:
         """AccountInfo should parse real account data."""
         info = mt5.account_info()
         if info is None:
-            pytest.skip("account_info returned None")
+            pytest.fail("account_info returned None")
 
         assert isinstance(info, MT5Models.AccountInfo)
         assert info.login > 0
@@ -607,7 +606,7 @@ class TestModelWithRealMT5:
         """SymbolInfo should parse real symbol data."""
         info = mt5.symbol_info("EURUSD")
         if info is None:
-            pytest.skip("symbol_info returned None for EURUSD")
+            pytest.fail("symbol_info returned None for EURUSD")
 
         assert isinstance(info, MT5Models.SymbolInfo)
         assert info.name == "EURUSD"
@@ -618,7 +617,7 @@ class TestModelWithRealMT5:
         """TerminalInfo should parse real terminal data."""
         info = mt5.terminal_info()
         if info is None:
-            pytest.skip("terminal_info returned None")
+            pytest.fail("terminal_info returned None")
 
         assert isinstance(info, MT5Models.TerminalInfo)
         assert info.build > 0
