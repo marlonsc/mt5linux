@@ -62,9 +62,10 @@ def _is_grpc_server_available(host: str, port: int) -> bool:
         sock.settimeout(tc.MEDIUM_TIMEOUT)
         result = sock.connect_ex((host, port))
         sock.close()
-        return result == 0
     except (OSError, TimeoutError):
         return False
+    else:
+        return result == 0
 
 
 def _extract_mt5_constants(host: str, port: int) -> dict[str, int]:

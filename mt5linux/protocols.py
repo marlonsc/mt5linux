@@ -22,12 +22,14 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from numpy import np
+    import numpy as np
     from numpy.typing import NDArray
 
     from mt5linux.models import MT5Models
 
-from mt5linux.types import MT5Types
+from mt5linux.types import (
+    MT5Types,
+)
 
 # Type alias for convenience (single source of truth)
 JSONValue = MT5Types.JSONValue
@@ -196,14 +198,14 @@ class SyncClientProtocol(Protocol):
 
     def symbols_get(
         self, group: str | None = None
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[dict[str, JSONValue], ...] | None:
         """Get available symbols with optional group filter.
 
         Args:
             group: Optional group filter pattern.
 
         Returns:
-            List of symbol dictionaries or None.
+            Tuple of symbol dictionaries or None.
 
         """
         ...
@@ -446,7 +448,7 @@ class SyncClientProtocol(Protocol):
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Position, ...] | None:
         """Get open positions with optional filters.
 
         Args:
@@ -455,7 +457,7 @@ class SyncClientProtocol(Protocol):
             ticket: Specific position ticket.
 
         Returns:
-            List of position dictionaries or None.
+            Tuple of Position objects or None.
 
         """
         ...
@@ -478,7 +480,7 @@ class SyncClientProtocol(Protocol):
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Order, ...] | None:
         """Get pending orders with optional filters.
 
         Args:
@@ -487,7 +489,7 @@ class SyncClientProtocol(Protocol):
             ticket: Specific order ticket.
 
         Returns:
-            List of order dictionaries or None.
+            Tuple of Order objects or None.
 
         """
         ...
@@ -520,7 +522,7 @@ class SyncClientProtocol(Protocol):
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Order, ...] | None:
         """Get historical orders with filters.
 
         Args:
@@ -531,7 +533,7 @@ class SyncClientProtocol(Protocol):
             position: Position ID filter.
 
         Returns:
-            List of historical order dictionaries or None.
+            Tuple of Order objects or None.
 
         """
         ...
@@ -560,7 +562,7 @@ class SyncClientProtocol(Protocol):
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Deal, ...] | None:
         """Get historical deals with filters.
 
         Args:
@@ -571,7 +573,7 @@ class SyncClientProtocol(Protocol):
             position: Position ID filter.
 
         Returns:
-            List of historical deal dictionaries or None.
+            Tuple of Deal objects or None.
 
         """
         ...
@@ -594,7 +596,7 @@ class SyncClientProtocol(Protocol):
         """
         ...
 
-    def market_book_get(self, symbol: str) -> list[dict[str, JSONValue]] | None:
+    def market_book_get(self, symbol: str) -> tuple[MT5Models.BookEntry, ...] | None:
         """Get market depth (DOM) data for a symbol.
 
         Requires prior market_book_add call.
@@ -603,7 +605,7 @@ class SyncClientProtocol(Protocol):
             symbol: Symbol name to get market depth for.
 
         Returns:
-            List of market depth entries or None.
+            Tuple of BookEntry objects or None.
 
         """
         ...
@@ -716,7 +718,7 @@ class AsyncClientProtocol(Protocol):
 
     async def symbols_get(
         self, group: str | None = None
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[dict[str, JSONValue], ...] | None:
         """Get available symbols with optional group filter (async version)."""
         ...
 
@@ -836,7 +838,7 @@ class AsyncClientProtocol(Protocol):
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Position, ...] | None:
         """Get open positions with optional filters (async version)."""
         ...
 
@@ -853,7 +855,7 @@ class AsyncClientProtocol(Protocol):
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Order, ...] | None:
         """Get pending orders with optional filters (async version)."""
         ...
 
@@ -876,7 +878,7 @@ class AsyncClientProtocol(Protocol):
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Order, ...] | None:
         """Get historical orders with filters (async version)."""
         ...
 
@@ -895,7 +897,7 @@ class AsyncClientProtocol(Protocol):
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Deal, ...] | None:
         """Get historical deals with filters (async version)."""
         ...
 
@@ -907,7 +909,9 @@ class AsyncClientProtocol(Protocol):
         """Subscribe to market depth (DOM) for a symbol (async version)."""
         ...
 
-    async def market_book_get(self, symbol: str) -> list[dict[str, JSONValue]] | None:
+    async def market_book_get(
+        self, symbol: str
+    ) -> tuple[MT5Models.BookEntry, ...] | None:
         """Get market depth (DOM) data for a symbol (async version)."""
         ...
 

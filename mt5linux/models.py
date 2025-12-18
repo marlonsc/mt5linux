@@ -109,9 +109,9 @@ class MT5Models:
         deviation: int = Field(ge=0, default=_config.order_deviation)
         magic: int = Field(ge=0, default=_config.order_magic)
         comment: str = Field(max_length=31, default="")
-        type_time: c.Order.OrderTime = Field(default=_config.order_time)
+        type_time: int = Field(default=_config.order_time)
         expiration: datetime | None = None
-        type_filling: c.Order.OrderFilling = Field(default=_config.order_filling)
+        type_filling: int = Field(default=_config.order_filling)
         position: int = Field(ge=0, default=0)
         position_by: int = Field(ge=0, default=0)
 
@@ -208,6 +208,50 @@ class MT5Models:
                     retcode=c.Order.TradeRetcode.ERROR,
                     comment="No result from MT5",
                 )
+            return super().from_mt5(result)
+
+    class OrderCheckResult(Base):
+        """MT5 order check result.
+
+        Result of order_check() which validates an order without sending it.
+        Contains information about margin requirements and feasibility.
+
+        Example:
+            >>> result = mt5.order_check(request)
+            >>> check_result = MT5Models.OrderCheckResult.from_mt5(result)
+            >>> if check_result.is_valid:
+            ...     print(f"Order is valid, required margin: {check_result.margin}")
+
+        """
+
+        retcode: int
+        balance: float = 0.0
+        equity: float = 0.0
+        profit: float = 0.0
+        margin: float = 0.0
+        margin_free: float = 0.0
+        margin_level: float = 0.0
+        comment: str = ""
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def is_valid(self) -> bool:
+            """Check if order check passed validation."""
+            return self.retcode == c.Order.TradeRetcode.DONE
+
+        @classmethod
+        def from_mt5(cls, result: object) -> Self | None:
+            """Create from MT5 OrderCheckResult.
+
+            Args:
+                result: MT5 OrderCheckResult object or dict.
+
+            Returns:
+                OrderCheckResult instance or None if input is None.
+
+            """
+            if result is None:
+                return None
             return super().from_mt5(result)
 
     class AccountInfo(Base):

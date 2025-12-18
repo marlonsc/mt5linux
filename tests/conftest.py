@@ -5,7 +5,7 @@ the ISOLATED test container (mt5linux-test on port 28812).
 
 The container is completely isolated from:
 - Production (mt5, port 8001)
-- neptor tests (neptor-mt5-test, port 18812)
+- tests.(neptor-mt5-test, port 18812)
 - mt5docker tests (mt5docker-test, port 48812)
 
 Configuration Source: MT5Config (mt5linux/config.py) - Single Source of Truth
@@ -50,6 +50,7 @@ CODEGEN_SCRIPT = PROJECT_ROOT / "scripts" / "codegen_enums.py"
 
 # Load .env.test first (test settings), then .env (credentials override)
 # MT5Config will pick up these values via Pydantic Settings env loading
+# NOTE: .env.test includes resilience settings (MT5_ENABLE_CIRCUIT_BREAKER=true, etc.)
 load_dotenv(PROJECT_ROOT / ".env.test")
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
@@ -69,7 +70,7 @@ STARTUP_TIMEOUT = _config.test_startup_timeout
 GRPC_TIMEOUT = _config.test_grpc_timeout
 
 # MT5 credentials (loaded via env vars - no defaults in config)
-MT5_LOGIN = int(os.getenv("MT5_LOGIN", tc.MT5.DEFAULT_MT5_LOGIN))
+MT5_LOGIN = int(os.getenv("MT5_LOGIN", tc.DEFAULT_MT5_LOGIN))
 MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
 MT5_SERVER: str | None = os.getenv("MT5_SERVER")
 
@@ -197,15 +198,19 @@ def is_grpc_service_ready(
     port: int | None = None,
     timeout: float = 10.0,
 ) -> bool:
-    """Check if gRPC service is ready (actual handshake, not just port).
+    """Check if gRPC service is ready (actual MT5 operation, not just HealthCheck).
+
+    The HealthCheck endpoint may return healthy=False even when MT5 is fully
+    operational. This function performs an actual MT5 operation (GetConstants)
+    to verify true service readiness.
 
     Args:
         host: gRPC server host.
         port: gRPC server port.
-        timeout: Timeout for the HealthCheck call.
+        timeout: Timeout for the GetConstants call.
 
     Returns:
-        True if service responds to HealthCheck, False otherwise.
+        True if service responds to GetConstants, False otherwise.
 
     """
     grpc_port = port or TEST_GRPC_PORT
@@ -213,14 +218,19 @@ def is_grpc_service_ready(
     try:
         channel = grpc.insecure_channel(f"{host}:{grpc_port}")
         stub = mt5_pb2_grpc.MT5ServiceStub(channel)
-        response = stub.HealthCheck(mt5_pb2.Empty(), timeout=timeout)
+        # Use GetConstants instead of HealthCheck - more reliable indicator
+        # that MT5 is actually ready to handle requests
+        response = stub.GetConstants(mt5_pb2.Empty(), timeout=timeout)
         channel.close()
-        _log(f"gRPC check: healthy={response.healthy}")
+        # Constants response has 'values' field (a map of constant name -> value)
+        num_constants = len(response.values)
+        _log(f"gRPC check: ready (got {num_constants} constants)")
     except grpc.RpcError as e:
         _log(f"gRPC check: FAILED - {type(e).__name__}")
         return False
-    else:
-        return response.healthy
+
+    # Service is ready if we got any constants
+    return num_constants > 0
 
 
 def wait_for_grpc_service(
@@ -360,8 +370,8 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901, PLR0915
             _run_codegen()
             yield
             return
-        else:
-            _log("WARNING: gRPC not ready - will try to restart container")
+
+        _log("WARNING: gRPC not ready - will try to restart container")
 
     # Container not running or not responding - need to start it
     _log("Container NOT running or NOT responding - need to start")
@@ -491,31 +501,37 @@ def mt5_config() -> dict[str, str | int | None]:
     return MT5_CONFIG.copy()
 
 
-@pytest.fixture
-def mt5_raw() -> Generator[MetaTrader5]:
-    """Return raw MT5 connection (no initialize).
+# =============================================================================
+# SESSION-SCOPED FIXTURES (reduce connection overhead by ~99%)
+# =============================================================================
 
-    This fixture creates a connection to the gRPC server but does NOT
-    call initialize(). Use for testing connection lifecycle.
-    Skips if connection fails.
+
+@pytest.fixture(scope="session")
+def _mt5_session_raw() -> Generator[MetaTrader5]:
+    """Session-scoped raw MT5 connection - shared across ALL tests.
+
+    Creates a single connection to the gRPC server that's reused by all tests.
+    This dramatically reduces connection overhead (from ~584 cycles to 1).
     """
+    _log("SESSION FIXTURE: Creating session-scoped MT5 connection")
     mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
     try:
         mt5.connect()
     except (grpc.RpcError, ConnectionError, OSError) as e:
         pytest.skip(f"MT5 connection failed: {e}")
     yield mt5
+    _log("SESSION FIXTURE: Disconnecting session-scoped MT5 connection")
     with contextlib.suppress(grpc.RpcError, ConnectionError):
         mt5.disconnect()
 
 
-@pytest.fixture
-def mt5(mt5_raw: MetaTrader5) -> Generator[MetaTrader5]:
-    """Return fully initialized MT5 client.
+@pytest.fixture(scope="session")
+def _mt5_session_initialized(
+    _mt5_session_raw: MetaTrader5,
+) -> Generator[MetaTrader5]:
+    """Session-scoped initialized MT5 - shared across ALL tests.
 
-    This fixture connects AND initializes the MT5 terminal.
-    Skips test if MT5_LOGIN is not configured (=0), credentials missing,
-    or if initialization fails.
+    Initializes the MT5 terminal once and reuses it for all tests.
     """
     if not has_mt5_credentials():
         pytest.skip(
@@ -523,8 +539,9 @@ def mt5(mt5_raw: MetaTrader5) -> Generator[MetaTrader5]:
             "and MT5_SERVER in .env file"
         )
 
+    _log("SESSION FIXTURE: Initializing session-scoped MT5 terminal")
     try:
-        result = mt5_raw.initialize(
+        result = _mt5_session_raw.initialize(
             login=MT5_LOGIN,
             password=MT5_PASSWORD,
             server=MT5_SERVER,
@@ -533,13 +550,40 @@ def mt5(mt5_raw: MetaTrader5) -> Generator[MetaTrader5]:
         pytest.skip(f"MT5 connection failed: {e}")
 
     if not result:
-        error = mt5_raw.last_error()
+        error = _mt5_session_raw.last_error()
         pytest.skip(f"MT5 initialize failed: {error}")
 
-    yield mt5_raw
+    yield _mt5_session_raw
 
+    _log("SESSION FIXTURE: Shutting down session-scoped MT5 terminal")
     with contextlib.suppress(Exception):
-        mt5_raw.shutdown()
+        _mt5_session_raw.shutdown()
+
+
+# =============================================================================
+# FUNCTION-SCOPED ALIASES (use session-scoped connections)
+# =============================================================================
+
+
+@pytest.fixture
+def mt5_raw(_mt5_session_raw: MetaTrader5) -> MetaTrader5:
+    """Return raw MT5 connection (no initialize).
+
+    This fixture returns the session-scoped connection without initialize.
+    Use for testing connection lifecycle.
+    """
+    return _mt5_session_raw
+
+
+@pytest.fixture
+def mt5(_mt5_session_initialized: MetaTrader5) -> MetaTrader5:
+    """Return fully initialized MT5 client.
+
+    This fixture returns the session-scoped initialized connection.
+    Skips test if MT5_LOGIN is not configured (=0), credentials missing,
+    or if initialization fails.
+    """
+    return _mt5_session_initialized
 
 
 @pytest.fixture
@@ -674,7 +718,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
         "type": mt5.ORDER_TYPE_BUY,
         "price": tick.ask,
         "deviation": tc.HIGH_DEVIATION,
-        "magic": c.MT5.HISTORY_MAGIC,
+        "magic": c.Test.Order.HISTORY_MAGIC,
         "comment": "pytest history test",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
@@ -698,7 +742,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
     position = None
     if positions:
         for pos in positions:
-            if pos.magic == c.MT5.HISTORY_MAGIC:
+            if pos.magic == c.Test.Order.HISTORY_MAGIC:
                 position = pos
                 break
 
@@ -717,7 +761,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
         "position": position.ticket,
         "price": tick.bid,
         "deviation": 50,
-        "magic": c.MT5.HISTORY_MAGIC,
+        "magic": c.Test.Order.HISTORY_MAGIC,
         "comment": "pytest history close",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
@@ -738,36 +782,34 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:
 
 
 # =============================================================================
-# ASYNC FIXTURES
+# ASYNC SESSION-SCOPED FIXTURES (reduce connection overhead by ~99%)
 # =============================================================================
 
 
-@pytest.fixture
-async def async_mt5_raw() -> AsyncGenerator[AsyncMetaTrader5]:
-    """Return raw async MT5 connection (no initialize).
+@pytest.fixture(scope="session")
+async def _async_mt5_session_raw() -> AsyncGenerator[AsyncMetaTrader5]:
+    """Session-scoped raw async MT5 connection - shared across ALL tests.
 
-    This fixture creates an async connection to the gRPC server but does NOT
-    call initialize(). Use for testing connection lifecycle.
-    Skips if connection fails.
+    Creates a single async connection to the gRPC server that's reused by all tests.
     """
+    _log("SESSION FIXTURE: Creating session-scoped async MT5 connection")
     client = AsyncMetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
     try:
         await client.connect()
     except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
         pytest.skip(f"Async MT5 connection failed: {e}")
     yield client
+    _log("SESSION FIXTURE: Disconnecting session-scoped async MT5 connection")
     await client.disconnect()
 
 
-@pytest.fixture
-async def async_mt5(
-    async_mt5_raw: AsyncMetaTrader5,
+@pytest.fixture(scope="session")
+async def _async_mt5_session_initialized(
+    _async_mt5_session_raw: AsyncMetaTrader5,
 ) -> AsyncGenerator[AsyncMetaTrader5]:
-    """Return fully initialized async MT5 client.
+    """Session-scoped initialized async MT5 - shared across ALL tests.
 
-    This fixture connects AND initializes the MT5 terminal.
-    Skips test if MT5_LOGIN is not configured (=0), credentials missing,
-    or if initialization fails.
+    Initializes the async MT5 terminal once and reuses it for all tests.
     """
     if not has_mt5_credentials():
         pytest.skip(
@@ -775,8 +817,9 @@ async def async_mt5(
             "and MT5_SERVER in .env file"
         )
 
+    _log("SESSION FIXTURE: Initializing session-scoped async MT5 terminal")
     try:
-        result = await async_mt5_raw.initialize(
+        result = await _async_mt5_session_raw.initialize(
             login=MT5_LOGIN,
             password=MT5_PASSWORD,
             server=MT5_SERVER,
@@ -785,13 +828,44 @@ async def async_mt5(
         pytest.skip(f"Async MT5 connection failed: {e}")
 
     if not result:
-        error = await async_mt5_raw.last_error()
+        error = await _async_mt5_session_raw.last_error()
         pytest.skip(f"Async MT5 initialize failed: {error}")
 
-    yield async_mt5_raw
+    yield _async_mt5_session_raw
 
+    _log("SESSION FIXTURE: Shutting down session-scoped async MT5 terminal")
     with contextlib.suppress(Exception):
-        await async_mt5_raw.shutdown()
+        await _async_mt5_session_raw.shutdown()
+
+
+# =============================================================================
+# ASYNC FUNCTION-SCOPED ALIASES (use session-scoped connections)
+# =============================================================================
+
+
+@pytest.fixture
+async def async_mt5_raw(
+    _async_mt5_session_raw: AsyncMetaTrader5,
+) -> AsyncMetaTrader5:
+    """Return raw async MT5 connection (no initialize).
+
+    This fixture returns the session-scoped async connection without initialize.
+    Use for testing connection lifecycle.
+    """
+    return _async_mt5_session_raw
+
+
+@pytest.fixture
+async def async_mt5(
+    _async_mt5_session_initialized: AsyncMetaTrader5,
+) -> AsyncMetaTrader5:
+    """Return fully initialized async MT5 client.
+
+    This fixture returns the session-scoped async initialized connection.
+    Skips test if MT5_LOGIN is not configured (=0), credentials missing,
+    or if initialization fails.
+    """
+    return _async_mt5_session_initialized
 
 
 # Export symbols for type checking

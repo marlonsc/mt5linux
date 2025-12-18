@@ -12,12 +12,17 @@ Advanced patterns used:
 - Typed mappings for structured constants
 - Class-based namespaces organized by business domain, NOT by data type
 
-Usage:
-    from tests.constants import TestConstants as c
-    port = c.MT5.GRPC_PORT
-    symbol = c.Financial.DEFAULT_SYMBOL
-    timeout = c.Network.SOCKET_TIMEOUT
-    compression_type = c.Kafka.CompressionType.GZIP
+Usage (Test Constants - tc):
+    from tests.constants import TestConstants as tc
+    port = tc.MT5.GRPC_PORT
+    symbol = tc.Financial.DEFAULT_SYMBOL
+    timeout = tc.Network.SOCKET_TIMEOUT
+    compression_type = tc.Kafka.CompressionType.GZIP
+
+Usage (Source Constants - c):
+    from mt5linux.constants import c
+    port = c.Network.TEST_GRPC_PORT
+    timeout = c.Network.TIMEOUT_CONNECTION
 """
 
 from __future__ import annotations
@@ -27,12 +32,51 @@ from enum import IntEnum, StrEnum
 from typing import Final
 
 # =============================================================================
+# GLOBAL CONSTANTS - Available throughout the test suite
+# =============================================================================
+
+# Environment defaults
+DEFAULT_SKIP_DOCKER: Final[str] = "0"
+DEFAULT_MT5_LOGIN: Final[str] = "0"
+
+# Test-specific constants
+TEST_ORDER_MAGIC: Final[int] = 123456
+HISTORY_TEST_MAGIC: Final[int] = 888888
+INVALID_TEST_MAGIC: Final[int] = 999999
+
+# Trading parameters
+DEFAULT_DEVIATION: Final[int] = 20
+HIGH_DEVIATION: Final[int] = 50
+INVALID_DEVIATION: Final[int] = 0
+
+# Volumes
+MICRO_LOT: Final[float] = 0.01
+MINI_LOT: Final[float] = 0.1
+STANDARD_LOT: Final[float] = 1.0
+
+# Timeouts
+FAST_TIMEOUT: Final[int] = 2
+MEDIUM_TIMEOUT: Final[int] = 5
+SLOW_TIMEOUT: Final[int] = 10
+CONTAINER_TIMEOUT: Final[int] = 60
+
+# Data counts
+LOG_TAIL_LINES: Final[int] = 50
+
+# Strings
+TEST_COMMENT: Final[str] = "pytest test order"
+TEST_CLOSE_COMMENT: Final[str] = "pytest cleanup"
+
+# Invalid values
+INVALID_TIMEFRAME: Final[int] = 999
+
+# =============================================================================
 # MAIN TEST CONSTANTS CLASS
 # =============================================================================
 
 
 class TestConstants:
-    """Centralized constants for all neptor tests.
+    """Centralized constants for all tests.
 
     Advanced patterns with flat namespace organization:
     - StrEnum classes for string enumerations
@@ -76,7 +120,7 @@ class TestConstants:
         HEALTH_PORT: Final[int] = int(os.getenv("MT5_HEALTH_PORT", "28002"))
         STARTUP_TIMEOUT: Final[int] = int(os.getenv("MT5_STARTUP_TIMEOUT", "420"))
         DEFAULT_TIMEOUT: Final[int] = 60
-        DEFAULT_MT5_LOGIN: Final[int] = 12345678  # Default test login ID
+        DEFAULT_MT5_LOGIN: Final[str] = "0"  # Default test login ID
         HISTORY_MAGIC: Final[int] = 888888  # Magic for history test orders
         TEST_MAGIC: Final[int] = 999999  # Magic for test orders
         TEST_ORDER_MAGIC: Final[int] = 777777  # Magic for test order execution
@@ -454,29 +498,6 @@ class TestConstants:
         SYMBOLS_TEST_COUNT: Final[int] = 5  # Number of symbols for batch tests
         SYMBOLS_RATES_COUNT: Final[int] = 5  # Number of symbols for rates tests
 
-        # Model test constants
-        TEST_VOLUME_MICRO: Final = 0.1
-        TEST_PRICE_BASE: Final = 1.0900
-        TEST_PRICE_HIGH: Final = 1.1100
-        TEST_DEVIATION_NORMAL: Final = 20
-        TEST_MAGIC_DEFAULT: Final = 12345
-        TEST_ORDER_DEFAULT: Final = 67890
-        TEST_RETCODE_SUCCESS: Final = 10009
-        TEST_ACCOUNT_BALANCE: Final = 10000.00
-        TEST_ACCOUNT_EQUITY_HIGH: Final = 10150.50
-        TEST_PRICE_INCREMENT: Final = 0.0001
-        TEST_SPREAD_POINTS: Final = 5
-        TEST_MAGIC_LARGE: Final = 12345678
-        TEST_ACCOUNT_LOW: Final = 50.00
-        TEST_TIMESTAMP_EPOCH: Final = 1702000000  # 2023-12-08
-        TEST_ORDER_COUNT_LOW: Final = 5
-        TEST_ORDER_COUNT_HIGH: Final = 10
-        TEST_RETCODE_REQUOTE: Final = 10004
-        TEST_RETCODE_NO_MONEY: Final = 10019
-        TEST_MAGIC_ALT: Final = 87654321
-        TEST_ACCOUNT_LEVERAGE: Final = 100.0
-        TEST_CONFIDENCE_HIGH: Final = 10.0
-
     class Logging:
         """Logging configuration constants."""
 
@@ -490,10 +511,11 @@ class TestConstants:
     class Collections:
         """Immutable collections for test configuration."""
 
-        # Note: Enums referenced here will be initialized after TestConstants class definition
+        # Note: Enums referenced here will be initialized after
+        # TestConstants class definition
         # See post-class initialization block below
-        COMPRESSION_TYPES: Final[frozenset[str]]  # Initialized post-class
-        ACKS_MODES: Final[frozenset[str]]  # Initialized post-class
+        COMPRESSION_TYPES: frozenset[str]  # Initialized post-class
+        ACKS_MODES: frozenset[str]  # Initialized post-class
         SAFE_TEST_SYMBOLS: Final[tuple[str, ...]] = (
             "EURUSD",
             "GBPUSD",
@@ -573,9 +595,12 @@ class TestConstants:
     CONFIDENCE_THRESHOLD_INVALID_LOW = Prediction.CONFIDENCE_THRESHOLD_INVALID_LOW
     CONFIDENCE_THRESHOLD_INVALID_HIGH = Prediction.CONFIDENCE_THRESHOLD_INVALID_HIGH
 
+    # Environment defaults
+    DEFAULT_SKIP_DOCKER = DEFAULT_SKIP_DOCKER
+    DEFAULT_MT5_LOGIN = DEFAULT_MT5_LOGIN
+
     # MT5 legacy alias for backward compatibility
     MT5_DEFAULT_TIMEOUT = MT5.DEFAULT_TIMEOUT
-    DEFAULT_SKIP_DOCKER = MT5.DEFAULT_SKIP_DOCKER
 
     # Lot size aliases (direct access)
     MICRO_LOT = Financial.MICRO_LOT
@@ -600,7 +625,7 @@ class TestConstants:
     SLOW_TIMEOUT = Timing.SLOW_TIMEOUT
     FAST_TIMEOUT = Timing.FAST_TIMEOUT
     CONTAINER_TIMEOUT = Timing.CONTAINER_TIMEOUT
-    DEFAULT_MT5_LOGIN = MT5.DEFAULT_MT5_LOGIN
+    DEFAULT_MT5_LOGIN = DEFAULT_MT5_LOGIN
 
     # MT5 trading aliases (direct access)
     TEST_ORDER_MAGIC = MT5.TEST_ORDER_MAGIC
@@ -634,6 +659,9 @@ class TestConstants:
     MEDIUM_TIMEOUT = Timing.MEDIUM_TIMEOUT
     FIVE_ITERATIONS = Timing.FIVE_ITERATIONS
 
+    # Mappings and Sets are available as module-level constants
+    # Access via: from tests.constants import VOLUME_TO_UNITS, VALID_LOT_SIZES
+
     # Validation aliases
     VERSION_TUPLE_LENGTH = Validation.VERSION_TUPLE_LENGTH
     ERROR_TUPLE_LENGTH = Validation.ERROR_TUPLE_LENGTH
@@ -644,11 +672,34 @@ class TestConstants:
     ZERO_VOLUME = Financial.ZERO_VOLUME
     TEN_PIPS = Financial.TEN_PIPS
     ONE_PERCENT = Financial.ONE_PERCENT
-
-    # MT5 additional aliases
+    INVALID_VOLUME = Financial.INVALID_VOLUME
+    # MT5 additional aliases (referencing existing constants)
     INVALID_TEST_MAGIC = MT5.INVALID_TEST_MAGIC
     TEST_COMMENT = MT5.TEST_COMMENT
     INVALID_TIMEFRAME = MT5.INVALID_TIMEFRAME
+
+    # Test model constants (test-only values)
+    TEST_VOLUME_MICRO: Final[float] = 0.01
+    TEST_PRICE_BASE: Final[float] = 1.0900
+    TEST_PRICE_HIGH: Final[float] = 1.1000
+    TEST_DEVIATION_NORMAL: Final[int] = 20
+    TEST_MAGIC_DEFAULT: Final[int] = 123456
+    TEST_ORDER_DEFAULT: Final[int] = 1
+    TEST_RETCODE_SUCCESS: Final[int] = 0
+    TEST_ACCOUNT_BALANCE: Final[float] = 10000.0
+    TEST_ACCOUNT_EQUITY_HIGH: Final[float] = 10500.0
+    TEST_PRICE_INCREMENT: Final[float] = 0.0001
+    TEST_SPREAD_POINTS: Final[int] = 2
+    TEST_MAGIC_LARGE: Final[int] = 999999
+    TEST_ACCOUNT_LOW: Final[float] = 9500.0
+    TEST_TIMESTAMP_EPOCH: Final[int] = 0
+    TEST_ORDER_COUNT_LOW: Final[int] = 1
+    TEST_ORDER_COUNT_HIGH: Final[int] = 10
+    TEST_RETCODE_REQUOTE: Final[int] = 10004
+    TEST_RETCODE_NO_MONEY: Final[int] = 10019
+    TEST_MAGIC_ALT: Final[int] = 654321
+    TEST_ACCOUNT_LEVERAGE: Final[int] = 100
+    TEST_CONFIDENCE_HIGH: Final[float] = 0.95
 
 
 # =============================================================================
@@ -661,3 +712,47 @@ TestConstants.Collections.COMPRESSION_TYPES = frozenset(
 TestConstants.Collections.ACKS_MODES = frozenset(
     acks.value for acks in TestConstants.Kafka.AcksMode
 )
+
+
+# =============================================================================
+# CONSTANTS USAGE GUIDELINES - CRITICAL FOR MAINTAINABILITY
+# =============================================================================
+"""
+TEST CONSTANTS SEPARATION RULES - CRITICAL FOR MAINTAINABILITY
+===============================================================
+
+This file (mt5linux/tests/constants.py) contains ONLY constants
+used EXCLUSIVELY in tests.
+
+1. tc.* (mt5linux/tests/constants.py) - TEST-ONLY CONSTANTS
+   - Constants that exist ONLY in test code
+   - NEVER duplicated from source constants
+   - Examples: tc.TEST_PRICE_BASE, tc.TEST_VOLUME_MICRO
+
+2. c.* (mt5linux/constants.py) - SHARED CONSTANTS
+   - Constants that SHARE DATA with MT5 source code
+   - These exist in the actual MT5 API or core logic
+   - Examples: c.OrderType.BUY, c.TimeFrame.H1
+
+3. NEVER MIX:
+   - Source constants should NEVER be duplicated here
+   - Test constants should NEVER go into mt5linux/constants.py
+
+4. IMPORT RULES:
+   - Use tc.* for constants defined in this file
+   - Use c.* for constants shared with MT5 source
+
+EXAMPLES:
+---------
+# ✅ CORRECT: Test-only constant (defined in TestConstants)
+assert request.price == tc.TEST_PRICE_BASE
+
+# ✅ CORRECT: Shared constant (imported from mt5linux.constants)
+assert mt5.ORDER_TYPE_BUY == c.OrderType.BUY
+
+# ❌ WRONG: Don't duplicate source constants
+# tc.ORDER_TYPE_BUY = 0  # NEVER DO THIS
+
+# ❌ WRONG: Don't reference test constants from source
+# TEST_PRICE_BASE = c.Validation.TEST_PRICE_BASE  # NEVER DO THIS
+"""

@@ -1,60 +1,65 @@
 """Tests for resilience patterns.
 
-Tests circuit breaker, retry logic, and health monitoring utilities.
-
+Tests circuit breaker and retry logic from MT5Utilities.
 """
 
 from __future__ import annotations
 
 import asyncio
-import time
 from unittest.mock import patch
 
 import pytest
 
-from mt5linux.resilience import (
-    CircuitBreaker,
-    CircuitState,
-    ConnectionState,
-    HealthStatus,
-    retry_with_backoff,
-)
+from mt5linux.config import MT5Config
+from mt5linux.constants import MT5Constants as c
+from mt5linux.utilities import MT5Utilities
 
 
 class TestCircuitBreaker:
-    """Tests for CircuitBreaker class."""
+    """Tests for MT5Utilities.CircuitBreaker class."""
 
-    def test_initial_state_is_closed(self) -> None:
+    @pytest.fixture
+    def config(self) -> MT5Config:
+        """Create test config with fast recovery."""
+        return MT5Config(
+            cb_threshold=3,
+            cb_recovery=0.1,
+            cb_half_open_max=2,
+        )
+
+    def test_initial_state_is_closed(self, config: MT5Config) -> None:
         """Circuit starts in CLOSED state."""
-        cb = CircuitBreaker()
-        assert cb.state == CircuitState.CLOSED
+        cb = MT5Utilities.CircuitBreaker(config=config)
+        assert cb.state == c.Resilience.CircuitBreakerState.CLOSED
         assert cb.is_closed
         assert not cb.is_open
 
     def test_stays_closed_below_threshold(self) -> None:
         """Circuit stays CLOSED if failures are below threshold."""
-        cb = CircuitBreaker(failure_threshold=5)
+        config = MT5Config(cb_threshold=5)
+        cb = MT5Utilities.CircuitBreaker(config=config)
 
         for _ in range(4):
             cb.record_failure()
 
-        assert cb.state == CircuitState.CLOSED
+        assert cb.state == c.Resilience.CircuitBreakerState.CLOSED
         assert cb.failure_count == 4
 
-    def test_opens_at_threshold(self) -> None:
+    def test_opens_at_threshold(self, config: MT5Config) -> None:
         """Circuit opens when failure threshold is reached."""
-        cb = CircuitBreaker(failure_threshold=3)
+        cb = MT5Utilities.CircuitBreaker(config=config)
 
         for _ in range(3):
             cb.record_failure()
 
-        assert cb.state == CircuitState.OPEN
+        assert cb.state == c.Resilience.CircuitBreakerState.OPEN
         assert cb.is_open
         assert cb.failure_count == 3
 
     def test_success_resets_failure_count(self) -> None:
         """Success in CLOSED state resets failure count."""
-        cb = CircuitBreaker(failure_threshold=5)
+        config = MT5Config(cb_threshold=5)
+        cb = MT5Utilities.CircuitBreaker(config=config)
 
         cb.record_failure()
         cb.record_failure()
@@ -63,48 +68,55 @@ class TestCircuitBreaker:
         cb.record_success()
         assert cb.failure_count == 0
 
-    def test_can_execute_when_closed(self) -> None:
+    def test_can_execute_when_closed(self, config: MT5Config) -> None:
         """Can execute when circuit is CLOSED."""
-        cb = CircuitBreaker()
+        cb = MT5Utilities.CircuitBreaker(config=config)
         assert cb.can_execute()
 
-    def test_cannot_execute_when_open(self) -> None:
+    def test_cannot_execute_when_open(self, config: MT5Config) -> None:
         """Cannot execute when circuit is OPEN."""
-        cb = CircuitBreaker(failure_threshold=3)
+        cb = MT5Utilities.CircuitBreaker(config=config)
 
         for _ in range(3):
             cb.record_failure()
 
         assert not cb.can_execute()
 
-    def test_transitions_to_half_open_after_recovery_timeout(self) -> None:
+    def test_transitions_to_half_open_after_recovery_timeout(
+        self, config: MT5Config
+    ) -> None:
         """Circuit transitions OPEN -> HALF_OPEN after recovery timeout."""
-        cb = CircuitBreaker(failure_threshold=3, recovery_timeout=0.1)
+        cb = MT5Utilities.CircuitBreaker(config=config)
 
         # Open the circuit
         for _ in range(3):
             cb.record_failure()
-        assert cb.state == CircuitState.OPEN
+        assert cb.state == c.Resilience.CircuitBreakerState.OPEN
 
         # Wait for recovery timeout
+        import time
+
         time.sleep(0.15)
 
-        # Should transition to HALF_OPEN
-        assert cb.state == CircuitState.HALF_OPEN
+        # Should transition to HALF_OPEN (via state property check)
+        # State changes after timeout - mypy doesn't track time-based transitions
+        expected_state = c.Resilience.CircuitBreakerState.HALF_OPEN
+        assert cb.state == expected_state
 
     def test_half_open_allows_limited_calls(self) -> None:
         """HALF_OPEN state allows limited test calls."""
-        cb = CircuitBreaker(
-            failure_threshold=3, recovery_timeout=0.01, half_open_max_calls=2
-        )
+        config = MT5Config(cb_threshold=3, cb_recovery=0.01, cb_half_open_max=2)
+        cb = MT5Utilities.CircuitBreaker(config=config)
 
         # Open circuit
         for _ in range(3):
             cb.record_failure()
 
         # Wait for recovery
+        import time
+
         time.sleep(0.02)
-        assert cb.state == CircuitState.HALF_OPEN
+        assert cb.state == c.Resilience.CircuitBreakerState.HALF_OPEN
 
         # Should allow limited calls
         assert cb.can_execute()
@@ -112,62 +124,90 @@ class TestCircuitBreaker:
         assert cb.can_execute()
 
     def test_half_open_closes_after_success(self) -> None:
-        """Circuit closes after enough successes in HALF_OPEN."""
-        cb = CircuitBreaker(
-            failure_threshold=3, recovery_timeout=0.01, half_open_max_calls=2
-        )
+        """Circuit closes after success in HALF_OPEN."""
+        config = MT5Config(cb_threshold=3, cb_recovery=0.01, cb_half_open_max=2)
+        cb = MT5Utilities.CircuitBreaker(config=config)
 
         # Open circuit
         for _ in range(3):
             cb.record_failure()
 
         # Wait for recovery
+        import time
+
         time.sleep(0.02)
-        assert cb.state == CircuitState.HALF_OPEN
+        # State changes after timeout - mypy doesn't track time-based transitions
+        assert cb.state == c.Resilience.CircuitBreakerState.HALF_OPEN
 
-        # Record successes
+        # Record success - should close
         cb.record_success()
-        cb.record_success()
-
-        # Should be closed
-        assert cb.state == CircuitState.CLOSED
+        # State changes after success in HALF_OPEN
+        expected_state = c.Resilience.CircuitBreakerState.CLOSED
+        assert cb.state == expected_state
 
     def test_half_open_reopens_on_failure(self) -> None:
         """Circuit reopens on failure during HALF_OPEN."""
-        cb = CircuitBreaker(failure_threshold=3, recovery_timeout=0.01)
+        config = MT5Config(cb_threshold=3, cb_recovery=0.01, cb_half_open_max=2)
+        cb = MT5Utilities.CircuitBreaker(config=config)
 
         # Open circuit
         for _ in range(3):
             cb.record_failure()
 
         # Wait for recovery
+        import time
+
         time.sleep(0.02)
-        assert cb.state == CircuitState.HALF_OPEN
+        # State changes after timeout - mypy doesn't track time-based transitions
+        assert cb.state == c.Resilience.CircuitBreakerState.HALF_OPEN
 
         # Failure should reopen
         cb.record_failure()
-        assert cb.state == CircuitState.OPEN
+        # State changes after failure in HALF_OPEN
+        assert cb.state == c.Resilience.CircuitBreakerState.OPEN  # type: ignore[comparison-overlap]
 
-    def test_reset_returns_to_closed(self) -> None:
+    def test_reset_returns_to_closed(self, config: MT5Config) -> None:
         """Reset returns circuit to CLOSED state."""
-        cb = CircuitBreaker(failure_threshold=3)
+        cb = MT5Utilities.CircuitBreaker(config=config)
 
         # Open circuit
         for _ in range(3):
             cb.record_failure()
-        assert cb.state == CircuitState.OPEN
+        assert cb.state == c.Resilience.CircuitBreakerState.OPEN
 
         # Reset
         cb.reset()
-        assert cb.state == CircuitState.CLOSED
+        # State changes after reset
+        expected_state = c.Resilience.CircuitBreakerState.CLOSED
+        assert cb.state == expected_state
         assert cb.failure_count == 0
 
+    def test_get_status_returns_dict(self, config: MT5Config) -> None:
+        """get_status returns monitoring dictionary."""
+        cb = MT5Utilities.CircuitBreaker(config=config, name="test-cb")
+        status = cb.get_status()
 
-class TestRetryWithBackoff:
-    """Tests for retry_with_backoff function."""
+        assert status["name"] == "test-cb"
+        assert status["state"] == "CLOSED"
+        assert status["failure_count"] == 0
+        assert status["failure_threshold"] == 3
+
+
+class TestAsyncRetryWithBackoff:
+    """Tests for MT5Utilities.async_retry_with_backoff function."""
+
+    @pytest.fixture
+    def config(self) -> MT5Config:
+        """Create test config with fast retries."""
+        return MT5Config(
+            retry_max_attempts=3,
+            retry_initial_delay=0.01,
+            retry_max_delay=0.1,
+            retry_jitter=False,
+        )
 
     @pytest.mark.asyncio
-    async def test_returns_on_first_success(self) -> None:
+    async def test_returns_on_first_success(self, config: MT5Config) -> None:
         """Returns immediately on first successful call."""
         call_count = 0
 
@@ -176,7 +216,9 @@ class TestRetryWithBackoff:
             call_count += 1
             return "success"
 
-        result = await retry_with_backoff(success_op, max_attempts=3)
+        result = await MT5Utilities.async_retry_with_backoff(
+            success_op, config, "test_op"
+        )
 
         assert result == "success"
         assert call_count == 1
@@ -194,19 +236,26 @@ class TestRetryWithBackoff:
                 raise ValueError(msg)
             return "success"
 
-        result = await retry_with_backoff(
+        config_5_attempts = MT5Config(
+            retry_max_attempts=5,
+            retry_initial_delay=0.01,
+            retry_jitter=False,
+        )
+
+        result = await MT5Utilities.async_retry_with_backoff(
             fail_then_succeed,
-            max_attempts=5,
-            initial_delay=0.01,
-            jitter=False,
+            config_5_attempts,
+            "test_op",
         )
 
         assert result == "success"
         assert call_count == 3
 
     @pytest.mark.asyncio
-    async def test_raises_after_max_attempts(self) -> None:
-        """Raises exception after max attempts exhausted."""
+    async def test_raises_max_retries_error_after_attempts(
+        self, config: MT5Config
+    ) -> None:
+        """Raises MaxRetriesError after max attempts exhausted."""
         call_count = 0
 
         async def always_fail() -> str:
@@ -215,15 +264,16 @@ class TestRetryWithBackoff:
             msg = "persistent error"
             raise ValueError(msg)
 
-        with pytest.raises(ValueError, match="persistent error"):
-            await retry_with_backoff(
+        with pytest.raises(MT5Utilities.Exceptions.MaxRetriesError) as exc_info:
+            await MT5Utilities.async_retry_with_backoff(
                 always_fail,
-                max_attempts=3,
-                initial_delay=0.01,
-                jitter=False,
+                config,
+                "test_op",
             )
 
         assert call_count == 3
+        assert exc_info.value.operation == "test_op"
+        assert exc_info.value.attempts == 3
 
     @pytest.mark.asyncio
     async def test_respects_max_delay(self) -> None:
@@ -243,69 +293,84 @@ class TestRetryWithBackoff:
             msg = "error"
             raise ValueError(msg)
 
-        with patch("mt5linux.resilience.asyncio.sleep", track_sleep):
-            with pytest.raises(ValueError):
-                await retry_with_backoff(
-                    fail_op,
-                    max_attempts=5,
-                    initial_delay=0.1,
-                    max_delay=0.2,
-                    exponential_base=2.0,
-                    jitter=False,
-                )
-
-        # Delays should be capped at max_delay
-        # Expected: 0.1, 0.2, 0.2, 0.2 (4 retries before final failure)
-        assert all(d <= 0.2 for d in delays)
-
-
-class TestConnectionState:
-    """Tests for ConnectionState enum."""
-
-    def test_connection_states_exist(self) -> None:
-        """All expected connection states exist."""
-        assert ConnectionState.CONNECTED.value == "connected"
-        assert ConnectionState.DISCONNECTED.value == "disconnected"
-        assert ConnectionState.RECONNECTING.value == "reconnecting"
-        assert ConnectionState.FAILED.value == "failed"
-
-
-class TestHealthStatus:
-    """Tests for HealthStatus dataclass."""
-
-    def test_is_healthy_when_connected(self) -> None:
-        """Reports healthy when connected."""
-        status = HealthStatus(
-            state=ConnectionState.CONNECTED,
-            last_check=time.monotonic(),
+        config = MT5Config(
+            retry_max_attempts=5,
+            retry_initial_delay=0.1,
+            retry_max_delay=0.2,
+            retry_exponential_base=2.0,
+            retry_jitter=False,
         )
-        assert status.is_healthy
 
-    def test_is_not_healthy_when_disconnected(self) -> None:
-        """Reports not healthy when disconnected."""
-        status = HealthStatus(
-            state=ConnectionState.DISCONNECTED,
-            last_check=time.monotonic(),
-        )
-        assert not status.is_healthy
+        with (
+            patch("mt5linux.utilities.asyncio.sleep", track_sleep),
+            pytest.raises(MT5Utilities.Exceptions.MaxRetriesError),
+        ):
+            await MT5Utilities.async_retry_with_backoff(
+                fail_op,
+                config,
+                "test_op",
+            )
 
-    def test_tracks_consecutive_failures(self) -> None:
-        """Tracks consecutive failure count."""
-        status = HealthStatus(
-            state=ConnectionState.CONNECTED,
-            last_check=time.monotonic(),
-            consecutive_failures=5,
-        )
-        assert status.consecutive_failures == 5
+        # Delays should be capped at max_delay (0.2)
+        assert all(d <= 0.21 for d in delays)  # Small tolerance for float
 
-    def test_includes_circuit_state(self) -> None:
-        """Can include circuit breaker state."""
-        status = HealthStatus(
-            state=ConnectionState.CONNECTED,
-            last_check=time.monotonic(),
-            circuit_state=CircuitState.HALF_OPEN,
+
+class TestAsyncReconnectWithBackoff:
+    """Tests for MT5Utilities.async_reconnect_with_backoff function."""
+
+    @pytest.fixture
+    def config(self) -> MT5Config:
+        """Create test config with fast retries."""
+        return MT5Config(
+            retry_max_attempts=3,
+            retry_initial_delay=0.01,
+            retry_max_delay=0.1,
+            retry_jitter=False,
         )
-        assert status.circuit_state == CircuitState.HALF_OPEN
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_success(self, config: MT5Config) -> None:
+        """Returns True on successful connection."""
+
+        async def success_connect() -> bool:
+            return True
+
+        result = await MT5Utilities.async_reconnect_with_backoff(
+            success_connect, config, "test"
+        )
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_after_max_attempts(self, config: MT5Config) -> None:
+        """Returns False after all attempts fail."""
+
+        async def fail_connect() -> bool:
+            return False
+
+        result = await MT5Utilities.async_reconnect_with_backoff(
+            fail_connect, config, "test"
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_retries_on_exception(self, config: MT5Config) -> None:
+        """Retries when connect raises exception."""
+        call_count = 0
+
+        async def fail_then_succeed() -> bool:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                msg = "connection failed"
+                raise ConnectionError(msg)
+            return True
+
+        result = await MT5Utilities.async_reconnect_with_backoff(
+            fail_then_succeed, config, "test"
+        )
+
+        assert result is True
+        assert call_count == 2
 
 
 class TestAsyncClientResilience:

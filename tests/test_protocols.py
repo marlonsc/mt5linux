@@ -200,6 +200,8 @@ class TestProtocolConsistency:
         }
 
         # Both should have same method set
-        assert sync_attrs == async_attrs, (
-            f"Protocol methods mismatch. Sync only: {sync_attrs - async_attrs}. Async only: {async_attrs - sync_attrs}"
-        )
+        sync_only = sync_attrs - async_attrs
+        async_only = async_attrs - sync_attrs
+        msg = f"Protocol methods mismatch. Sync only: {sync_only}. "
+        msg += f"Async only: {async_only}"
+        assert sync_attrs == async_attrs, msg

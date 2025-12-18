@@ -28,6 +28,7 @@ Compatible with grpcio 1.60+ and Python 3.13+.
 
 from __future__ import annotations
 
+# pylint: disable=no-member  # Protobuf generated code has dynamic members
 import ast
 import logging
 import threading
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from numpy.typing import NDArray
+
 
 from mt5linux import mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
@@ -268,6 +270,26 @@ class MetaTrader5(SyncClientProtocol):
         ]
         return result
 
+    def _json_list_to_tuple(
+        self, json_items: list[str]
+    ) -> tuple[dict[str, JSONValue], ...] | None:
+        """Convert list of JSON strings to tuple of dicts.
+
+        This maintains compatibility with the original MetaTrader5 API
+        which returns tuples from methods like positions_get(), orders_get(), etc.
+
+        Args:
+            json_items: List of JSON strings to parse.
+
+        Returns:
+            Tuple of parsed dictionaries or None if empty.
+
+        """
+        result = self._json_list_to_dicts(json_items)
+        if result is None:
+            return None
+        return tuple(result)
+
     def _numpy_from_proto(self, proto: mt5_pb2.NumpyArray) -> NDArray[np.void] | None:
         """Convert NumpyArray proto to numpy array.
 
@@ -297,14 +319,14 @@ class MetaTrader5(SyncClientProtocol):
 
     def _unwrap_symbols_chunks(
         self, response: mt5_pb2.SymbolsResponse
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[dict[str, JSONValue], ...] | None:
         """Unwrap chunked symbols response.
 
         Args:
             response: SymbolsResponse with chunked JSON data.
 
         Returns:
-            List of symbol dictionaries or None if empty.
+            Tuple of symbol dictionaries or None if empty.
 
         """
         if response.total == 0:
@@ -313,7 +335,7 @@ class MetaTrader5(SyncClientProtocol):
         for chunk in response.chunks:
             chunk_data: list[dict[str, JSONValue]] = orjson.loads(chunk)
             result.extend(chunk_data)
-        return result
+        return tuple(result)
 
     def _to_timestamp(self, dt: datetime | int) -> int:
         """Convert datetime or int to Unix timestamp.
@@ -506,14 +528,14 @@ class MetaTrader5(SyncClientProtocol):
 
     def symbols_get(
         self, group: str | None = None
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[dict[str, JSONValue], ...] | None:
         """Get available symbols with optional group filter.
 
         Args:
             group: Optional group filter pattern.
 
         Returns:
-            List of symbol dictionaries or None.
+            Tuple of symbol dictionaries or None.
 
         """
         stub = self._ensure_connected()
@@ -794,12 +816,16 @@ class MetaTrader5(SyncClientProtocol):
             request: Order request dictionary.
 
         Returns:
-            Order check result object or None.
+            Order check result object or None if error occurs.
 
         """
         stub = self._ensure_connected()
         grpc_request = mt5_pb2.OrderRequest(json_request=orjson.dumps(request).decode())
-        response = stub.OrderCheck(grpc_request)
+        try:
+            response = stub.OrderCheck(grpc_request)
+        except grpc.RpcError:
+            # Server error (e.g., invalid symbol) - return None
+            return None
         result_dict = self._json_to_dict(response.json_data)
         return MT5Models.OrderCheckResult.from_mt5(result_dict)
 
@@ -839,7 +865,7 @@ class MetaTrader5(SyncClientProtocol):
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Position, ...] | None:
         """Get open positions with optional filters.
 
         Args:
@@ -848,7 +874,7 @@ class MetaTrader5(SyncClientProtocol):
             ticket: Specific position ticket.
 
         Returns:
-            List of position dictionaries or None.
+            Tuple of Position objects or None.
 
         """
         stub = self._ensure_connected()
@@ -860,7 +886,10 @@ class MetaTrader5(SyncClientProtocol):
         if ticket is not None:
             request.ticket = ticket
         response = stub.PositionsGet(request)
-        return self._json_list_to_dicts(list(response.json_items))
+        dicts = self._json_list_to_dicts(list(response.json_items))
+        if dicts is None:
+            return None
+        return tuple(MT5Models.Position.model_validate(d) for d in dicts)
 
     # =========================================================================
     # ORDERS METHODS
@@ -882,7 +911,7 @@ class MetaTrader5(SyncClientProtocol):
         symbol: str | None = None,
         group: str | None = None,
         ticket: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Order, ...] | None:
         """Get pending orders with optional filters.
 
         Args:
@@ -891,7 +920,7 @@ class MetaTrader5(SyncClientProtocol):
             ticket: Specific order ticket.
 
         Returns:
-            List of order dictionaries or None.
+            Tuple of Order objects or None.
 
         """
         stub = self._ensure_connected()
@@ -903,7 +932,10 @@ class MetaTrader5(SyncClientProtocol):
         if ticket is not None:
             request.ticket = ticket
         response = stub.OrdersGet(request)
-        return self._json_list_to_dicts(list(response.json_items))
+        dicts = self._json_list_to_dicts(list(response.json_items))
+        if dicts is None:
+            return None
+        return tuple(MT5Models.Order.model_validate(d) for d in dicts)
 
     # =========================================================================
     # HISTORY METHODS
@@ -939,7 +971,7 @@ class MetaTrader5(SyncClientProtocol):
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Order, ...] | None:
         """Get historical orders with filters.
 
         Args:
@@ -950,7 +982,7 @@ class MetaTrader5(SyncClientProtocol):
             position: Position ID filter.
 
         Returns:
-            List of historical order dictionaries or None.
+            Tuple of Order objects or None.
 
         """
         stub = self._ensure_connected()
@@ -966,7 +998,10 @@ class MetaTrader5(SyncClientProtocol):
         if position is not None:
             request.position = position
         response = stub.HistoryOrdersGet(request)
-        return self._json_list_to_dicts(list(response.json_items))
+        dicts = self._json_list_to_dicts(list(response.json_items))
+        if dicts is None:
+            return None
+        return tuple(MT5Models.Order.model_validate(d) for d in dicts)
 
     def history_deals_total(
         self,
@@ -998,7 +1033,7 @@ class MetaTrader5(SyncClientProtocol):
         group: str | None = None,
         ticket: int | None = None,
         position: int | None = None,
-    ) -> list[dict[str, JSONValue]] | None:
+    ) -> tuple[MT5Models.Deal, ...] | None:
         """Get historical deals with filters.
 
         Args:
@@ -1009,7 +1044,7 @@ class MetaTrader5(SyncClientProtocol):
             position: Position ID filter.
 
         Returns:
-            List of historical deal dictionaries or None.
+            Tuple of Deal objects or None.
 
         """
         stub = self._ensure_connected()
@@ -1025,7 +1060,10 @@ class MetaTrader5(SyncClientProtocol):
         if position is not None:
             request.position = position
         response = stub.HistoryDealsGet(request)
-        return self._json_list_to_dicts(list(response.json_items))
+        dicts = self._json_list_to_dicts(list(response.json_items))
+        if dicts is None:
+            return None
+        return tuple(MT5Models.Deal.model_validate(d) for d in dicts)
 
     # =========================================================================
     # MARKET DEPTH METHODS
@@ -1048,7 +1086,7 @@ class MetaTrader5(SyncClientProtocol):
         response = stub.MarketBookAdd(request)
         return response.result
 
-    def market_book_get(self, symbol: str) -> list[dict[str, JSONValue]] | None:
+    def market_book_get(self, symbol: str) -> tuple[MT5Models.BookEntry, ...] | None:
         """Get market depth (DOM) data for a symbol.
 
         Requires prior market_book_add call.
@@ -1057,13 +1095,16 @@ class MetaTrader5(SyncClientProtocol):
             symbol: Symbol name to get market depth for.
 
         Returns:
-            List of market depth entries or None.
+            Tuple of BookEntry objects or None.
 
         """
         stub = self._ensure_connected()
         request = mt5_pb2.SymbolRequest(symbol=symbol)
         response = stub.MarketBookGet(request)
-        return self._json_list_to_dicts(list(response.json_items))
+        dicts = self._json_list_to_dicts(list(response.json_items))
+        if dicts is None:
+            return None
+        return tuple(MT5Models.BookEntry.model_validate(d) for d in dicts)
 
     def market_book_release(self, symbol: str) -> bool:
         """Unsubscribe from market depth (DOM) for a symbol.

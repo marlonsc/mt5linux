@@ -83,6 +83,7 @@ class MT5Config(BaseSettings):
     timeout_connection: int = 300
     timeout_health_check: int = 60
     startup_health_timeout: float = 30.0  # Health check during startup
+    connection_cooldown: float = 0.1  # Cooldown after disconnect (prevent rapid reconnect)
 
     # =========================================================================
     # RETRY SETTINGS

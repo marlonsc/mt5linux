@@ -34,18 +34,47 @@ Usage:
 
 from __future__ import annotations
 
+# pylint: disable=no-member  # Protobuf generated code has dynamic members
+import asyncio
 import logging
+import random
 import threading
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
 import orjson
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Sequence
+
+    from numpy.typing import NDArray
+
     from mt5linux.config import MT5Config
 
+
 from mt5linux.constants import MT5Constants as c
+
+T = TypeVar("T")
+
+
+# Protocols for gRPC protobuf types
+@runtime_checkable
+class _NumpyArrayProto(Protocol):
+    """Protocol for NumpyArray protobuf message."""
+
+    data: bytes
+    dtype: str
+    shape: Sequence[int]
+
+
+@runtime_checkable
+class _SymbolsResponseProto(Protocol):
+    """Protocol for SymbolsResponse protobuf message."""
+
+    total: int
+    chunks: Sequence[bytes]
+
 
 log = logging.getLogger(__name__)
 
@@ -160,6 +189,7 @@ class MT5Utilities:
             """Wrapper for MT5 data dict with attribute access."""
 
             __slots__ = ("_data",)
+            _data: dict[str, object]
 
             def __init__(self, data: dict[str, object]) -> None:
                 """Initialize wrapper with data dict.
@@ -372,7 +402,9 @@ class MT5Utilities:
             return [orjson.loads(item) for item in json_items if item]
 
         @staticmethod
-        def numpy_from_proto(proto: object) -> object | None:
+        def numpy_from_proto(
+            proto: _NumpyArrayProto | None,
+        ) -> NDArray[np.void] | None:
             """Convert NumpyArray proto to numpy array.
 
             Used by both sync and async clients to deserialize OHLCV and tick data
@@ -386,16 +418,18 @@ class MT5Utilities:
                 NumPy structured array or None if empty.
 
             """
-            if not hasattr(proto, "data") or not proto.data or not proto.dtype:
+            if proto is None or not proto.data or not proto.dtype:
                 return None
 
-            arr = np.frombuffer(proto.data, dtype=proto.dtype)
+            arr: NDArray[np.void] = np.frombuffer(proto.data, dtype=proto.dtype)
             if proto.shape:
                 arr = arr.reshape(tuple(proto.shape))
             return arr
 
         @staticmethod
-        def unwrap_symbols_chunks(response: object) -> list[dict[str, object]] | None:
+        def unwrap_symbols_chunks(
+            response: _SymbolsResponseProto | None,
+        ) -> list[dict[str, object]] | None:
             """Unwrap chunked symbols response from gRPC.
 
             Used by both sync and async clients to reassemble large symbol lists
@@ -408,7 +442,7 @@ class MT5Utilities:
                 List of symbol dictionaries or None if empty.
 
             """
-            if not hasattr(response, "total") or response.total == 0:
+            if response is None or response.total == 0:
                 return None
             result: list[dict[str, object]] = []
             for chunk in response.chunks:
@@ -592,3 +626,148 @@ class MT5Utilities:
                         status["recovery_at"] = recovery_at.isoformat()
 
                 return status
+
+    # =========================================================================
+    # RETRY UTILITIES
+    # =========================================================================
+
+    @staticmethod
+    async def async_retry_with_backoff(
+        coro_factory: Callable[[], Awaitable[T]],
+        config: MT5Config,
+        operation_name: str = "operation",
+    ) -> T:
+        """Execute async operation with exponential backoff retry.
+
+        Uses MT5Config values for retry parameters.
+
+        Args:
+            coro_factory: Callable that returns an awaitable (not a coroutine).
+            config: MT5Config with retry_* settings.
+            operation_name: Name for logging purposes.
+
+        Returns:
+            Result of successful operation.
+
+        Raises:
+            MT5Utilities.Exceptions.MaxRetriesError: If all retries fail.
+
+        Example:
+            >>> async def fetch():
+            ...     return await client.get_data()
+            >>> result = await MT5Utilities.async_retry_with_backoff(
+            ...     fetch, config, "get_data"
+            ... )
+
+        """
+        last_exception: Exception | None = None
+
+        for attempt in range(config.retry_max_attempts):
+            try:
+                return await coro_factory()
+            except Exception as e:
+                last_exception = e
+                if attempt == config.retry_max_attempts - 1:
+                    log.exception(
+                        "Operation '%s' failed after %d attempts",
+                        operation_name,
+                        config.retry_max_attempts,
+                    )
+                    raise MT5Utilities.Exceptions.MaxRetriesError(
+                        operation_name,
+                        config.retry_max_attempts,
+                        last_exception,
+                    ) from e
+
+                # Calculate backoff delay using config
+                delay = config.calculate_retry_delay(attempt)
+
+                log.warning(
+                    "Operation '%s' attempt %d/%d failed: %s. Retrying in %.2fs",
+                    operation_name,
+                    attempt + 1,
+                    config.retry_max_attempts,
+                    e,
+                    delay,
+                )
+
+                await asyncio.sleep(delay)
+
+        # Should not reach here, but satisfy type checker
+        if last_exception:
+            raise MT5Utilities.Exceptions.MaxRetriesError(
+                operation_name,
+                config.retry_max_attempts,
+                last_exception,
+            )
+        msg = f"Retry failed for '{operation_name}' with no exception recorded"
+        raise RuntimeError(msg)
+
+    @staticmethod
+    async def async_reconnect_with_backoff(
+        connect_factory: Callable[[], Awaitable[bool]],
+        config: MT5Config,
+        name: str = "reconnect",
+    ) -> bool:
+        """Attempt reconnection with exponential backoff and jitter.
+
+        Uses MT5Config values for retry parameters.
+
+        Args:
+            connect_factory: Callable that returns awaitable bool (True=success).
+            config: MT5Config with retry_* settings.
+            name: Name for logging purposes.
+
+        Returns:
+            True if reconnection successful, False otherwise.
+
+        """
+        delay = config.retry_initial_delay
+
+        for attempt in range(config.retry_max_attempts):
+            try:
+                log.info(
+                    "Reconnection '%s' attempt %d/%d",
+                    name,
+                    attempt + 1,
+                    config.retry_max_attempts,
+                )
+
+                success = await connect_factory()
+                if success:
+                    log.info(
+                        "Reconnection '%s' successful after %d attempts",
+                        name,
+                        attempt + 1,
+                    )
+                    return True
+
+            except Exception as e:  # noqa: BLE001
+                log.warning(
+                    "Reconnection '%s' attempt %d/%d failed: %s",
+                    name,
+                    attempt + 1,
+                    config.retry_max_attempts,
+                    e,
+                )
+
+            # Exponential backoff with jitter
+            if config.retry_jitter:
+                # S311: random is fine for jitter - not cryptographic
+                jitter = random.uniform(0, delay * 0.1)  # noqa: S311
+                wait_time = delay + jitter
+            else:
+                wait_time = delay
+
+            await asyncio.sleep(wait_time)
+            delay = min(
+                delay * config.retry_exponential_base,
+                config.retry_max_delay,
+            )
+
+        log.error(
+            "Reconnection '%s' failed after %d attempts",
+            name,
+            config.retry_max_attempts,
+        )
+        return False

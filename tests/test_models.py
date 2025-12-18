@@ -29,7 +29,7 @@ class TestOrderRequest:
         request = OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=tc.MINI_LOT,
+            volume=tc.TEST_VOLUME_MICRO,
             type=c.Order.OrderType.BUY,
         )
         assert request.action == c.Order.TradeAction.DEAL
@@ -59,7 +59,7 @@ class TestOrderRequest:
             OrderRequest(
                 action=c.Order.TradeAction.DEAL,
                 symbol="EURUSD",
-                volume=tc.TEST_VOLUME_MICRO,
+                volume=0,
                 type=c.Order.OrderType.BUY,
             )
         assert "volume" in str(exc_info.value)
@@ -89,7 +89,7 @@ class TestOrderRequest:
         request = OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=tc.MINI_LOT,
+            volume=tc.TEST_VOLUME_MICRO,
             type=c.Order.OrderType.BUY,
             deviation=tc.DEFAULT_DEVIATION,
         )
@@ -97,7 +97,7 @@ class TestOrderRequest:
 
         assert d["action"] == 1  # c.Order.TradeAction.DEAL
         assert d["symbol"] == "EURUSD"
-        assert d["volume"] == 0.1
+        assert d["volume"] == tc.TEST_VOLUME_MICRO
         assert d["type"] == 0  # c.Order.OrderType.BUY
         assert d["deviation"] == tc.TEST_DEVIATION_NORMAL
         assert "sl" not in d  # Zero values excluded
@@ -108,7 +108,7 @@ class TestOrderRequest:
         request = OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=tc.MINI_LOT,
+            volume=tc.TEST_VOLUME_MICRO,
             type=c.Order.OrderType.BUY,
             sl=1.0900,
             tp=tc.TEST_PRICE_HIGH,
@@ -124,7 +124,7 @@ class TestOrderRequest:
         request = OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=tc.MINI_LOT,
+            volume=tc.TEST_VOLUME_MICRO,
             type=c.Order.OrderType.BUY_LIMIT,
             price=tc.TEST_PRICE_BASE,
             type_time=c.Order.OrderTime.SPECIFIED,
@@ -140,7 +140,7 @@ class TestOrderRequest:
         request = OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
-            volume=tc.MINI_LOT,
+            volume=tc.TEST_VOLUME_MICRO,
             type=c.Order.OrderType.BUY,
         )
         with pytest.raises(ValidationError):
@@ -156,7 +156,7 @@ class TestOrderResult:
             retcode=c.Order.TradeRetcode.DONE,
             deal=tc.TEST_MAGIC_DEFAULT,
             order=tc.TEST_ORDER_DEFAULT,
-            volume=tc.MINI_LOT,
+            volume=tc.TEST_VOLUME_MICRO,
             price=1.1000,
         )
         assert result.is_success is True
@@ -184,8 +184,11 @@ class TestOrderResult:
 
     def test_from_mt5_success(self) -> None:
         """Test from_mt5 with valid MT5 result."""
+        from mt5linux.models import MT5Models
+
         mock_result = MagicMock()
-        mock_result.retcode = tc.TEST_RETCODE_SUCCESS
+        # Use real success retcode (10009)
+        mock_result.retcode = c.Order.TradeRetcode.DONE
         mock_result.deal = tc.TEST_MAGIC_DEFAULT
         mock_result.order = tc.TEST_ORDER_DEFAULT
         mock_result.volume = 0.1
@@ -195,9 +198,9 @@ class TestOrderResult:
         mock_result.comment = "Request executed"
         mock_result.request_id = 1
 
-        result = OrderResult.from_mt5(mock_result)
+        result = MT5Models.OrderResult.from_mt5(mock_result)
 
-        assert result.retcode == tc.TEST_RETCODE_SUCCESS
+        assert result.retcode == c.Order.TradeRetcode.DONE
         assert result.is_success is True
         assert result.deal == tc.TEST_MAGIC_DEFAULT
 
@@ -329,7 +332,7 @@ class TestPosition:
 
         assert position.ticket == tc.TEST_MAGIC_LARGE
         assert position.volume == 0.1
-        assert position.profit == tc.TEST_ACCOUNT_LOW
+        assert position.profit == 50.00
         assert position.symbol == "EURUSD"
 
 
@@ -361,8 +364,8 @@ class TestEnums:
     def test_trade_action_values(self) -> None:
         """Test TradeAction enum values match c."""
         assert c.Order.TradeAction.DEAL.value == 1
-        assert c.Order.TradeAction.PENDING.value == tc.TEST_ORDER_COUNT_LOW
-        assert c.Order.TradeAction.CLOSE_BY.value == tc.TEST_ORDER_COUNT_HIGH
+        assert c.Order.TradeAction.PENDING.value == 5
+        assert c.Order.TradeAction.CLOSE_BY.value == 10
 
     def test_order_type_values(self) -> None:
         """Test OrderType enum values match c."""
@@ -379,7 +382,7 @@ class TestEnums:
 
     def test_trade_retcode_values(self) -> None:
         """Test TradeRetcode enum values match c."""
-        assert c.Order.TradeRetcode.DONE.value == tc.TEST_RETCODE_SUCCESS
+        assert c.Order.TradeRetcode.DONE.value == 10009
         assert c.Order.TradeRetcode.REQUOTE.value == tc.TEST_RETCODE_REQUOTE
         assert c.Order.TradeRetcode.NO_MONEY.value == tc.TEST_RETCODE_NO_MONEY
 
@@ -466,7 +469,7 @@ class TestDeal:
         assert deal.ticket == tc.TEST_MAGIC_ALT
         assert deal.order == tc.TEST_MAGIC_LARGE
         assert deal.volume == 0.1
-        assert deal.profit == tc.TEST_CONFIDENCE_HIGH
+        assert deal.profit == 10.0
         assert deal.symbol == "EURUSD"
 
     def test_from_mt5_none(self) -> None:

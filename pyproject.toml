@@ -34,6 +34,8 @@ pytest-cov = "^6.0.0"
 pytest-xdist = "^3.0"
 python-dotenv = "^1.0.0"
 ruff = "^0.11.0"
+types-protobuf = "^6.32.1.20251210"
+grpc-stubs = "^1.53.0.6"
 
 [tool.ruff]
 line-length = 88
@@ -57,7 +59,12 @@ select = ["ALL"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "S101", # assert ok in tests
+    "S101",    # assert ok in tests
+    "PLR2004", # magic values ok in tests
+    "SLF001",  # private member access ok in tests
+    "ARG001",  # unused arguments in fixtures
+    "ARG002",  # unused arguments in fixtures
+    "TRY301",  # raise in inner function not needed in tests
 ]
 "mt5linux/bridge.py" = [
     "ARG002",  # unused arguments are required by gRPC framework (request, context)
@@ -66,13 +73,6 @@ select = ["ALL"]
     "S104",    # binding to all interfaces is intentional for gRPC server
     "TRY400",  # log.error before raise - not in exception handler
 ]
-"mt5linux/resilience.py" = [
-    "PLR0913", # too many arguments - retry configuration requires multiple params
-    "FBT001",  # boolean positional arg - jitter parameter is idiomatic for retry
-    "FBT002",  # boolean default - jitter parameter is idiomatic for retry
-    "TRY400",  # log.error before raise - not in exception handler
-]
-
 "mt5linux/protocols.py" = [
     "PLR0913",  # too many arguments - protocol methods require specific signatures
     "ASYNC109", # async function with timeout - required for protocol compatibility
@@ -91,12 +91,36 @@ exclude = [
     'mt5linux/mt5_pb2\.py$',
     'mt5linux/mt5_pb2_grpc\.py$',
     'typings/',
+    'setup\.py$',
 ]
 mypy_path = "typings"
 python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+# Override for files that use auto-generated protobuf code
+[[tool.mypy.overrides]]
+module = ["mt5linux.client", "mt5linux.async_client", "mt5linux.bridge"]
+disable_error_code = ["attr-defined", "no-any-return", "name-defined"]
+
+# Ignore protobuf modules (auto-generated)
+[[tool.mypy.overrides]]
+module = ["mt5linux.mt5_pb2", "mt5linux.mt5_pb2_grpc"]
+ignore_errors = true
+
+# Test files with complex fixtures and protobuf usage
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disable_error_code = [
+    "attr-defined",
+    "arg-type",
+    "union-attr",
+    "operator",
+    "return-value",
+    "call-overload",
+    "type-arg",
+]
 
 [tool.pyrefly]
 exclude = [

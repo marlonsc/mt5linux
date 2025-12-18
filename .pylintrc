@@ -1,0 +1,14 @@
+[MASTER]
+# Ignore auto-generated protobuf files
+ignore=mt5_pb2.py,mt5_pb2_grpc.py
+
+[MESSAGES CONTROL]
+# Disable false positive warnings for correct patterns:
+# - unnecessary-ellipsis: Used correctly in Protocol stubs (defines abstract methods)
+# - protected-access: Acceptable in tests for verifying private state
+# - redefined-outer-name: Common and acceptable in test fixtures
+# - reimported: Can be intentional in tests
+# - unused-argument: Fixtures don't need to use their arguments
+# - no-member: Protobuf dynamic members (suppressed with comment in files)
+disable=unnecessary-ellipsis,protected-access,redefined-outer-name,reimported,unused-argument,no-member
+

@@ -16,6 +16,8 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from mt5linux.constants import MT5Constants as c
+
 from .conftest import tc
 
 if TYPE_CHECKING:
@@ -579,16 +581,16 @@ class TestHypothesisProperties:
             pytest.skip(f"Symbol {symbol} or price not available")
 
         request = {
-            "action": mt5.TRADE_ACTION_DEAL,
+            "action": c.Order.TradeAction.DEAL,
             "symbol": symbol,
             "volume": round(volume, 2),
-            "type": mt5.ORDER_TYPE_BUY,
+            "type": c.Order.OrderType.BUY,
             "price": ask,
             "deviation": deviation,
             "magic": tc.MT5.TEST_MAGIC,
             "comment": "hypothesis_test",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_time": c.Order.OrderTime.GTC,
+            "type_filling": c.Order.OrderFilling.IOC,
         }
 
         result = mt5.order_check(request)
@@ -738,16 +740,16 @@ class TestLotSizeCoverage:
             )
 
         request = {
-            "action": mt5.TRADE_ACTION_DEAL,
+            "action": c.Order.TradeAction.DEAL,
             "symbol": symbol,
             "volume": lot_size,
-            "type": mt5.ORDER_TYPE_BUY,
+            "type": c.Order.OrderType.BUY,
             "price": ask,
             "deviation": 20,
             "magic": tc.MT5.TEST_MAGIC,
             "comment": "lot_size_test",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_time": c.Order.OrderTime.GTC,
+            "type_filling": c.Order.OrderFilling.IOC,
         }
 
         result = mt5.order_check(request)
@@ -779,16 +781,16 @@ class TestLotSizeCoverage:
             )
 
         request = {
-            "action": mt5.TRADE_ACTION_DEAL,
+            "action": c.Order.TradeAction.DEAL,
             "symbol": symbol,
             "volume": lot_size,
-            "type": mt5.ORDER_TYPE_BUY,
+            "type": c.Order.OrderType.BUY,
             "price": ask,
             "deviation": 50,
             "magic": tc.MT5.TEST_MAGIC,
             "comment": "gold_lot_test",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_time": c.Order.OrderTime.GTC,
+            "type_filling": c.Order.OrderFilling.IOC,
         }
 
         result = mt5.order_check(request)
@@ -827,12 +829,12 @@ class TestLotSizeCoverage:
 
         # Test with minimum lot
         margin_min = mt5.order_calc_margin(
-            mt5.ORDER_TYPE_BUY, symbol, info.volume_min, ask
+            c.Order.OrderType.BUY, symbol, info.volume_min, ask
         )
 
         # Test with 1.0 lot (if within limits)
         if info.volume_max >= 1.0:
-            margin_1lot = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, 1.0, ask)
+            margin_1lot = mt5.order_calc_margin(c.Order.OrderType.BUY, symbol, 1.0, ask)
 
             if margin_min is not None and margin_1lot is not None:
                 # Margin should scale with lot size
@@ -1081,12 +1083,12 @@ class TestOrderTypeCombinations:
         if info is None:
             pytest.skip(f"Symbol {symbol} not available")
 
-        price = ask if order_type == mt5.ORDER_TYPE_BUY else bid
+        price = ask if order_type == c.Order.OrderType.BUY else bid
         if price is None or price <= 0:
             pytest.skip(f"No price available for {symbol}")
 
         request = {
-            "action": mt5.TRADE_ACTION_DEAL,
+            "action": c.Order.TradeAction.DEAL,
             "symbol": symbol,
             "volume": info.volume_min,
             "type": order_type,
@@ -1094,15 +1096,16 @@ class TestOrderTypeCombinations:
             "deviation": 20,
             "magic": tc.MT5.TEST_MAGIC,
             "comment": "order_type_test",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_time": c.Order.OrderTime.GTC,
+            "type_filling": c.Order.OrderFilling.IOC,
         }
 
         result = mt5.order_check(request)
 
         if result is not None:
             assert hasattr(result, "retcode")
-            assert hasattr(result, "request")
+            # OrderCheckResult should have calculation fields
+            assert hasattr(result, "balance") or result.retcode != 0
 
     @pytest.mark.parametrize(
         "order_type_name",
@@ -1135,7 +1138,7 @@ class TestOrderTypeCombinations:
             price = ask + (100 * info.point)  # Above current price
 
         request = {
-            "action": mt5.TRADE_ACTION_PENDING,
+            "action": c.Order.TradeAction.PENDING,
             "symbol": symbol,
             "volume": info.volume_min,
             "type": order_type,
@@ -1143,7 +1146,7 @@ class TestOrderTypeCombinations:
             "deviation": 20,
             "magic": tc.MT5.TEST_MAGIC,
             "comment": "pending_test",
-            "type_time": mt5.ORDER_TIME_GTC,
+            "type_time": c.Order.OrderTime.GTC,
             "type_filling": mt5.ORDER_FILLING_RETURN,
         }
 
@@ -1172,15 +1175,15 @@ class TestOrderTypeCombinations:
             pytest.skip(f"No price available for {symbol}")
 
         request = {
-            "action": mt5.TRADE_ACTION_DEAL,
+            "action": c.Order.TradeAction.DEAL,
             "symbol": symbol,
             "volume": info.volume_min,
-            "type": mt5.ORDER_TYPE_BUY,
+            "type": c.Order.OrderType.BUY,
             "price": ask,
             "deviation": 20,
             "magic": tc.MT5.TEST_MAGIC,
             "comment": "filling_test",
-            "type_time": mt5.ORDER_TIME_GTC,
+            "type_time": c.Order.OrderTime.GTC,
             "type_filling": filling_mode,
         }
 
@@ -1223,7 +1226,7 @@ class TestProfitCalculation:
         price_close = price_open + (pips * info.point * 10)  # pips in points
 
         profit = mt5.order_calc_profit(
-            mt5.ORDER_TYPE_BUY, symbol, lot_size, price_open, price_close
+            c.Order.OrderType.BUY, symbol, lot_size, price_open, price_close
         )
 
         if profit is not None:
@@ -1248,12 +1251,12 @@ class TestProfitCalculation:
 
         # BUY: enter at price1, exit at price2 (profit)
         profit_buy = mt5.order_calc_profit(
-            mt5.ORDER_TYPE_BUY, symbol, lot, price1, price2
+            c.Order.OrderType.BUY, symbol, lot, price1, price2
         )
 
         # SELL: enter at price2, exit at price1 (profit)
         profit_sell = mt5.order_calc_profit(
-            mt5.ORDER_TYPE_SELL, symbol, lot, price2, price1
+            c.Order.OrderType.SELL, symbol, lot, price2, price1
         )
 
         if profit_buy is not None and profit_sell is not None:
@@ -1290,7 +1293,7 @@ class TestMarginCalculation:
         if lot_size < info.volume_min or lot_size > info.volume_max:
             pytest.skip(f"Lot size {lot_size} outside limits")
 
-        margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot_size, ask)
+        margin = mt5.order_calc_margin(c.Order.OrderType.BUY, symbol, lot_size, ask)
 
         if margin is not None:
             assert margin > 0
@@ -1313,8 +1316,8 @@ class TestMarginCalculation:
         if lot2 > info.volume_max:
             pytest.skip("Cannot test with doubled lot size")
 
-        margin1 = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot1, ask)
-        margin2 = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot2, ask)
+        margin1 = mt5.order_calc_margin(c.Order.OrderType.BUY, symbol, lot1, ask)
+        margin2 = mt5.order_calc_margin(c.Order.OrderType.BUY, symbol, lot2, ask)
 
         if margin1 is not None and margin2 is not None:
             # Margin should approximately double

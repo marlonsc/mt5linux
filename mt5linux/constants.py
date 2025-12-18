@@ -271,6 +271,9 @@ class MT5Constants:
             VMARGIN = 8  # Virtual margin call
             SPLIT = 9  # Symbol split
 
+        # Trading utility constant
+        DEFAULT_MAGIC_NUMBER: int = 0
+
     # ==================== MARKET DATA ====================
     class MarketData:
         """Timeframes, ticks, and market depth data."""
@@ -417,6 +420,14 @@ class MT5Constants:
             CALL = 0
             PUT = 1
 
+        class TradeExecution(IntEnum):
+            """Symbol trade execution mode."""
+
+            REQUEST = 0
+            INSTANT = 1
+            MARKET = 2
+            EXCHANGE = 3
+
     # ==================== CALENDAR & TIMING ====================
     class Calendar:
         """Day of week and calendar constants."""
@@ -553,7 +564,6 @@ class MT5Constants:
             TUPLE_LENGTH_ERROR: Final = 2  # Error tuple structure
             TUPLE_LENGTH_VERSION: Final = 3  # Version tuple structure
 
-
         class Hypothesis:
             """Hypothesis strategy ranges for property-based testing."""
 
@@ -642,12 +652,58 @@ class MT5Constants:
     SymbolSwapMode = Symbol.SwapMode
     SymbolOptionMode = Symbol.OptionMode
     SymbolOptionRight = Symbol.OptionRight
-
-    # Symbol trade execution (not defined yet, adding placeholder)
-    # SymbolTradeExecution = Symbol.TradeExecution  # TODO: Add if needed
+    SymbolTradeExecution = Symbol.TradeExecution
 
     DayOfWeek = Calendar.DayOfWeek
 
 
 # Convenient alias for shorter imports: from mt5linux.constants import c
-c = MT5Constants
+c = MT5Constants  # pylint: disable=invalid-name  # Intentional short alias
+
+
+# =============================================================================
+# CONSTANTS USAGE GUIDELINES - CRITICAL FOR MAINTAINABILITY
+# =============================================================================
+"""
+CONSTANTS SEPARATION RULES - CRITICAL FOR MAINTAINABILITY
+==========================================================
+
+1. c.* (mt5linux/constants.py) - SHARED CONSTANTS
+   - Use c.* ONLY when constants SHARE DATA with MT5 source code
+   - These constants exist in the actual MT5 API or core MT5 logic
+   - Examples: c.OrderType.BUY, c.TimeFrame.H1, c.TradeRetcode.DONE
+
+2. tc.* (mt5linux/tests/constants.py) - TEST-ONLY CONSTANTS
+   - Use tc.* ONLY for constants used EXCLUSIVELY in tests
+   - These constants DO NOT exist in MT5 source code
+   - Examples: tc.TEST_PRICE_BASE, tc.TEST_VOLUME_MICRO, tc.TEST_MAGIC_DEFAULT
+
+3. NEVER MIX:
+   - Test constants should NEVER go into mt5linux/constants.py
+   - Source constants should NEVER be duplicated in tests/constants.py
+   - Each constant belongs to EXACTLY ONE place
+
+4. IMPORT RULES:
+   - Tests import c from mt5linux.constants (for shared constants)
+   - Tests import tc from tests.constants (for test-only constants)
+
+This separation ensures:
+- No duplication between source and test constants
+- Clear ownership of each constant
+- Easy maintenance and refactoring
+- Consistent usage patterns across all test files
+
+EXAMPLES:
+---------
+# ✅ CORRECT: Shared MT5 constant
+assert mt5.ORDER_TYPE_BUY == c.OrderType.BUY
+
+# ✅ CORRECT: Test-only constant
+assert request.price == tc.TEST_PRICE_BASE
+
+# ❌ WRONG: Don't put test constants in source
+# c.TEST_PRICE_BASE = 1.0900  # NEVER DO THIS
+
+# ❌ WRONG: Don't duplicate source constants in tests
+# tc.ORDER_TYPE_BUY = 0  # NEVER DO THIS
+"""

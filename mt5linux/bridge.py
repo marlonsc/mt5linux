@@ -27,6 +27,7 @@ Usage:
 
 from __future__ import annotations
 
+# pylint: disable=no-member  # Protobuf generated code has dynamic members
 import argparse
 import logging
 import signal
@@ -44,6 +45,7 @@ from mt5linux.types import MT5Types
 from . import mt5_pb2, mt5_pb2_grpc
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
     from types import FrameType, ModuleType
 
@@ -54,15 +56,14 @@ if TYPE_CHECKING:
 log = logging.getLogger("mt5bridge")
 
 # Global server reference for signal handler
-_server: grpc.Server | None = None
+_server: grpc.Server | None = None  # pylint: disable=invalid-name  # Module-private global
 
 # Global MT5 call timeout (configurable via --mt5-timeout)
-_mt5_call_timeout: float = 30.0
+_mt5_call_timeout: float = 30.0  # pylint: disable=invalid-name  # Module-private global
 
 
 def _call_mt5_with_timeout(
-    func: object,
-    timeout: float | None = None,
+    func: Callable[..., object],
     *args: object,
     **kwargs: object,
 ) -> object:
@@ -73,7 +74,6 @@ def _call_mt5_with_timeout(
 
     Args:
         func: MT5 function to call.
-        timeout: Timeout in seconds (uses global _mt5_call_timeout if None).
         *args: Positional arguments for the function.
         **kwargs: Keyword arguments for the function.
 
@@ -85,15 +85,13 @@ def _call_mt5_with_timeout(
         Exception: Re-raised from the MT5 function.
 
     """
-    actual_timeout = timeout if timeout is not None else _mt5_call_timeout
-
     with futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(func, *args, **kwargs)
+        future: futures.Future[object] = executor.submit(func, *args, **kwargs)
         try:
-            return future.result(timeout=actual_timeout)
+            return future.result(timeout=_mt5_call_timeout)
         except futures.TimeoutError:
             func_name = getattr(func, "__name__", str(func))
-            msg = f"MT5 call {func_name} timed out after {actual_timeout}s"
+            msg = f"MT5 call {func_name} timed out after {_mt5_call_timeout}s"
             log.error(msg)
             raise TimeoutError(msg) from None
 
@@ -739,20 +737,19 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         if group:
             result = _call_mt5_with_timeout(
                 self._mt5_module.symbols_get,
-                None,
                 group=group,
             )
         else:
             result = _call_mt5_with_timeout(
                 self._mt5_module.symbols_get,
-                None,
             )
 
         if result is None:
             log.debug("SymbolsGet: result=None")
             return mt5_pb2.SymbolsResponse(total=0, chunks=[])
 
-        items = list(result)
+        # MT5 API returns tuple of SymbolInfo namedtuples
+        items = list(result)  # type: ignore[call-overload]
         total = len(items)
         log.debug("SymbolsGet: total=%s symbols", total)
 
@@ -880,7 +877,6 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             return self._numpy_to_proto(None)
         result = _call_mt5_with_timeout(
             self._mt5_module.copy_rates_from,
-            None,
             request.symbol,
             request.timeframe,
             request.date_from,
@@ -888,9 +884,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyRatesFrom: returned %s bars",
-            len(result) if result is not None else 0,
+            len(result) if result is not None else 0,  # type: ignore[arg-type]
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(result)  # type: ignore[arg-type]
 
     def CopyRatesFromPos(
         self,
@@ -920,7 +916,6 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             return self._numpy_to_proto(None)
         result = _call_mt5_with_timeout(
             self._mt5_module.copy_rates_from_pos,
-            None,
             request.symbol,
             request.timeframe,
             request.start_pos,
@@ -928,9 +923,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyRatesFromPos: returned %s bars",
-            len(result) if result is not None else 0,
+            len(result) if result is not None else 0,  # type: ignore[arg-type]
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(result)  # type: ignore[arg-type]
 
     def CopyRatesRange(
         self,
@@ -964,7 +959,6 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             return self._numpy_to_proto(None)
         result = _call_mt5_with_timeout(
             self._mt5_module.copy_rates_range,
-            None,
             request.symbol,
             request.timeframe,
             request.date_from,
@@ -972,9 +966,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyRatesRange: returned %s bars",
-            len(result) if result is not None else 0,
+            len(result) if result is not None else 0,  # type: ignore[arg-type]
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(result)  # type: ignore[arg-type]
 
     # =========================================================================
     # MARKET DATA - TICKS
@@ -1008,7 +1002,6 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             return self._numpy_to_proto(None)
         result = _call_mt5_with_timeout(
             self._mt5_module.copy_ticks_from,
-            None,
             request.symbol,
             request.date_from,
             request.count,
@@ -1016,9 +1009,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyTicksFrom: returned %s ticks",
-            len(result) if result is not None else 0,
+            len(result) if result is not None else 0,  # type: ignore[arg-type]
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(result)  # type: ignore[arg-type]
 
     def CopyTicksRange(
         self,
@@ -1052,7 +1045,6 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             return self._numpy_to_proto(None)
         result = _call_mt5_with_timeout(
             self._mt5_module.copy_ticks_range,
-            None,
             request.symbol,
             request.date_from,
             request.date_to,
@@ -1060,9 +1052,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyTicksRange: returned %s ticks",
-            len(result) if result is not None else 0,
+            len(result) if result is not None else 0,  # type: ignore[arg-type]
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(result)  # type: ignore[arg-type]
 
     # =========================================================================
     # TRADING OPERATIONS
