@@ -3,15 +3,15 @@ build-backend = "poetry.core.masonry.api"
 requires = ["poetry-core"]
 
 [tool.poetry]
-name = "mt5linux"
-version = "0.6.0"
-description = "MetaTrader5 bridge for Linux via gRPC"
 authors = ["Lucas Prett Campagna"]
-license = "MIT"
-readme = "README.md"
+description = "MetaTrader5 bridge for Linux via gRPC"
 homepage = "https://github.com/lucas-campagna/mt5linux"
-repository = "https://github.com/lucas-campagna/mt5linux"
+license = "MIT"
+name = "mt5linux"
 packages = [{ include = "mt5linux" }]
+readme = "README.md"
+repository = "https://github.com/lucas-campagna/mt5linux"
+version = "0.6.0"
 
 [tool.poetry.dependencies]
 grpcio = ">=1.60.0"
@@ -25,6 +25,7 @@ python = ">=3.13,<3.14"
 structlog = "^25.5.0"
 
 [tool.poetry.group.dev.dependencies]
+grpc-stubs = "^1.53.0.6"
 hypothesis = "^6.0"
 mypy = "^1.15.0"
 pyrefly = "^0.46.0"
@@ -35,7 +36,6 @@ pytest-xdist = "^3.0"
 python-dotenv = "^1.0.0"
 ruff = "^0.11.0"
 types-protobuf = "^6.32.1.20251210"
-grpc-stubs = "^1.53.0.6"
 
 [tool.ruff]
 line-length = 88
@@ -146,6 +146,8 @@ typeCheckingMode = "strict"
 [tool.pytest.ini_options]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "trading: marks tests that place real orders",

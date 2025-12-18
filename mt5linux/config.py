@@ -83,7 +83,7 @@ class MT5Config(BaseSettings):
     timeout_connection: int = 300
     timeout_health_check: int = 60
     startup_health_timeout: float = 30.0  # Health check during startup
-    connection_cooldown: float = 0.1  # Cooldown after disconnect (prevent rapid reconnect)
+    connection_cooldown: float = 0.1  # Cooldown after disconnect
 
     # =========================================================================
     # RETRY SETTINGS
@@ -155,25 +155,6 @@ class MT5Config(BaseSettings):
 
         Returns:
             Delay in seconds before next retry.
-
-        """
-        delay = min(
-            self.retry_initial_delay * (self.retry_exponential_base**attempt),
-            self.retry_max_delay,
-        )
-        if self.retry_jitter:
-            # Add 0-100% jitter (S311: random is fine for jitter - not cryptographic)
-            delay *= 0.5 + random.random()
-        return delay
-
-    def calculate_backoff_delay(self, attempt: int) -> float:
-        """Calculate server restart backoff delay with jitter.
-
-        Args:
-            attempt: Current attempt number (0-indexed).
-
-        Returns:
-            Delay in seconds with jitter applied.
 
         """
         delay = self.restart_delay_base * (self.restart_delay_multiplier**attempt)

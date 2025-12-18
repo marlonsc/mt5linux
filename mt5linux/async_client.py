@@ -38,6 +38,13 @@ import grpc.aio
 import numpy as np
 import orjson
 
+from mt5linux import mt5_pb2, mt5_pb2_grpc
+from mt5linux.config import MT5Config
+from mt5linux.models import MT5Models
+from mt5linux.protocols import AsyncClientProtocol
+from mt5linux.types import MT5Types
+from mt5linux.utilities import MT5Utilities
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -45,13 +52,6 @@ if TYPE_CHECKING:
 
 # TypeVar for generic return type in _resilient_call
 T = TypeVar("T")
-
-from mt5linux import mt5_pb2, mt5_pb2_grpc
-from mt5linux.config import MT5Config
-from mt5linux.models import MT5Models
-from mt5linux.protocols import AsyncClientProtocol
-from mt5linux.types import MT5Types
-from mt5linux.utilities import MT5Utilities
 
 log = logging.getLogger(__name__)
 
@@ -70,11 +70,6 @@ _CHANNEL_OPTIONS = _config.get_grpc_channel_options()
 
 # Type alias for convenience (single source of truth)
 JSONValue = MT5Types.JSONValue
-
-# TypeVar for generic return type in _resilient_call
-from typing import TypeVar
-
-T = TypeVar("T")
 
 
 class AsyncMetaTrader5(AsyncClientProtocol):
@@ -405,7 +400,7 @@ class AsyncMetaTrader5(AsyncClientProtocol):
     async def _resilient_call(
         self,
         operation: str,
-        call_factory: "Callable[[], Awaitable[T]]",
+        call_factory: Callable[[], Awaitable[T]],
     ) -> T:
         """Execute gRPC call with circuit breaker protection.
 
@@ -430,15 +425,14 @@ class AsyncMetaTrader5(AsyncClientProtocol):
         try:
             # 2. Execute the operation
             result = await call_factory()
-
-            # 3. Record success
-            self._record_circuit_success()
-            return result
-
         except Exception:
             # 4. Record failure
             self._record_circuit_failure()
             raise
+        else:
+            # 3. Record success (in else block per TRY300)
+            self._record_circuit_success()
+            return result
 
     # =========================================================================
     # Public connection methods

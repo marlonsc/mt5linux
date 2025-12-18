@@ -376,7 +376,12 @@ class TestMetaTrader5Resilience:
     @pytest.mark.integration
     @pytest.mark.slow
     def test_connection_recovery_after_close(self, mt5: MetaTrader5) -> None:
-        """Test that client handles connection issues gracefully."""
+        """Test that client handles connection issues and recovers.
+
+        Tests disconnect behavior then restores connection for subsequent tests.
+        """
+        from .conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+
         # Get initial data
         account1 = mt5.account_info()
         assert account1 is not None
@@ -388,12 +393,27 @@ class TestMetaTrader5Resilience:
         with pytest.raises((ConnectionError, RuntimeError, grpc.RpcError)):
             mt5.account_info()
 
+        # RESTORE: Reconnect and reinitialize for subsequent tests
+        mt5.connect()
+        mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
+
+        # Verify connection is restored
+        account2 = mt5.account_info()
+        assert account2 is not None
+
     @pytest.mark.integration
     def test_disconnect_is_idempotent_raw(self, mt5_raw: MetaTrader5) -> None:
-        """Test that disconnect() can be called multiple times safely."""
+        """Test that disconnect() can be called multiple times safely.
+
+        Tests idempotent disconnect then restores connection for subsequent tests.
+        """
+        # Multiple disconnects should not raise
         mt5_raw.disconnect()
         mt5_raw.disconnect()  # Should not raise
         mt5_raw.disconnect()  # Should not raise
+
+        # RESTORE: Reconnect for subsequent tests
+        mt5_raw.connect()
 
     @pytest.mark.integration
     def test_multiple_operations_same_connection(self, mt5: MetaTrader5) -> None:
