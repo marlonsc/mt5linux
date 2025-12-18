@@ -1061,8 +1061,17 @@ class MT5Utilities:
                         await asyncio.sleep(delay)
 
                         # Before retry callback (e.g., reconnection)
+                        # CRITICAL FIX: Handle exceptions in before_retry gracefully
+                        # to prevent infinite hangs when reconnection fails
                         if before_retry:
-                            await before_retry()
+                            try:
+                                await before_retry()
+                            except Exception as before_retry_error:  # noqa: BLE001
+                                # Log but don't raise - let the main retry continue
+                                log.warning(
+                                    "before_retry callback failed: %s",
+                                    before_retry_error,
+                                )
                     else:
                         # Last attempt failed
                         if on_failure:

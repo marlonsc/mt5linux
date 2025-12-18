@@ -380,7 +380,9 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901, PLR0915
     _log("PHASE 2: Check credentials", phase=True)
     if not has_mt5_credentials():
         _log("SKIP: No MT5 credentials configured")
-        pytest.fail("MT5 credentials not configured - set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in .env")
+        pytest.fail(
+            "MT5 credentials not configured - set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in .env"
+        )
 
     # Check compose file
     if not COMPOSE_FILE.exists():
@@ -531,10 +533,12 @@ def _mt5_session_initialized(
     """Session-scoped initialized MT5 - shared across ALL tests.
 
     Initializes the MT5 terminal once and reuses it for all tests.
+    Returns uninitialized session if no credentials (handled by mt5 fixture).
     """
     if not has_mt5_credentials():
-        msg = "MT5 credentials not configured - set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER"
-        raise RuntimeError(msg)
+        _log("SESSION FIXTURE: No MT5 credentials - returning uninitialized session")
+        yield _mt5_session_raw
+        return
 
     _log("SESSION FIXTURE: Initializing session-scoped MT5 terminal")
     try:
@@ -585,6 +589,14 @@ def mt5(_mt5_session_initialized: MetaTrader5) -> MetaTrader5:
     Skips test if MT5_LOGIN is not configured (=0), credentials missing,
     or if initialization fails.
     """
+    _log("MT5 FIXTURE: Called")
+    _log(f"has_mt5_credentials(): {has_mt5_credentials()}")
+
+    # Skip test if no MT5 credentials configured
+    if not has_mt5_credentials():
+        _log(f"SKIPPING TEST: {SKIP_NO_CREDENTIALS}")
+        pytest.skip(SKIP_NO_CREDENTIALS)
+
     # Resilience: reconnect if connection was lost
     if not _mt5_session_initialized.is_connected:
         _log("RESILIENCE: Reconnecting MT5 connection")
@@ -599,6 +611,26 @@ def mt5(_mt5_session_initialized: MetaTrader5) -> MetaTrader5:
         if info is None:
             msg = "Terminal not initialized"
             raise RuntimeError(msg)
+
+        # Verify terminal is ready for trading
+        if not info.trade_allowed:
+            pytest.fail("MT5 terminal reports trade_allowed=False")
+
+        if not info.connected:
+            pytest.fail("MT5 terminal reports connected=False")
+
+        # Verify account is accessible
+        account = _mt5_session_initialized.account_info()
+        if account is None:
+            pytest.fail("Cannot get account info - MT5 not ready")
+
+        if not account.trade_allowed:
+            pytest.fail("MT5 account reports trade_allowed=False")
+
+        _log(
+            f"MT5 ready: connected={info.connected}, trade_allowed={info.trade_allowed}, account_trade_allowed={account.trade_allowed}"
+        )
+
     except Exception:  # noqa: BLE001 - catch all for resilience handling
         _log("RESILIENCE: Re-initializing MT5 terminal")
         try:
@@ -610,6 +642,19 @@ def mt5(_mt5_session_initialized: MetaTrader5) -> MetaTrader5:
             if not result:
                 error = _mt5_session_initialized.last_error()
                 pytest.fail(f"MT5 re-initialize failed: {error}")
+
+            # Wait a bit for MT5 to be fully ready
+            time.sleep(2)
+
+            # Verify after re-initialization
+            info = _mt5_session_initialized.terminal_info()
+            if info is None or not info.trade_allowed or not info.connected:
+                pytest.fail("MT5 not ready for trading after re-initialization")
+
+            account = _mt5_session_initialized.account_info()
+            if account is None or not account.trade_allowed:
+                pytest.fail("MT5 account not ready for trading after re-initialization")
+
         except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
             pytest.fail(f"MT5 re-initialize failed: {e}")
 
@@ -738,7 +783,7 @@ def _get_filling_mode(mt5: MetaTrader5, filling_mode_mask: int) -> int:
 
 
 @pytest.fixture
-def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa: C901, PLR0911
+def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa: C901
     """Create a test order and close it to populate history.
 
     This fixture places a buy order, immediately closes it, creating

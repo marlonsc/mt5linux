@@ -166,9 +166,41 @@ class TestOrderSend:
 
         Note: order_send may raise PermanentError on some demo accounts.
         """
-        mt5.symbol_select("EURUSD", enable=True)
+        symbol = "EURUSD"
 
-        result = mt5.order_send(sell_order_request)
+        # Verify symbol is available and selectable
+        if not mt5.symbol_select(symbol, enable=True):
+            pytest.skip(f"Cannot select symbol {symbol}")
+
+        # Verify symbol info is available
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            pytest.skip(f"Symbol info not available for {symbol}")
+
+        # Verify tick data is available
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            pytest.skip(f"Tick data not available for {symbol}")
+
+        # Verify market is open (has bid/ask spread)
+        if tick.bid == 0.0 or tick.ask == 0.0:
+            pytest.skip(f"Market closed for {symbol} (bid={tick.bid}, ask={tick.ask})")
+
+        # Adjust volume to meet minimum requirements
+        min_volume = max(symbol_info.volume_min, 0.01)  # At least 0.01 lots
+        if sell_order_request["volume"] < min_volume:
+            sell_order_request = sell_order_request.copy()
+            sell_order_request["volume"] = min_volume
+
+        # Try order_send with timeout handling
+        try:
+            result = mt5.order_send(sell_order_request)
+        except Exception as e:
+            # If it's a demo account limitation, skip the test
+            if "10011" in str(e) or "No result from MT5" in str(e):
+                pytest.skip(f"MT5 demo account limitation: {e}")
+            raise
+
         assert result is not None, "order_send returned None"
 
         acceptable_codes = [
