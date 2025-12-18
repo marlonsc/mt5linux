@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .conftest import tc
+from tests.conftest import tc
 
 if TYPE_CHECKING:
     from mt5linux import MetaTrader5

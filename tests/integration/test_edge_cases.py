@@ -15,7 +15,7 @@ import pytest
 
 from mt5linux.constants import MT5Constants as c
 
-from .conftest import tc
+from tests.conftest import tc
 
 if TYPE_CHECKING:
     from mt5linux import MetaTrader5

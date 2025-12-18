@@ -9,7 +9,7 @@ import pytest
 
 from mt5linux.async_client import AsyncMetaTrader5
 
-from .conftest import (
+from tests.conftest import (
     TEST_GRPC_HOST,
     TEST_GRPC_PORT,
     tc,
@@ -477,7 +477,7 @@ class TestAsyncMetaTrader5Concurrent:
                     assert result.name == symbols[i]
         except Exception as e:
             if "timeout" in str(e).lower() or "grpc" in str(e).lower():
-                pytest.fail("gRPC timeout: e")
+                pytest.fail(f"gRPC timeout: {e}")
             raise
 
     @pytest.mark.asyncio
@@ -533,7 +533,7 @@ class TestAsyncMetaTrader5Concurrent:
                 pytest.fail("Market data not available (market may be closed)")
         except Exception as e:
             if "timeout" in str(e).lower() or "grpc" in str(e).lower():
-                pytest.fail("gRPC timeout: e")
+                pytest.fail(f"gRPC timeout: {e}")
             raise
 
 

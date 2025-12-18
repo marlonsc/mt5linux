@@ -33,7 +33,7 @@ class TestMetaTrader5Connection:
             with MetaTrader5(host="localhost", port=TEST_GRPC_PORT) as mt5:
                 assert mt5._channel is not None
         except (ConnectionError, EOFError, OSError) as e:
-            pytest.fail("MT5 connection failed: e")
+            pytest.fail(f"MT5 connection failed: {e}")
         # After exiting context, channel closed
         assert mt5._channel is None
 
