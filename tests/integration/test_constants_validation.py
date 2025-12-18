@@ -17,8 +17,7 @@ import pytest
 from mt5linux import mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
 from mt5linux.constants import c
-
-from .conftest import tc
+from tests.conftest import tc
 
 # Default config instance
 _config = MT5Config()
@@ -145,7 +144,7 @@ def _group_by_class(constants: dict[str, int]) -> dict[str, dict[str, int]]:
                 key = f"{namespace_name}.{class_name}"
                 if key not in groups:
                     groups[key] = {}
-                member_name = name[len(prefix):]
+                member_name = name[len(prefix) :]
                 groups[key][member_name] = value
                 break
 
@@ -156,16 +155,17 @@ def _group_by_class(constants: dict[str, int]) -> dict[str, dict[str, int]]:
 def mt5_constants() -> dict[str, int]:
     """Fixture that provides real MT5 constants from Docker container."""
     # Use test port from shared conftest configuration
-    from .conftest import TEST_GRPC_HOST, TEST_GRPC_PORT
+    from tests.conftest import TEST_GRPC_HOST, TEST_GRPC_PORT
 
     host = TEST_GRPC_HOST
     port = TEST_GRPC_PORT
 
     if not _is_grpc_server_available(host, port):
-        raise RuntimeError(
+        msg = (
             f"MT5 gRPC server not available on {host}:{port}. "
             "Start with: docker compose up -d"
         )
+        raise RuntimeError(msg)
 
     return _extract_mt5_constants(host, port)
 

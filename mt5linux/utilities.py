@@ -39,7 +39,11 @@ import asyncio
 import logging
 import random
 import threading
+from contextlib import suppress
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from enum import IntEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
@@ -48,10 +52,13 @@ import orjson
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
+    import aiosqlite
     from numpy.typing import NDArray
 
     from mt5linux.config import MT5Config
 
+
+import operator
 
 from mt5linux.constants import MT5Constants as c
 
@@ -203,6 +210,23 @@ class MT5Utilities:
                 super().__init__(code=-1, description=msg)
                 self.operation = operation
                 self.detail = detail
+
+        class QueueFullError(Error):
+            """Raised when request queue is at capacity (backpressure).
+
+            This is NOT a transient error - caller should handle backpressure
+            by waiting, reducing request rate, or dropping low-priority requests.
+
+            """
+
+            def __init__(self, message: str = "Request queue full") -> None:
+                """Initialize queue full error.
+
+                Args:
+                    message: Error message with queue capacity.
+
+                """
+                super().__init__(message)
 
     # =========================================================================
     # DATA UTILITIES
@@ -566,8 +590,7 @@ class MT5Utilities:
                 name
                 for name in dir(tuple_cls)
                 if not name.startswith("_")
-                and type(getattr(tuple_cls, name, None)).__name__
-                == "member_descriptor"
+                and type(getattr(tuple_cls, name, None)).__name__ == "member_descriptor"
             ]
 
             if not member_fields:
@@ -590,13 +613,210 @@ class MT5Utilities:
                     return [
                         f
                         for f, _ in sorted(
-                            field_to_index.items(), key=lambda x: x[1]
+                            field_to_index.items(), key=operator.itemgetter(1)
                         )
                     ]
             except (TypeError, ValueError, AttributeError):
                 pass
 
             return None
+
+    # =========================================================================
+    # ERROR CLASSIFIER
+    # =========================================================================
+
+    class ErrorClassifier:
+        """Error classification for gRPC and MT5 operations.
+
+        Centralized error classification logic extracted from CircuitBreaker.
+        All methods are static - no state stored.
+
+        Used by:
+        - RetryStrategy: to determine if exception is retryable
+        - TransactionHandler: to classify MT5 retcodes
+        - CircuitBreaker: via aliases for backward compatibility
+
+        Categories:
+        - gRPC errors: network-level, transient vs permanent
+        - MT5 retcodes: operation result codes, 7 classifications
+        - Operation criticality: determines retry behavior
+
+        Usage:
+            if ErrorClassifier.is_retryable_exception(error):
+                retry()
+
+            classification = ErrorClassifier.classify_mt5_retcode(10012)
+            if classification == ErrorClassification.VERIFY_REQUIRED:
+                verify_state()
+        """
+
+        @staticmethod
+        def is_retryable_grpc_code(code: int) -> bool:
+            """Check if gRPC status code is retryable.
+
+            Args:
+                code: gRPC status code (integer value).
+
+            Returns:
+                True if the code indicates a transient error.
+
+            """
+            retryable_codes = {
+                c.Resilience.GrpcRetryableCode.UNAVAILABLE,
+                c.Resilience.GrpcRetryableCode.DEADLINE_EXCEEDED,
+                c.Resilience.GrpcRetryableCode.ABORTED,
+                c.Resilience.GrpcRetryableCode.RESOURCE_EXHAUSTED,
+            }
+            return code in retryable_codes
+
+        @staticmethod
+        def is_retryable_exception(error: Exception) -> bool:
+            """Check if exception should trigger retry.
+
+            Args:
+                error: Exception to check.
+
+            Returns:
+                True if exception is retryable.
+
+            """
+            # Check for gRPC errors (duck typing to avoid import)
+            if hasattr(error, "code") and callable(error.code):
+                code = error.code()
+                # grpc.StatusCode is an enum, get its value
+                code_value = code.value[0] if hasattr(code, "value") else int(code)
+                return MT5Utilities.ErrorClassifier.is_retryable_grpc_code(code_value)
+
+            # MT5 retryable errors (includes EmptyResponseError)
+            if isinstance(error, MT5Utilities.Exceptions.RetryableError):
+                return True
+
+            # Connection/timeout errors are retryable, EXCEPT "not established"
+            # which means client was never connected (programming error, not transient)
+            if isinstance(error, ConnectionError):
+                msg = str(error).lower()
+                # Client never connected is not retryable; connection lost is retryable
+                return "not established" not in msg and "call connect" not in msg
+
+            return isinstance(error, (TimeoutError, OSError))
+
+        @staticmethod
+        def classify_mt5_retcode(  # noqa: PLR0911
+            retcode: int,
+        ) -> c.Resilience.ErrorClassification:
+            """Classify MT5 retcode into error category.
+
+            Used to determine how each error should be handled:
+            - SUCCESS: Operation completed successfully
+            - PARTIAL: Partially completed (may need follow-up)
+            - RETRYABLE: Transient error, safe to retry (order NOT executed)
+            - VERIFY_REQUIRED: MUST verify state before retry (order MAY executed)
+            - CONDITIONAL: May be retryable depending on context
+            - PERMANENT: Permanent error, do not retry
+            - UNKNOWN: Unknown error code
+
+            Args:
+                retcode: MT5 TradeRetcode value.
+
+            Returns:
+                ErrorClassification indicating how to handle this code.
+
+            """
+            if retcode in c.Resilience.MT5_SUCCESS_CODES:
+                return c.Resilience.ErrorClassification.SUCCESS
+            if retcode in c.Resilience.MT5_PARTIAL_CODES:
+                return c.Resilience.ErrorClassification.PARTIAL
+            if retcode in c.Resilience.MT5_VERIFY_REQUIRED_CODES:
+                return c.Resilience.ErrorClassification.VERIFY_REQUIRED
+            if retcode in c.Resilience.MT5_RETRYABLE_CODES:
+                return c.Resilience.ErrorClassification.RETRYABLE
+            if retcode in c.Resilience.MT5_CONDITIONAL_CODES:
+                return c.Resilience.ErrorClassification.CONDITIONAL
+            if retcode in c.Resilience.MT5_PERMANENT_CODES:
+                return c.Resilience.ErrorClassification.PERMANENT
+            return c.Resilience.ErrorClassification.UNKNOWN
+
+        @staticmethod
+        def is_retryable_mt5_code(retcode: int) -> bool:
+            """Check if MT5 TradeRetcode is retryable.
+
+            Args:
+                retcode: MT5 TradeRetcode value.
+
+            Returns:
+                True if the code indicates a transient error.
+
+            """
+            classification = MT5Utilities.ErrorClassifier.classify_mt5_retcode(retcode)
+            return classification == c.Resilience.ErrorClassification.RETRYABLE
+
+        @staticmethod
+        def is_permanent_mt5_code(retcode: int) -> bool:
+            """Check if MT5 TradeRetcode is permanent.
+
+            Args:
+                retcode: MT5 TradeRetcode value.
+
+            Returns:
+                True if the code indicates a permanent error.
+
+            """
+            classification = MT5Utilities.ErrorClassifier.classify_mt5_retcode(retcode)
+            return classification == c.Resilience.ErrorClassification.PERMANENT
+
+        @staticmethod
+        def get_operation_criticality(
+            operation: str,
+        ) -> c.Resilience.OperationCriticality:
+            """Get criticality level for an operation.
+
+            Used to determine retry strategy and state verification:
+            - CRITICAL: More retries, state verification on ambiguous errors
+            - HIGH/NORMAL/LOW: Standard retry behavior
+
+            Args:
+                operation: Operation name (e.g., "order_send").
+
+            Returns:
+                OperationCriticality level (defaults to NORMAL if unknown).
+
+            """
+            criticality_value = c.Resilience.OPERATION_CRITICALITY.get(
+                operation,
+                c.Resilience.OperationCriticality.NORMAL,
+            )
+            return c.Resilience.OperationCriticality(criticality_value)
+
+        @staticmethod
+        def should_verify_state(
+            operation: str,
+            classification: c.Resilience.ErrorClassification,
+        ) -> bool:
+            """Determine if state verification is needed after error.
+
+            For CRITICAL operations with ambiguous errors (CONDITIONAL, UNKNOWN),
+            we need to verify the actual state before reporting to caller.
+
+            Args:
+                operation: Operation name.
+                classification: Error classification from classify_mt5_retcode().
+
+            Returns:
+                True if state verification is recommended.
+
+            """
+            criticality = MT5Utilities.ErrorClassifier.get_operation_criticality(
+                operation
+            )
+            if criticality != c.Resilience.OperationCriticality.CRITICAL:
+                return False
+
+            # For critical ops, verify state on ambiguous errors
+            return classification in {
+                c.Resilience.ErrorClassification.CONDITIONAL,
+                c.Resilience.ErrorClassification.UNKNOWN,
+                c.Resilience.ErrorClassification.VERIFY_REQUIRED,
+            }
 
     # =========================================================================
     # CIRCUIT BREAKER
@@ -1029,7 +1249,19 @@ class MT5Utilities:
 
             """
             last_exception: Exception | None = None
-            max_attempts = max_attempts_override or config.retry_max_attempts
+            # CRITICAL FIX v4: Use explicit None check, not "or"
+            # "0 or default" returns default because 0 is falsy!
+            max_attempts = (
+                max_attempts_override
+                if max_attempts_override is not None
+                else config.retry_max_attempts
+            )
+
+            # CRITICAL FIX v4: Validate max_attempts >= 1
+            # If max_attempts is 0 or negative, the loop never executes
+            if max_attempts < 1:
+                msg = f"max_attempts must be >= 1, got {max_attempts}"
+                raise ValueError(msg)
 
             for attempt in range(max_attempts):
                 try:
@@ -1088,8 +1320,16 @@ class MT5Utilities:
                         ) from e
                 else:
                     # Success - invoke callback and return
+                    # CRITICAL FIX v4: Wrap callback in try-except to prevent
+                    # callback errors from losing successful result
                     if on_success:
-                        on_success()
+                        try:
+                            on_success()
+                        except Exception:
+                            log.exception(
+                                "on_success callback failed for '%s' (result preserved)",
+                                operation_name,
+                            )
                     return result
 
             # Should not reach here, but satisfy type checker
@@ -1201,8 +1441,13 @@ class MT5Utilities:
             - Comment field is 31 chars max
             - No "order already exists" detection
 
-            Format: RQ<10chars>|<original_comment>
-            Example: RQ1a2b3c4d5e|my_strategy_order
+            Format: RQ<16chars>|<original_comment>
+            Example: RQ1a2b3c4d5e6f7g8h|my_order
+
+            CRITICAL FIX v4: Increased from 10 hex chars (40 bits) to 16 hex
+            chars (64 bits) to reduce collision probability:
+            - 10 chars: collision after ~1M requests (Birthday paradox)
+            - 16 chars: collision after ~4B requests (~12 years at 10/sec)
 
             Nested inside TransactionHandler since it's only used
             for transaction idempotency tracking.
@@ -1212,16 +1457,23 @@ class MT5Utilities:
             def generate_request_id() -> str:
                 """Generate unique request ID for idempotency.
 
-                Format: RQ + 10 hex chars = 12 chars total.
-                Fits comfortably in MT5 comment field (31 chars max).
+                Format: RQ + 16 hex chars = 18 chars total.
+                Uses 64 bits of entropy (16 hex chars) to reduce collision risk.
+                Birthday paradox: collision expected after ~4 billion requests.
+                Fits in MT5 comment field (31 chars max, leaves 12 for original).
+
+                CRITICAL FIX v4: Increased from 10 hex chars (40 bits) to 16 hex
+                chars (64 bits). With 10 chars, collision expected after ~1M requests
+                (in ~1 day at 10 orders/sec). With 16 chars, collision expected
+                after ~4B requests (in ~12 years at 10 orders/sec).
 
                 Returns:
-                    12-character request ID starting with 'RQ'.
+                    18-character request ID starting with 'RQ'.
 
                 """
                 import uuid
 
-                return f"RQ{uuid.uuid4().hex[:10]}"
+                return f"RQ{uuid.uuid4().hex[:16]}"
 
             @staticmethod
             def mark_comment(comment: str | None, request_id: str) -> str:
@@ -1232,10 +1484,10 @@ class MT5Utilities:
 
                 Args:
                     comment: Original comment (may be None or empty).
-                    request_id: Request ID to embed (12 chars).
+                    request_id: Request ID to embed (18 chars).
 
                 Returns:
-                    Marked comment: 'RQ<10chars>|<original>' or just 'RQ<10chars>'.
+                    Marked comment: 'RQ<16chars>|<original>' or just 'RQ<16chars>'.
 
                 """
                 if comment:
@@ -1244,19 +1496,19 @@ class MT5Utilities:
                     return f"{request_id}|{comment[:max_original]}"
                 return request_id
 
-            # Expected request_id length: RQ + 10 hex chars = 12 chars
-            REQUEST_ID_LENGTH = 12
+            # Expected request_id length: RQ + 16 hex chars = 18 chars
+            REQUEST_ID_LENGTH = 18
             REQUEST_ID_PREFIX = "RQ"
-            REQUEST_ID_HEX_LENGTH = 10
+            REQUEST_ID_HEX_LENGTH = 16
 
             @staticmethod
             def extract_request_id(comment: str | None) -> str | None:
                 """Extract request_id from marked comment field.
 
                 CRITICAL FIX: Added validation to prevent false matches:
-                - Length must be exactly 12 chars (RQ + 10 hex)
+                - Length must be exactly 18 chars (RQ + 16 hex)
                 - Must start with "RQ"
-                - Remaining 10 chars must be valid hex
+                - Remaining 16 chars must be valid hex
                 This prevents matching corrupted/concatenated comments.
 
                 Args:
@@ -1282,7 +1534,7 @@ class MT5Utilities:
                     )
                     return None
 
-                # Validate hex portion (chars 2-12 should be hex)
+                # Validate hex portion (chars 2-18 should be hex)
                 hex_part = candidate[len(tracker.REQUEST_ID_PREFIX) :]
                 try:
                     int(hex_part, 16)  # Validate hex
@@ -1315,9 +1567,7 @@ class MT5Utilities:
             tracker = MT5Utilities.TransactionHandler.RequestTracker
             request_id = tracker.generate_request_id()
             original_comment = request.get("comment", "") or ""
-            request["comment"] = tracker.mark_comment(
-                str(original_comment), request_id
-            )
+            request["comment"] = tracker.mark_comment(str(original_comment), request_id)
             log.debug(
                 "TX_PREPARE: %s request_id=%s",
                 operation,
@@ -1416,9 +1666,7 @@ class MT5Utilities:
             criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
                 operation
             )
-            is_critical = (
-                criticality == c.Resilience.OperationCriticality.CRITICAL
-            )
+            is_critical = criticality == c.Resilience.OperationCriticality.CRITICAL
             max_attempts = (
                 config.critical_retry_max_attempts
                 if is_critical
@@ -1489,3 +1737,575 @@ class MT5Utilities:
                 operation, max_attempts, last_error
             )
 
+    # =========================================================================
+    # REQUEST QUEUE - PARALLEL EXECUTION
+    # =========================================================================
+
+    class RequestQueue:
+        """Priority queue with PARALLEL execution.
+
+        IMPORTANT: This is NOT a sequential queue!
+        - Multiple operations execute SIMULTANEOUSLY
+        - Semaphore controls max concurrent (default 10)
+        - Priority only affects ORDER of dispatch, not serialization
+
+        Architecture:
+        1. submit() → enqueue with priority
+        2. dispatcher task → picks from queue, fires execution
+        3. Multiple executions run in PARALLEL via asyncio.create_task()
+        4. Semaphore limits concurrent to server capacity
+
+        Example with max_concurrent=10:
+            t=0ms: 15 requests submitted
+            t=1ms: 10 tasks dispatched and running in parallel
+            t=50ms: 3 tasks complete, 3 more dispatched (still 10 running)
+            t=100ms: all 15 complete
+
+        Features:
+        - Priority ordering (CRITICAL > HIGH > NORMAL > LOW)
+        - Parallel execution (NOT sequential)
+        - Semaphore-controlled concurrency (match server workers)
+        - Request coalescing (dedupe identical calls)
+        - Backpressure when queue full
+
+        Usage:
+            queue = MT5Utilities.RequestQueue(config)
+            await queue.start()
+
+            result = await queue.submit(
+                operation="symbol_info_tick",
+                coro_factory=lambda: fetch_tick(),
+                coalesce_key="symbol_info_tick:EURUSD",
+            )
+
+            await queue.stop()
+        """
+
+        @dataclass(order=True)
+        class _Request:
+            """Internal request wrapper for priority queue."""
+
+            priority: int  # Lower = higher priority (0=CRITICAL, 3=LOW)
+            timestamp: float = field(compare=False)
+            key: str = field(compare=False)  # For coalescing
+            coro_factory: Callable[[], Awaitable[T]] = field(compare=False)
+            future: asyncio.Future = field(compare=False)
+
+        def __init__(self, config: MT5Config) -> None:
+            """Initialize request queue.
+
+            Args:
+                config: MT5Config with queue_max_concurrent and queue_max_depth.
+
+            """
+            self._config = config
+            self._queue: asyncio.PriorityQueue[MT5Utilities.RequestQueue._Request] = (
+                asyncio.PriorityQueue(maxsize=config.queue_max_depth)
+            )
+            # Semaphore controls HOW MANY can execute in parallel
+            self._semaphore = asyncio.Semaphore(config.queue_max_concurrent)
+            self._coalesce: dict[str, asyncio.Future] = {}
+            self._running = False
+            self._dispatcher_task: asyncio.Task | None = None
+            self._active_tasks: set[asyncio.Task] = set()
+
+        async def start(self) -> None:
+            """Start dispatcher. Called by connect()."""
+            if self._running:
+                return
+            self._running = True
+            # Single dispatcher that fires multiple parallel executions
+            self._dispatcher_task = asyncio.create_task(self._dispatcher())
+            log.debug("RequestQueue started")
+
+        async def stop(self) -> None:
+            """Stop dispatcher and wait for active tasks. Called by disconnect()."""
+            self._running = False
+
+            # Cancel dispatcher
+            if self._dispatcher_task:
+                self._dispatcher_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self._dispatcher_task
+                self._dispatcher_task = None
+
+            # Wait for active tasks to complete (graceful drain)
+            if self._active_tasks:
+                log.debug(
+                    "RequestQueue draining %d active tasks", len(self._active_tasks)
+                )
+                await asyncio.gather(*self._active_tasks, return_exceptions=True)
+            self._active_tasks.clear()
+            self._coalesce.clear()
+            log.debug("RequestQueue stopped")
+
+        async def submit(
+            self,
+            operation: str,
+            coro_factory: Callable[[], Awaitable[T]],
+            coalesce_key: str | None = None,
+        ) -> T:
+            """Submit request for parallel execution.
+
+            Args:
+                operation: Operation name (e.g., "order_send", "symbol_info")
+                coro_factory: Callable that returns the awaitable
+                coalesce_key: Optional key for deduplication
+
+            Returns:
+                Result from the operation (may execute in parallel with others)
+
+            Raises:
+                QueueFullError: If queue is at max_depth capacity.
+
+            """
+            # Get priority from OPERATION_CRITICALITY (inverted: 0=highest)
+            criticality = c.Resilience.OPERATION_CRITICALITY.get(operation, 1)
+            priority = 3 - criticality  # 3 (CRITICAL) -> 0, 0 (LOW) -> 3
+
+            # Coalescing: return existing future if identical request pending
+            if coalesce_key and coalesce_key in self._coalesce:
+                existing_future = self._coalesce[coalesce_key]
+                log.debug("Request coalesced: %s", coalesce_key)
+                return await existing_future
+
+            loop = asyncio.get_running_loop()
+            future: asyncio.Future[T] = loop.create_future()
+            request = self._Request(
+                priority=priority,
+                timestamp=loop.time(),
+                key=coalesce_key or "",
+                coro_factory=coro_factory,
+                future=future,
+            )
+
+            if coalesce_key:
+                self._coalesce[coalesce_key] = future
+
+            try:
+                # put_nowait raises QueueFull if at capacity (backpressure)
+                self._queue.put_nowait(request)
+            except asyncio.QueueFull:
+                if coalesce_key:
+                    self._coalesce.pop(coalesce_key, None)
+                msg = f"Request queue full ({self._config.queue_max_depth})"
+                raise MT5Utilities.Exceptions.QueueFullError(msg) from None
+
+            try:
+                return await future
+            finally:
+                if coalesce_key:
+                    self._coalesce.pop(coalesce_key, None)
+
+        async def _dispatcher(self) -> None:
+            """Dispatcher that fires PARALLEL executions.
+
+            Does NOT wait for execution to complete before picking next.
+            Uses create_task() to fire-and-forget, semaphore controls concurrency.
+            """
+            while self._running:
+                try:
+                    # Get next request (blocks if queue empty)
+                    request = await asyncio.wait_for(
+                        self._queue.get(),
+                        timeout=1.0,
+                    )
+                except TimeoutError:
+                    continue
+
+                # Acquire semaphore BEFORE dispatching (controls max parallel)
+                await self._semaphore.acquire()
+
+                # Fire execution WITHOUT WAITING - true parallelism
+                task = asyncio.create_task(self._execute_and_release(request))
+                self._active_tasks.add(task)
+                task.add_done_callback(self._active_tasks.discard)
+
+        async def _execute_and_release(self, request: _Request) -> None:
+            """Execute request and release semaphore when done."""
+            try:
+                result = await request.coro_factory()
+                if not request.future.done():
+                    request.future.set_result(result)
+            except Exception as e:  # noqa: BLE001 - propagate to future
+                if not request.future.done():
+                    request.future.set_exception(e)
+            finally:
+                # Release semaphore → next request can be dispatched
+                self._semaphore.release()
+
+        @property
+        def active_count(self) -> int:
+            """Number of currently executing operations."""
+            return len(self._active_tasks)
+
+        @property
+        def pending_count(self) -> int:
+            """Number of requests waiting in queue."""
+            return self._queue.qsize()
+
+        @property
+        def is_running(self) -> bool:
+            """Check if queue is running."""
+            return self._running
+
+    # =========================================================================
+    # WRITE-AHEAD LOG (WAL) - ORDER PERSISTENCE
+    # =========================================================================
+
+    class WAL:
+        """Write-Ahead Log for order operations.
+
+        100% transparent - called internally by order_send.
+        Persists order intent BEFORE sending to MT5.
+        Enables recovery of incomplete orders after crash.
+
+        Storage: SQLite with WAL mode for async-friendly writes.
+
+        Lifecycle:
+        1. log_intent() - Record order request BEFORE sending
+        2. mark_sent() - Mark after gRPC call initiated
+        3. mark_verified() - Mark after MT5 confirms execution
+        4. OR mark_failed() - Mark after permanent failure
+
+        Recovery (on reconnect):
+        1. get_incomplete() - Find PENDING/SENT entries
+        2. Verify each against MT5 history
+        3. Update status accordingly
+
+        Usage:
+            wal = MT5Utilities.WAL(config)
+            await wal.initialize()
+
+            # Before sending order
+            await wal.log_intent(request_id, request)
+            await wal.mark_sent(request_id)
+
+            # After MT5 response
+            if success:
+                await wal.mark_verified(request_id, result)
+            else:
+                await wal.mark_failed(request_id, error_msg)
+
+            await wal.close()
+        """
+
+        class Status(IntEnum):
+            """WAL entry status."""
+
+            PENDING = 0  # Logged, not yet sent
+            SENT = 1  # gRPC call initiated
+            VERIFIED = 2  # MT5 confirmed execution
+            FAILED = 3  # Permanent failure
+            RECOVERED = 4  # Recovered after crash
+
+        @dataclass
+        class Entry:
+            """WAL entry for an order operation."""
+
+            request_id: str
+            timestamp: datetime
+            request_json: str  # Serialized request
+            status: int  # WAL.Status value
+            result_json: str | None = None
+            error: str | None = None
+
+        def __init__(self, config: MT5Config) -> None:
+            """Initialize WAL.
+
+            Args:
+                config: MT5Config with wal_path and wal_retention_days.
+
+            """
+            self._config = config
+            self._db_path = Path(config.wal_path).expanduser()
+            self._conn: aiosqlite.Connection | None = None
+            self._lock = asyncio.Lock()
+            self._initialized = False
+
+        async def initialize(self) -> None:
+            """Initialize WAL database. Called by connect()."""
+            if self._initialized:
+                return
+
+            import aiosqlite
+
+            # Ensure directory exists
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+
+            self._conn = await aiosqlite.connect(str(self._db_path))
+            await self._conn.execute("PRAGMA journal_mode=WAL")  # Async-friendly
+            await self._conn.execute("PRAGMA synchronous=NORMAL")
+
+            await self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS orders (
+                    request_id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    request_json TEXT NOT NULL,
+                    status INTEGER NOT NULL,
+                    result_json TEXT,
+                    error TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await self._conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_status ON orders(status)
+            """)
+            await self._conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_timestamp ON orders(timestamp)
+            """)
+            await self._conn.commit()
+            self._initialized = True
+            log.debug("WAL initialized at %s", self._db_path)
+
+        async def close(self) -> None:
+            """Close WAL database. Called by disconnect()."""
+            if self._conn:
+                await self._conn.close()
+                self._conn = None
+            self._initialized = False
+            log.debug("WAL closed")
+
+        async def log_intent(self, request_id: str, request: dict[str, object]) -> None:
+            """Log order intent BEFORE sending.
+
+            Args:
+                request_id: Unique request identifier.
+                request: Order request dictionary.
+
+            """
+            if not self._conn:
+                return
+
+            async with self._lock:
+                await self._conn.execute(
+                    """INSERT OR REPLACE INTO orders
+                       (request_id, timestamp, request_json, status, updated_at)
+                       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                    (
+                        request_id,
+                        datetime.now(UTC).isoformat(),
+                        orjson.dumps(request).decode(),
+                        self.Status.PENDING,
+                    ),
+                )
+                await self._conn.commit()
+            log.debug("WAL: logged intent %s", request_id)
+
+        async def mark_sent(self, request_id: str) -> None:
+            """Mark as sent after gRPC call initiated.
+
+            Args:
+                request_id: Request identifier to mark.
+
+            """
+            if not self._conn:
+                return
+
+            async with self._lock:
+                await self._conn.execute(
+                    """UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP
+                       WHERE request_id = ?""",
+                    (self.Status.SENT, request_id),
+                )
+                await self._conn.commit()
+            log.debug("WAL: marked sent %s", request_id)
+
+        async def mark_verified(
+            self,
+            request_id: str,
+            result: dict[str, object],
+        ) -> None:
+            """Mark as verified after MT5 confirmation.
+
+            Args:
+                request_id: Request identifier to mark.
+                result: Order result dictionary.
+
+            """
+            if not self._conn:
+                return
+
+            async with self._lock:
+                await self._conn.execute(
+                    """UPDATE orders SET status = ?, result_json = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                       WHERE request_id = ?""",
+                    (
+                        self.Status.VERIFIED,
+                        orjson.dumps(result).decode(),
+                        request_id,
+                    ),
+                )
+                await self._conn.commit()
+            log.debug("WAL: marked verified %s", request_id)
+
+        async def mark_failed(self, request_id: str, error: str) -> None:
+            """Mark as permanently failed.
+
+            Args:
+                request_id: Request identifier to mark.
+                error: Error description.
+
+            """
+            if not self._conn:
+                return
+
+            async with self._lock:
+                await self._conn.execute(
+                    """UPDATE orders SET status = ?, error = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                       WHERE request_id = ?""",
+                    (self.Status.FAILED, error, request_id),
+                )
+                await self._conn.commit()
+            log.debug("WAL: marked failed %s", request_id)
+
+        async def mark_recovered(
+            self,
+            request_id: str,
+            result: dict[str, object] | None = None,
+        ) -> None:
+            """Mark as recovered after crash recovery.
+
+            Args:
+                request_id: Request identifier to mark.
+                result: Optional result if order was found executed.
+
+            """
+            if not self._conn:
+                return
+
+            async with self._lock:
+                if result:
+                    await self._conn.execute(
+                        """UPDATE orders SET status = ?, result_json = ?,
+                           updated_at = CURRENT_TIMESTAMP
+                           WHERE request_id = ?""",
+                        (
+                            self.Status.RECOVERED,
+                            orjson.dumps(result).decode(),
+                            request_id,
+                        ),
+                    )
+                else:
+                    await self._conn.execute(
+                        """UPDATE orders SET status = ?,
+                           updated_at = CURRENT_TIMESTAMP
+                           WHERE request_id = ?""",
+                        (self.Status.RECOVERED, request_id),
+                    )
+                await self._conn.commit()
+            log.debug("WAL: marked recovered %s", request_id)
+
+        async def get_incomplete(self) -> list[Entry]:
+            """Get entries needing recovery (PENDING or SENT).
+
+            Returns:
+                List of incomplete entries ordered by timestamp.
+
+            """
+            if not self._conn:
+                return []
+
+            async with self._lock:
+                cursor = await self._conn.execute(
+                    """SELECT request_id, timestamp, request_json, status,
+                              result_json, error
+                       FROM orders
+                       WHERE status IN (?, ?)
+                       ORDER BY timestamp ASC""",
+                    (self.Status.PENDING, self.Status.SENT),
+                )
+                rows = await cursor.fetchall()
+                return [
+                    self.Entry(
+                        request_id=row[0],
+                        timestamp=datetime.fromisoformat(row[1]),
+                        request_json=row[2],
+                        status=row[3],
+                        result_json=row[4],
+                        error=row[5],
+                    )
+                    for row in rows
+                ]
+
+        async def get_entry(self, request_id: str) -> Entry | None:
+            """Get specific entry by request_id.
+
+            Args:
+                request_id: Request identifier to look up.
+
+            Returns:
+                Entry if found, None otherwise.
+
+            """
+            if not self._conn:
+                return None
+
+            async with self._lock:
+                cursor = await self._conn.execute(
+                    """SELECT request_id, timestamp, request_json, status,
+                              result_json, error
+                       FROM orders
+                       WHERE request_id = ?""",
+                    (request_id,),
+                )
+                row = await cursor.fetchone()
+                if row:
+                    return self.Entry(
+                        request_id=row[0],
+                        timestamp=datetime.fromisoformat(row[1]),
+                        request_json=row[2],
+                        status=row[3],
+                        result_json=row[4],
+                        error=row[5],
+                    )
+                return None
+
+        async def cleanup_old(self, days: int | None = None) -> int:
+            """Remove entries older than retention period.
+
+            Only removes VERIFIED and FAILED entries (completed transactions).
+            PENDING and SENT entries are never cleaned up automatically.
+
+            Args:
+                days: Override retention days (defaults to config.wal_retention_days).
+
+            Returns:
+                Number of entries removed.
+
+            """
+            if not self._conn:
+                return 0
+
+            retention = days if days is not None else self._config.wal_retention_days
+            cutoff = datetime.now(UTC) - timedelta(days=retention)
+
+            async with self._lock:
+                cursor = await self._conn.execute(
+                    """DELETE FROM orders
+                       WHERE status IN (?, ?, ?) AND timestamp < ?""",
+                    (
+                        self.Status.VERIFIED,
+                        self.Status.FAILED,
+                        self.Status.RECOVERED,
+                        cutoff.isoformat(),
+                    ),
+                )
+                await self._conn.commit()
+                count = cursor.rowcount
+                if count > 0:
+                    log.info("WAL: cleaned up %d old entries", count)
+                return count
+
+        @property
+        def is_initialized(self) -> bool:
+            """Check if WAL is initialized."""
+            return self._initialized
+
+        @property
+        def db_path(self) -> Path:
+            """Get database file path."""
+            return self._db_path

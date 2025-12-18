@@ -17,8 +17,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from mt5linux.constants import MT5Constants as c
-
-from .conftest import tc
+from tests.conftest import tc
 
 if TYPE_CHECKING:
     from mt5linux import MetaTrader5
@@ -221,7 +220,7 @@ class TestSymbolCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available on this server")
+            pytest.fail(f"Symbol {symbol} not available on this server")
         # Broker may add suffix (e.g., EURUSD.a), so check symbol is contained
         assert symbol in info.name or info.name.startswith(symbol)
         assert info.bid > 0 or info.ask > 0  # At least one price
@@ -233,7 +232,7 @@ class TestSymbolCoverage:
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
-            pytest.fail("Symbol symbol tick not available on this server")
+            pytest.fail(f"Symbol {symbol} tick not available on this server")
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS)
@@ -247,11 +246,11 @@ class TestSymbolCoverage:
 
         # May be None if market data not available for symbol
         if rates is not None:
-            assert len(rates) > 0
-            assert hasattr(rates, "dtype")
-            assert rates.dtype.names is not None
-            assert "open" in rates.dtype.names
-            assert "close" in rates.dtype.names
+            assert len(rates) > 0, f"Expected rates data for {symbol}"
+            assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
+            assert rates.dtype.names is not None, "rates dtype should have named fields"
+            assert "open" in rates.dtype.names, "rates should have 'open' field"
+            assert "close" in rates.dtype.names, "rates should have 'close' field"
 
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS)
     def test_copy_ticks_all_symbols(self, mt5: MetaTrader5, symbol: str) -> None:
@@ -265,9 +264,9 @@ class TestSymbolCoverage:
 
         # May be None if tick data not available
         if ticks is not None and len(ticks) > 0:
-            assert hasattr(ticks, "dtype")
-            assert ticks.dtype.names is not None
-            assert "bid" in ticks.dtype.names
+            assert hasattr(ticks, "dtype"), "ticks should be numpy array with dtype"
+            assert ticks.dtype.names is not None, "ticks dtype should have named fields"
+            assert "bid" in ticks.dtype.names, "ticks should have 'bid' field"
 
     # -------------------------------------------------------------------------
     # Cross Pairs Tests
@@ -280,7 +279,7 @@ class TestSymbolCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available on this server")
+            pytest.fail(f"Symbol {symbol} not available on this server")
         # Broker may add suffix (e.g., GBPAUD.c), so check symbol is contained
         assert symbol in info.name or info.name.startswith(symbol)
         assert info.bid > 0 or info.ask > 0
@@ -292,7 +291,7 @@ class TestSymbolCoverage:
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
-            pytest.fail("Symbol symbol tick not available on this server")
+            pytest.fail(f"Symbol {symbol} tick not available on this server")
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", CROSS_PAIRS)
@@ -305,9 +304,9 @@ class TestSymbolCoverage:
         )
 
         if rates is not None:
-            assert len(rates) > 0
-            assert hasattr(rates, "dtype")
-            assert rates.dtype.names is not None
+            assert len(rates) > 0, f"Expected rates data for {symbol}"
+            assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
+            assert rates.dtype.names is not None, "rates dtype should have named fields"
 
     # -------------------------------------------------------------------------
     # Metals Tests
@@ -320,7 +319,7 @@ class TestSymbolCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.fail("Metal symbol not available on this server")
+            pytest.fail(f"Metal {symbol} not available on this server")
         # Broker may add suffix (e.g., XAUUSD.a), so check symbol is contained
         assert symbol in info.name or info.name.startswith(symbol)
         # Metals have much higher prices than forex
@@ -333,7 +332,7 @@ class TestSymbolCoverage:
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
-            pytest.fail("Metal symbol tick not available on this server")
+            pytest.fail(f"Metal {symbol} tick not available on this server")
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", METALS)
@@ -346,8 +345,8 @@ class TestSymbolCoverage:
         )
 
         if rates is not None:
-            assert len(rates) > 0
-            assert hasattr(rates, "dtype")
+            assert len(rates) > 0, f"Expected rates data for {symbol}"
+            assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
 
     # -------------------------------------------------------------------------
     # Indices Tests
@@ -364,7 +363,7 @@ class TestSymbolCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.fail("Index symbol not available on this server")
+            pytest.fail(f"Index {symbol} not available on this server")
         # Broker may add suffix (e.g., US30.a), so check symbol is contained
         assert symbol in info.name or info.name.startswith(symbol)
         assert info.bid > 0 or info.ask > 0
@@ -376,7 +375,7 @@ class TestSymbolCoverage:
         tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
-            pytest.fail("Index symbol tick not available on this server")
+            pytest.fail(f"Index {symbol} tick not available on this server")
         assert tick.bid > 0 or tick.ask > 0
 
     @pytest.mark.parametrize("symbol", INDICES)
@@ -389,8 +388,8 @@ class TestSymbolCoverage:
         )
 
         if rates is not None:
-            assert len(rates) > 0
-            assert hasattr(rates, "dtype")
+            assert len(rates) > 0, f"Expected rates data for {symbol}"
+            assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
 
 
 # =============================================================================
@@ -415,8 +414,8 @@ class TestTimeframeCoverage:
         rates = mt5.copy_rates_from_pos("EURUSD", timeframe, 0, tc.DEFAULT_BAR_COUNT)
 
         if rates is not None:
-            assert len(rates) > 0
-            assert hasattr(rates, "dtype")
+            assert len(rates) > 0, "Expected rates data"
+            assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
 
     @pytest.mark.parametrize(
         "timeframe_name",
@@ -489,7 +488,7 @@ class TestCombinedCoverage:
         if not result:
             info = mt5.symbol_info(symbol)
             if info is None:
-                pytest.fail("Symbol symbol not available on this server")
+                pytest.fail(f"Symbol {symbol} not available on this server")
 
     @pytest.mark.slow
     @pytest.mark.parametrize("symbol", ALL_SYMBOLS)
@@ -502,7 +501,7 @@ class TestCombinedCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available on this server")
+            pytest.fail(f"Symbol {symbol} not available on this server")
 
         # Try to subscribe to market depth
         result = mt5.market_book_add(symbol)
@@ -577,7 +576,7 @@ class TestHypothesisProperties:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None or ask is None or ask <= 0:
-            pytest.fail("Symbol symbol or price not available")
+            pytest.fail(f"Symbol {symbol} or price not available")
 
         request = {
             "action": c.Order.TradeAction.DEAL,
@@ -596,7 +595,9 @@ class TestHypothesisProperties:
 
         # Should either succeed or fail gracefully
         if result is not None:
-            assert result.balance >= 0
+            assert result.balance >= 0, (
+                f"Balance should be non-negative, got {result.balance}"
+            )
 
 
 # =============================================================================
@@ -622,7 +623,13 @@ class TestDateRangeCoverage:
         total = mt5.history_deals_total(date_from, date_to)
 
         # May return None if no history available
-        assert total is None or (isinstance(total, int) and total >= 0)
+        if total is not None:
+            assert isinstance(total, int), (
+                f"history_deals_total should return int, got {type(total)}"
+            )
+            assert total >= 0, (
+                f"history_deals_total should be non-negative, got {total}"
+            )
 
     @pytest.mark.parametrize(
         "days_back",
@@ -639,7 +646,13 @@ class TestDateRangeCoverage:
         total = mt5.history_orders_total(date_from, date_to)
 
         # May return None if no history available
-        assert total is None or (isinstance(total, int) and total >= 0)
+        if total is not None:
+            assert isinstance(total, int), (
+                f"history_orders_total should return int, got {type(total)}"
+            )
+            assert total >= 0, (
+                f"history_orders_total should be non-negative, got {total}"
+            )
 
 
 # =============================================================================
@@ -726,10 +739,10 @@ class TestLotSizeCoverage:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         if ask is None or ask <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         # Check lot size is within broker limits
         if lot_size < info.volume_min or lot_size > info.volume_max:
@@ -752,8 +765,8 @@ class TestLotSizeCoverage:
 
         # Should return a result (success or failure with reason)
         if result is not None:
-            assert hasattr(result, "retcode")
-            assert hasattr(result, "balance")
+            assert hasattr(result, "retcode"), "order_check result should have retcode"
+            assert hasattr(result, "balance"), "order_check result should have balance"
 
     @pytest.mark.parametrize("lot_size", LOT_SIZES_METALS)
     def test_order_check_gold_lot_sizes(
@@ -765,10 +778,10 @@ class TestLotSizeCoverage:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         if ask is None or ask <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         if lot_size < info.volume_min or lot_size > info.volume_max:
             pytest.fail("Lot size outside broker limits")
@@ -789,7 +802,7 @@ class TestLotSizeCoverage:
         result = mt5.order_check(request)
 
         if result is not None:
-            assert hasattr(result, "retcode")
+            assert hasattr(result, "retcode"), "order_check result should have retcode"
 
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS[:3])
     def test_symbol_volume_limits(self, mt5: MetaTrader5, symbol: str) -> None:
@@ -798,7 +811,7 @@ class TestLotSizeCoverage:
         info = mt5.symbol_info(symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         # Volume limits should be positive and make sense
         assert info.volume_min > 0
@@ -815,10 +828,10 @@ class TestLotSizeCoverage:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         if ask is None or ask <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         # Test with minimum lot
         margin_min = mt5.order_calc_margin(
@@ -952,14 +965,14 @@ class TestAllTimeframes:
         try:
             timeframe = getattr(mt5, timeframe_name)
         except AttributeError:
-            pytest.fail("Timeframe timeframe_name not available")
+            pytest.fail(f"Timeframe {timeframe_name} not available")
 
         mt5.symbol_select("EURUSD", enable=True)
         rates = mt5.copy_rates_from_pos("EURUSD", timeframe, 0, tc.EXTRA_LARGE_COUNT)
 
         if rates is not None:
-            assert len(rates) > 0
-            assert hasattr(rates, "dtype")
+            assert len(rates) > 0, "Expected rates data"
+            assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
 
     @pytest.mark.slow
     @pytest.mark.parametrize("symbol", ["EURUSD", "XAUUSD"])
@@ -1011,11 +1024,11 @@ class TestTickDataCoverage:
         ticks = mt5.copy_ticks_from("EURUSD", date_from, 100, tick_flag)
 
         if ticks is not None and len(ticks) > 0:
-            assert hasattr(ticks, "dtype")
+            assert hasattr(ticks, "dtype"), "ticks should be numpy array with dtype"
             # All tick types should have these fields
-            assert "time" in ticks.dtype.names
-            assert "bid" in ticks.dtype.names
-            assert "ask" in ticks.dtype.names
+            assert "time" in ticks.dtype.names, "ticks should have 'time' field"
+            assert "bid" in ticks.dtype.names, "ticks should have 'bid' field"
+            assert "ask" in ticks.dtype.names, "ticks should have 'ask' field"
 
     @pytest.mark.parametrize("symbol", MAJOR_PAIRS[:4])
     @pytest.mark.parametrize("minutes_back", [5, 15, 30, 60])
@@ -1074,11 +1087,11 @@ class TestOrderTypeCombinations:
         info, bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         price = ask if order_type == c.Order.OrderType.BUY else bid
         if price is None or price <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         request = {
             "action": c.Order.TradeAction.DEAL,
@@ -1096,9 +1109,11 @@ class TestOrderTypeCombinations:
         result = mt5.order_check(request)
 
         if result is not None:
-            assert hasattr(result, "retcode")
+            assert hasattr(result, "retcode"), "order_check result should have retcode"
             # OrderCheckResult should have calculation fields
-            assert hasattr(result, "balance") or result.retcode != 0
+            assert hasattr(result, "balance") or result.retcode != 0, (
+                "order_check result should have balance on success"
+            )
 
     @pytest.mark.parametrize(
         "order_type_name",
@@ -1119,10 +1134,10 @@ class TestOrderTypeCombinations:
         info, bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         if bid is None or ask is None or bid <= 0 or ask <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         # Set price based on order type
         if order_type_name in {"ORDER_TYPE_BUY_LIMIT", "ORDER_TYPE_SELL_STOP"}:
@@ -1146,7 +1161,7 @@ class TestOrderTypeCombinations:
         result = mt5.order_check(request)
 
         if result is not None:
-            assert hasattr(result, "retcode")
+            assert hasattr(result, "retcode"), "order_check result should have retcode"
 
     @pytest.mark.parametrize(
         "filling_name",
@@ -1162,10 +1177,10 @@ class TestOrderTypeCombinations:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         if ask is None or ask <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         request = {
             "action": c.Order.TradeAction.DEAL,
@@ -1184,7 +1199,7 @@ class TestOrderTypeCombinations:
 
         # Should return a result (may reject invalid filling for symbol)
         if result is not None:
-            assert hasattr(result, "retcode")
+            assert hasattr(result, "retcode"), "order_check result should have retcode"
 
 
 # =============================================================================
@@ -1206,13 +1221,13 @@ class TestProfitCalculation:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         if ask is None or ask <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         if lot_size < info.volume_min or lot_size > info.volume_max:
-            pytest.fail("Lot size lot_size outside limits")
+            pytest.fail(f"Lot size {lot_size} outside limits")
 
         # Calculate profit for a winning trade
         price_open = ask
@@ -1233,10 +1248,10 @@ class TestProfitCalculation:
         info, bid, _ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         if bid is None or bid <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         lot = info.volume_min
         price1 = bid
@@ -1278,13 +1293,13 @@ class TestMarginCalculation:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         if ask is None or ask <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         if lot_size < info.volume_min or lot_size > info.volume_max:
-            pytest.fail("Lot size lot_size outside limits")
+            pytest.fail(f"Lot size {lot_size} outside limits")
 
         margin = mt5.order_calc_margin(c.Order.OrderType.BUY, symbol, lot_size, ask)
 
@@ -1298,10 +1313,10 @@ class TestMarginCalculation:
         info, _bid, ask = get_symbol_info_with_price(mt5, symbol)
 
         if info is None:
-            pytest.fail("Symbol symbol not available")
+            pytest.fail(f"Symbol {symbol} not available")
 
         if ask is None or ask <= 0:
-            pytest.fail("No price available for symbol")
+            pytest.fail(f"No price available for {symbol}")
 
         lot1 = info.volume_min
         lot2 = lot1 * 2

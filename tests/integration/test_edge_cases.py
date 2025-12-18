@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from mt5linux.constants import MT5Constants as c
-
 from tests.conftest import tc
 
 if TYPE_CHECKING:
@@ -131,7 +130,7 @@ class TestInvalidInputs:
         # Behavior varies by MT5 server - just verify no crash
         # Result can be None or contain data
         if result is not None:
-            assert hasattr(result, "dtype")
+            assert hasattr(result, "dtype"), "result should be numpy array with dtype"
 
 
 class TestApiLimits:
@@ -156,7 +155,7 @@ class TestApiLimits:
             assert len(result) <= c.Test.Validation.TICKS_LIMIT_THRESHOLD
 
             # Verify data structure
-            assert hasattr(result, "dtype")
+            assert hasattr(result, "dtype"), "result should be numpy array with dtype"
             names = result.dtype.names
             assert names is not None
             assert "time" in names
@@ -178,7 +177,7 @@ class TestApiLimits:
 
         if result is not None and len(result) > 0:
             assert len(result) <= c.Test.Validation.TICKS_LIMIT_THRESHOLD
-            assert hasattr(result, "dtype")
+            assert hasattr(result, "dtype"), "result should be numpy array with dtype"
 
     @pytest.mark.slow
     def test_large_history_query(self, mt5: MetaTrader5) -> None:
@@ -221,7 +220,7 @@ class TestApiLimits:
                 symbols = mt5.symbols_get(group=group_filter)
 
             if symbols is None:
-                pytest.fail("symbols_get(group=group_filter!r) not available")
+                pytest.fail(f"symbols_get(group={group_filter!r}) not available")
 
             count = len(symbols)
             assert count >= min_expected, (
@@ -331,8 +330,8 @@ class TestErrorHandling:
         major, minor, build_or_date = version
         assert isinstance(major, int)
         assert isinstance(minor, int)
-        assert major >= 0
-        assert minor >= 0
+        assert major >= 0, f"Major version should be non-negative, got {major}"
+        assert minor >= 0, f"Minor version should be non-negative, got {minor}"
         # Third element can be int (build number) or str (date)
         assert isinstance(build_or_date, int | str)
 
@@ -359,6 +358,10 @@ class TestErrorHandling:
         if account is None:
             pytest.fail("account_info returned None (MT5 connection may be unstable)")
 
-        assert account.login > 0
-        assert account.balance >= 0
-        assert len(account.currency) > 0
+        assert account.login > 0, f"Expected positive login, got {account.login}"
+        assert account.balance >= 0, (
+            f"Expected non-negative balance, got {account.balance}"
+        )
+        assert len(account.currency) > 0, (
+            f"Expected non-empty currency, got {account.currency!r}"
+        )

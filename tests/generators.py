@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 from hypothesis import strategies as st
 
-from .conftest import tc
+from tests.conftest import tc
 
 # =============================================================================
 # SYMBOL CONSTANTS (moved to TestConstants)

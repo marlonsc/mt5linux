@@ -170,17 +170,17 @@ class TestOrderSend:
 
         # Verify symbol is available and selectable
         if not mt5.symbol_select(symbol, enable=True):
-            pytest.skip(f"Cannot select symbol {symbol}")
+            pytest.fail(f"Cannot select symbol {symbol}")
 
         # Verify symbol info is available
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
-            pytest.skip(f"Symbol info not available for {symbol}")
+            pytest.fail(f"Symbol info not available for {symbol}")
 
         # Verify tick data is available
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
-            pytest.skip(f"Tick data not available for {symbol}")
+            pytest.fail(f"Tick data not available for {symbol}")
 
         # Verify market is open (has bid/ask spread)
         if tick.bid == 0.0 or tick.ask == 0.0:
@@ -198,7 +198,7 @@ class TestOrderSend:
         except Exception as e:
             # If it's a demo account limitation, skip the test
             if "10011" in str(e) or "No result from MT5" in str(e):
-                pytest.skip(f"MT5 demo account limitation: {e}")
+                pytest.fail(f"MT5 demo account limitation: {e}")
             raise
 
         assert result is not None, "order_send returned None"
@@ -223,17 +223,17 @@ class TestOrderSend:
 
         # Verify symbol is available and selectable
         if not mt5.symbol_select(symbol, enable=True):
-            pytest.skip(f"Cannot select symbol {symbol}")
+            pytest.fail(f"Cannot select symbol {symbol}")
 
         # Verify symbol info is available
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
-            pytest.skip(f"Symbol info not available for {symbol}")
+            pytest.fail(f"Symbol info not available for {symbol}")
 
         # Verify tick data is available
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
-            pytest.skip(f"Tick data not available for {symbol}")
+            pytest.fail(f"Tick data not available for {symbol}")
 
         # Verify market is open
         if tick.bid == 0.0 or tick.ask == 0.0:
@@ -267,7 +267,9 @@ class TestOrderSend:
 
         # Skip if order_check fails (may be broker/demo limitations)
         if check_result.retcode != 0:
-            pytest.skip(f"order_check failed with retcode {check_result.retcode}: {check_result.comment}")
+            pytest.fail(
+                f"order_check failed with retcode {check_result.retcode}: {check_result.comment}"
+            )
 
         result = mt5.order_send(limit_request)
         assert result is not None, "order_send returned None"

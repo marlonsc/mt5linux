@@ -16,8 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from mt5linux import MetaTrader5
-
-from .conftest import (
+from tests.conftest import (
     MT5_LOGIN,
     MT5_PASSWORD,
     MT5_SERVER,

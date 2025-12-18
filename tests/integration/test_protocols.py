@@ -10,8 +10,7 @@ from __future__ import annotations
 from mt5linux import MetaTrader5
 from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.protocols import AsyncClientProtocol, SyncClientProtocol
-
-from .conftest import tc
+from tests.conftest import tc
 
 
 class TestSyncClientProtocol:

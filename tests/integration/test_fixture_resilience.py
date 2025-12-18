@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from datetime import UTC
 
+import pytest
+
 from mt5linux import MetaTrader5
 from mt5linux.config import MT5Config
 
@@ -43,17 +45,17 @@ class TestFixtureResilience:
 
         # Select symbol first
         if not mt5.symbol_select(symbol, enable=True):
-            pytest.skip(f"Cannot select symbol {symbol}")
+            pytest.fail(f"Cannot select symbol {symbol}")
 
         # Get symbol info
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
-            pytest.skip(f"Symbol info not available for {symbol}")
+            pytest.fail(f"Symbol info not available for {symbol}")
 
         # Get tick
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
-            pytest.skip(f"Tick data not available for {symbol}")
+            pytest.fail(f"Tick data not available for {symbol}")
 
         # Verify tick has valid data
         if tick.bid == 0.0 or tick.ask == 0.0:
@@ -165,11 +167,11 @@ class TestSequentialOperations:
     def test_mixed_operations_sequence(self, mt5: MetaTrader5) -> None:
         """Mixed operations in sequence should work."""
         operations = [
-            lambda: mt5.account_info(),
-            lambda: mt5.terminal_info(),
-            lambda: mt5.symbols_total(),
+            mt5.account_info,
+            mt5.terminal_info,
+            mt5.symbols_total,
             lambda: mt5.symbol_info("EURUSD"),
-            lambda: mt5.version(),
+            mt5.version,
         ]
 
         for _i, op in enumerate(operations * 3):  # Run each 3 times

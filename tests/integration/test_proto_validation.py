@@ -11,6 +11,8 @@ NO MOCKING - tests validate actual proto definitions.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from mt5linux import mt5_pb2, mt5_pb2_grpc
@@ -113,8 +115,8 @@ class TestProtoBasicMessages:
 
     def test_float_response_exists(self) -> None:
         """FloatResponse message must exist."""
-        response = mt5_pb2.FloatResponse(value=3.14)
-        assert response.value == pytest.approx(3.14)
+        response = mt5_pb2.FloatResponse(value=math.pi)
+        assert response.value == pytest.approx(math.pi)
 
     def test_error_info_exists(self) -> None:
         """ErrorInfo message must exist."""
@@ -333,8 +335,6 @@ class TestProtoServiceDefinition:
         """Servicer should have exactly 36 RPC methods."""
         servicer_class = mt5_pb2_grpc.MT5ServiceServicer
         # Get all methods that don't start with underscore
-        methods = [
-            name for name in dir(servicer_class) if not name.startswith("_")
-        ]
+        methods = [name for name in dir(servicer_class) if not name.startswith("_")]
         # Should have 36 methods (as defined in proto)
         assert len(methods) == 36, f"Expected 36 methods, got {len(methods)}: {methods}"

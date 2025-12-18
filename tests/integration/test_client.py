@@ -8,8 +8,7 @@ import grpc
 import pytest
 
 from mt5linux import MetaTrader5
-
-from .conftest import (
+from tests.conftest import (
     TEST_GRPC_PORT,
     tc,
 )
@@ -100,8 +99,15 @@ class TestMetaTrader5AccountInfo:
         if account is None:
             pytest.fail("account_info returned None (MT5 connection unstable)")
         assert account.login > 0
-        assert account.balance >= 0
-        assert account.currency in {"USD", "EUR", "GBP"}
+        assert isinstance(account.balance, float | int), (
+            f"Balance should be numeric, got {type(account.balance)}"
+        )
+        assert account.balance >= 0, (
+            f"Balance should be non-negative, got {account.balance}"
+        )
+        assert account.currency in {"USD", "EUR", "GBP"}, (
+            f"Unexpected currency: {account.currency}"
+        )
 
     def test_terminal_info(self, mt5: MetaTrader5) -> None:
         """Test terminal_info returns valid data."""
@@ -162,14 +168,16 @@ class TestMetaTrader5CopyRates:
             )
         except Exception as e:
             if "pickling is disabled" in str(e):
-                pytest.fail("RPyC pickling disabled - numpy serialization not available")
+                pytest.fail(
+                    "RPyC pickling disabled - numpy serialization not available"
+                )
             raise
         if rates is None:
             pytest.fail("Market data not available (market may be closed)")
         assert len(rates) > 0
         # Verify it's a local numpy array (not netref)
-        assert hasattr(rates, "dtype")
-        assert rates.dtype.names is not None
+        assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
+        assert rates.dtype.names is not None, "rates dtype should have named fields"
         assert "time" in rates.dtype.names
         assert "open" in rates.dtype.names
         assert "close" in rates.dtype.names
@@ -182,8 +190,8 @@ class TestMetaTrader5CopyRates:
         )
         # May be None if market closed
         if rates is not None:
-            assert len(rates) > 0
-            assert hasattr(rates, "dtype")
+            assert len(rates) > 0, "copy_rates_from returned empty array"
+            assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
 
     def test_copy_rates_range(self, mt5: MetaTrader5) -> None:
         """Test copy_rates_range with interval."""
@@ -191,8 +199,8 @@ class TestMetaTrader5CopyRates:
         date_from = date_to - timedelta(days=7)
         rates = mt5.copy_rates_range("EURUSD", mt5.TIMEFRAME_H1, date_from, date_to)
         if rates is not None:
-            assert len(rates) > 0
-            assert hasattr(rates, "dtype")
+            assert len(rates) > 0, "copy_rates_range returned empty array"
+            assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
 
 
 class TestMetaTrader5CopyTicks:
@@ -206,10 +214,10 @@ class TestMetaTrader5CopyTicks:
             "EURUSD", date_from, tc.DEFAULT_TICK_COUNT, mt5.COPY_TICKS_ALL
         )
         if ticks is not None and len(ticks) > 0:
-            assert hasattr(ticks, "dtype")
-            assert ticks.dtype.names is not None
-            assert "time" in ticks.dtype.names
-            assert "bid" in ticks.dtype.names
+            assert hasattr(ticks, "dtype"), "ticks should be numpy array with dtype"
+            assert ticks.dtype.names is not None, "ticks dtype should have named fields"
+            assert "time" in ticks.dtype.names, "ticks should have 'time' field"
+            assert "bid" in ticks.dtype.names, "ticks should have 'bid' field"
 
     def test_copy_ticks_range(self, mt5: MetaTrader5) -> None:
         """Test copy_ticks_range with interval."""
@@ -219,7 +227,7 @@ class TestMetaTrader5CopyTicks:
         ticks = mt5.copy_ticks_range("EURUSD", date_from, date_to, mt5.COPY_TICKS_ALL)
         # May be None or empty if market closed
         if ticks is not None:
-            assert hasattr(ticks, "dtype")
+            assert hasattr(ticks, "dtype"), "ticks should be numpy array with dtype"
 
 
 class TestMetaTrader5Orders:
@@ -228,8 +236,10 @@ class TestMetaTrader5Orders:
     def test_orders_total(self, mt5: MetaTrader5) -> None:
         """Test pending orders count."""
         total = mt5.orders_total()
-        assert isinstance(total, int)
-        assert total >= 0
+        assert isinstance(total, int), (
+            f"orders_total should return int, got {type(total)}"
+        )
+        assert total >= 0, f"orders_total should be non-negative, got {total}"
 
     def test_orders_get(self, mt5: MetaTrader5) -> None:
         """Test orders list."""
@@ -245,8 +255,10 @@ class TestMetaTrader5Positions:
     def test_positions_total(self, mt5: MetaTrader5) -> None:
         """Test open positions count."""
         total = mt5.positions_total()
-        assert isinstance(total, int)
-        assert total >= 0
+        assert isinstance(total, int), (
+            f"positions_total should return int, got {type(total)}"
+        )
+        assert total >= 0, f"positions_total should be non-negative, got {total}"
 
     def test_positions_get(self, mt5: MetaTrader5) -> None:
         """Test positions list."""
@@ -378,7 +390,7 @@ class TestMetaTrader5Resilience:
 
         Tests disconnect behavior then restores connection for subsequent tests.
         """
-        from .conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         # Get initial data
         account1 = mt5.account_info()
@@ -420,12 +432,12 @@ class TestMetaTrader5Resilience:
         for i in range(tc.FIVE_ITERATIONS):
             account = mt5.account_info()
             if account is None:
-                pytest.fail("account_info() returned None at iteration i")
+                pytest.fail(f"account_info() returned None at iteration {i}")
 
             symbols = mt5.symbols_total()
             if symbols == 0:
-                pytest.fail("symbols_total() returned 0 at iteration i")
+                pytest.fail(f"symbols_total() returned 0 at iteration {i}")
 
             terminal = mt5.terminal_info()
             if terminal is None:
-                pytest.fail("terminal_info() returned None at iteration i")
+                pytest.fail(f"terminal_info() returned None at iteration {i}")

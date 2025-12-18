@@ -39,14 +39,22 @@ class TestHistoryDeals:
             # If there are deals, verify structure
             if len(deals) > 0:
                 deal = deals[0]
-                assert hasattr(deal, "ticket")
-                assert hasattr(deal, "order")
-                assert hasattr(deal, "time")
-                assert hasattr(deal, "type")
-                assert hasattr(deal, "symbol")
-                assert hasattr(deal, "volume")
-                assert hasattr(deal, "price")
-                assert hasattr(deal, "profit")
+                assert deal.ticket > 0, f"Expected positive ticket, got {deal.ticket}"
+                assert deal.order >= 0, f"Expected non-negative order, got {deal.order}"
+                assert deal.time > 0, f"Expected positive time, got {deal.time}"
+                assert isinstance(deal.type, int), (
+                    f"Expected int type, got {type(deal.type)}"
+                )
+                assert isinstance(deal.symbol, str), (
+                    f"Expected str symbol, got {type(deal.symbol)}"
+                )
+                assert deal.volume >= 0, (
+                    f"Expected non-negative volume, got {deal.volume}"
+                )
+                assert deal.price >= 0, f"Expected non-negative price, got {deal.price}"
+                assert isinstance(deal.profit, float | int), (
+                    f"Expected numeric profit, got {type(deal.profit)}"
+                )
 
     def test_history_deals_get_by_symbol(self, mt5: MetaTrader5) -> None:
         """Test filtering deals by symbol."""
@@ -132,13 +140,25 @@ class TestHistoryOrders:
             # If there are orders, verify structure
             if len(orders) > 0:
                 order = orders[0]
-                assert hasattr(order, "ticket")
-                assert hasattr(order, "time_setup")
-                assert hasattr(order, "type")
-                assert hasattr(order, "symbol")
-                assert hasattr(order, "volume_initial")
-                assert hasattr(order, "price_open")
-                assert hasattr(order, "state")
+                assert order.ticket > 0, f"Expected positive ticket, got {order.ticket}"
+                assert order.time_setup > 0, (
+                    f"Expected positive time_setup, got {order.time_setup}"
+                )
+                assert isinstance(order.type, int), (
+                    f"Expected int type, got {type(order.type)}"
+                )
+                assert isinstance(order.symbol, str), (
+                    f"Expected str symbol, got {type(order.symbol)}"
+                )
+                assert order.volume_initial > 0, (
+                    f"Expected positive volume_initial, got {order.volume_initial}"
+                )
+                assert order.price_open >= 0, (
+                    f"Expected non-negative price_open, got {order.price_open}"
+                )
+                assert isinstance(order.state, int), (
+                    f"Expected int state, got {type(order.state)}"
+                )
 
     def test_history_orders_get_by_symbol(self, mt5: MetaTrader5) -> None:
         """Test filtering orders by symbol."""
@@ -226,10 +246,18 @@ class TestHistoryCombined:
             pytest.fail("No historical data")
 
         # Both should be non-negative integers
-        assert isinstance(deals_total, int)
-        assert deals_total >= 0
-        assert isinstance(orders_total, int)
-        assert orders_total >= 0
+        assert isinstance(deals_total, int), (
+            f"deals_total should be int, got {type(deals_total)}"
+        )
+        assert deals_total >= 0, (
+            f"deals_total should be non-negative, got {deals_total}"
+        )
+        assert isinstance(orders_total, int), (
+            f"orders_total should be int, got {type(orders_total)}"
+        )
+        assert orders_total >= 0, (
+            f"orders_total should be non-negative, got {orders_total}"
+        )
 
         # Get actual data
         deals = mt5.history_deals_get(date_from, date_to)

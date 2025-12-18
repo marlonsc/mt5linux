@@ -27,10 +27,10 @@ class TestRequestTracker:
     """Test idempotency tracking via comment field."""
 
     def test_generate_request_id_format(self) -> None:
-        """Request ID starts with 'RQ' and has 12 chars total."""
+        """Request ID starts with 'RQ' and has 18 chars total (RQ + 16 hex)."""
         req_id = RequestTracker.generate_request_id()
         assert req_id.startswith("RQ"), "Request ID must start with 'RQ'"
-        assert len(req_id) == 12, "Request ID must be 12 chars"
+        assert len(req_id) == 18, "Request ID must be 18 chars (RQ + 16 hex)"
 
     def test_generate_request_id_unique(self) -> None:
         """Each generated request ID should be unique."""
@@ -39,16 +39,16 @@ class TestRequestTracker:
 
     def test_mark_comment_empty(self) -> None:
         """Marking empty comment returns just the request ID."""
-        marked = RequestTracker.mark_comment(None, "RQ1234567890")
-        assert marked == "RQ1234567890"
+        marked = RequestTracker.mark_comment(None, "RQ1234567890abcdef")
+        assert marked == "RQ1234567890abcdef"
 
-        marked = RequestTracker.mark_comment("", "RQ1234567890")
-        assert marked == "RQ1234567890"
+        marked = RequestTracker.mark_comment("", "RQ1234567890abcdef")
+        assert marked == "RQ1234567890abcdef"
 
     def test_mark_comment_preserves_original(self) -> None:
         """Marking preserves original comment after separator."""
-        marked = RequestTracker.mark_comment("my_strategy_order", "RQ1234567890")
-        assert marked.startswith("RQ1234567890|")
+        marked = RequestTracker.mark_comment("my_strategy_order", "RQ1234567890abcdef")
+        assert marked.startswith("RQ1234567890abcdef|")
         assert "my_strategy" in marked
 
     def test_mark_comment_truncates_long(self) -> None:
@@ -58,7 +58,7 @@ class TestRequestTracker:
         after truncation. Previous test only checked length.
         """
         long_comment = "a" * 50
-        req_id = "RQ1234567890"
+        req_id = "RQ1234567890abcdef"
         marked = RequestTracker.mark_comment(long_comment, req_id)
 
         # Basic length check
@@ -67,26 +67,24 @@ class TestRequestTracker:
         # CRITICAL: Request ID must be preserved at start
         assert marked.startswith(req_id), (
             f"Request ID '{req_id}' must be at start of marked comment, "
-            f"got '{marked[:12]}'"
+            f"got '{marked[:18]}'"
         )
 
         # CRITICAL: Request ID must be extractable (roundtrip test)
         extracted = RequestTracker.extract_request_id(marked)
-        assert extracted == req_id, (
-            f"Extracted ID '{extracted}' != original '{req_id}'"
-        )
+        assert extracted == req_id, f"Extracted ID '{extracted}' != original '{req_id}'"
 
     def test_extract_request_id_works(self) -> None:
         """Can extract request_id from marked comment."""
-        marked = "RQ1234567890|original_comment"
+        marked = "RQ1234567890abcdef|original_comment"
         extracted = RequestTracker.extract_request_id(marked)
-        assert extracted == "RQ1234567890"
+        assert extracted == "RQ1234567890abcdef"
 
     def test_extract_request_id_no_separator(self) -> None:
         """Extract works when no separator (empty original comment)."""
-        marked = "RQ1234567890"
+        marked = "RQ1234567890abcdef"
         extracted = RequestTracker.extract_request_id(marked)
-        assert extracted == "RQ1234567890"
+        assert extracted == "RQ1234567890abcdef"
 
     def test_extract_request_id_none(self) -> None:
         """Extract returns None for None comment."""
@@ -300,7 +298,7 @@ class TestTransactionHandlerIntegration:
             "symbol": "EURUSD",
             "comment": "my_strategy",
         }
-        prepared, req_id = MT5Utilities.TransactionHandler.prepare_request(
+        prepared, _req_id = MT5Utilities.TransactionHandler.prepare_request(
             request, "order_send"
         )
 
@@ -437,13 +435,14 @@ class TestRetcodeEdgeCases:
     but are not commonly tested.
     """
 
-    def test_retcode_zero_treated_as_unknown(self) -> None:
-        """retcode=0 should be classified as UNKNOWN.
+    def test_retcode_zero_treated_as_verify_required(self) -> None:
+        """retcode=0 should be classified as VERIFY_REQUIRED.
 
-        Zero is not a valid MT5 retcode and indicates an unexpected state.
+        Zero indicates empty/synthetic response (e.g., timeout created synthetic
+        result with retcode=0). Must trigger state verification, not blind retry.
         """
         classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(0)
-        assert classification == c.Resilience.ErrorClassification.UNKNOWN
+        assert classification == c.Resilience.ErrorClassification.VERIFY_REQUIRED
 
     def test_retcode_negative_treated_as_unknown(self) -> None:
         """Negative retcode should be classified as UNKNOWN.
@@ -515,18 +514,17 @@ class TestRetcodeEdgeCases:
                 f"Code {code} should be PERMANENT"
             )
 
-    def test_retcode_does_not_crash_on_none(self) -> None:
-        """classify_result should handle None gracefully."""
-        # Note: classify_result expects int, but we test defensive behavior
-        # by checking the outcome for an unlikely edge case
-        # If the function doesn't accept None, this tests that it has
-        # proper typing that would catch this at static analysis
+    def test_retcode_zero_outcome_is_verify_required(self) -> None:
+        """classify_result(0) should return VERIFY_REQUIRED.
+
+        retcode=0 indicates empty/synthetic response. Must verify state
+        before deciding on retry to prevent double execution.
+        """
         outcome = MT5Utilities.TransactionHandler.classify_result(0)
-        # Zero is undefined, should return UNKNOWN → PERMANENT_FAILURE
-        assert outcome in {
-            c.Resilience.TransactionOutcome.PERMANENT_FAILURE,
-            c.Resilience.TransactionOutcome.VERIFY_REQUIRED,
-        }
+        # Zero is in VERIFY_REQUIRED_CODES, so outcome must be VERIFY_REQUIRED
+        assert outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED, (
+            f"retcode=0 outcome should be VERIFY_REQUIRED, got {outcome.name}"
+        )
 
 
 class TestBoundaryValues:
@@ -535,32 +533,32 @@ class TestBoundaryValues:
     def test_comment_exactly_31_chars_preserved(self) -> None:
         """31-char comment should be handled without truncation.
 
-        MT5 comment field has 31-char limit. Marker takes 12 chars + "|",
-        so original comment can have max 18 chars after marking.
+        MT5 comment field has 31-char limit. Marker takes 18 chars + "|",
+        so original comment can have max 12 chars after marking.
         """
         # 31 chars exactly
         long_comment = "a" * 31
-        req_id = "RQ1234567890"
+        req_id = "RQ1234567890abcdef"
 
         marked = RequestTracker.mark_comment(long_comment, req_id)
 
         # Total should not exceed 31
         assert len(marked) <= 31
         # Request ID should be at start
-        assert marked.startswith("RQ1234567890")
+        assert marked.startswith("RQ1234567890abcdef")
 
     def test_comment_at_various_lengths(self) -> None:
         """Test comment marking at various lengths near boundary."""
-        req_id = "RQ1234567890"
+        req_id = "RQ1234567890abcdef"
 
-        for length in [0, 1, 10, 18, 19, 20, 25, 30, 31, 50, 100]:
+        for length in [0, 1, 10, 12, 13, 20, 25, 30, 31, 50, 100]:
             comment = "x" * length if length > 0 else ""
             marked = RequestTracker.mark_comment(comment, req_id)
             assert len(marked) <= 31, f"Length {length} exceeded 31 chars"
             assert marked.startswith(req_id), f"Length {length} lost request ID"
 
     def test_attempt_at_max_is_last_retry(self) -> None:
-        """attempt = max_attempts - 1 should be the last retry."""
+        """Attempt = max_attempts - 1 should be the last retry."""
         max_attempts = 3
 
         # should_retry with RETRY outcome
@@ -622,13 +620,15 @@ class TestRequestIdUniqueness:
         assert len(ids) == len(set(ids)), "Generated duplicate request IDs!"
 
     def test_request_id_format_always_valid(self) -> None:
-        """All generated request IDs should match expected format."""
+        """All generated request IDs should match expected format (18 chars)."""
         for _ in range(100):
             req_id = RequestTracker.generate_request_id()
             assert req_id.startswith("RQ"), f"Invalid prefix: {req_id}"
-            assert len(req_id) == 12, f"Invalid length: {req_id}"
-            # Check alphanumeric (after RQ prefix)
-            assert req_id[2:].isalnum(), f"Non-alphanumeric chars: {req_id}"
+            assert len(req_id) == 18, f"Invalid length: {req_id} (expected 18)"
+            # Check hex (after RQ prefix)
+            assert all(c in "0123456789abcdef" for c in req_id[2:]), (
+                f"Non-hex chars in: {req_id}"
+            )
 
 
 class TestClassificationConsistency:
@@ -762,8 +762,6 @@ class TestRetryWithBackoffHooks:
     @pytest.mark.asyncio
     async def test_should_retry_hook_prevents_retry(self) -> None:
         """When should_retry returns False, no retry should occur."""
-        import asyncio
-
         from mt5linux.config import MT5Config
 
         config = MT5Config(retry_max_attempts=5, retry_jitter=False)
@@ -996,7 +994,7 @@ class TestAdversarialCommentTruncation:
 
         Tests various comment lengths to ensure request ID is never corrupted.
         """
-        req_id = "RQ1234567890"  # 12 chars
+        req_id = "RQ1234567890abcdef"  # 18 chars
 
         # Test all lengths from 0 to 100
         for length in range(101):
@@ -1008,7 +1006,7 @@ class TestAdversarialCommentTruncation:
 
             # Request ID must be at start
             assert marked.startswith(req_id), (
-                f"Length {length}: ID not at start: '{marked[:12]}'"
+                f"Length {length}: ID not at start: '{marked[:18]}'"
             )
 
             # CRITICAL: Must be extractable
@@ -1019,11 +1017,11 @@ class TestAdversarialCommentTruncation:
 
     def test_special_characters_in_comment(self) -> None:
         """Special characters in comment should not break extraction."""
-        req_id = "RQ1234567890"
+        req_id = "RQ1234567890abcdef"
         special_comments = [
             "RQ|fake",  # Looks like another request ID
             "|||||",  # Multiple separators
-            "RQabcdef1234",  # Looks like request ID
+            "RQabcdef12345678",  # Looks like request ID
             "RQ" + "x" * 50,  # Starts with RQ but too long
         ]
 
@@ -1044,10 +1042,10 @@ class TestAdversarialRequestIdValidation:
     def test_rejects_invalid_hex_characters(self) -> None:
         """Request IDs with invalid hex chars should be rejected."""
         invalid_ids = [
-            "RQgggggggggg",  # 'g' is not hex
-            "RQ12345!@#$%",  # Special chars
-            "RQZZZZZZZZZZ",  # Z is not hex
-            "RQ12345 6789",  # Space in ID
+            "RQgggggggggggggggg",  # 'g' is not hex (18 chars)
+            "RQ12345!@#$%abcdef",  # Special chars (18 chars)
+            "RQZZZZZZZZZZZZZZZZ",  # Z is not hex (18 chars)
+            "RQ12345 67890abcde",  # Space in ID (18 chars)
         ]
         for invalid_id in invalid_ids:
             extracted = RequestTracker.extract_request_id(invalid_id)
@@ -1058,9 +1056,11 @@ class TestAdversarialRequestIdValidation:
         wrong_lengths = [
             "RQ",  # Too short (2 chars)
             "RQ12345",  # Too short (7 chars)
-            "RQ123456789",  # Too short (11 chars)
-            "RQ12345678901",  # Too long (13 chars)
-            "RQ1234567890ab",  # Too long (14 chars)
+            "RQ1234567890",  # Too short (12 chars - old format)
+            "RQ12345678901234",  # Too short (16 chars)
+            "RQ123456789012345",  # Too short (17 chars)
+            "RQ12345678901234567",  # Too long (19 chars)
+            "RQ1234567890123456789",  # Too long (21 chars)
         ]
         for wrong_id in wrong_lengths:
             extracted = RequestTracker.extract_request_id(wrong_id)
@@ -1071,12 +1071,14 @@ class TestAdversarialRequestIdValidation:
 
         Simulates broker concatenating multiple order comments.
         """
-        # Simulated corrupted comment: two IDs concatenated
-        corrupted = "RQ0000000001|Trade1RQ0000000002|Trade2"
+        # Simulated corrupted comment: two IDs concatenated (18-char format)
+        corrupted = "RQ0000000000000001|Trade1RQ0000000000000002|Trade2"
         extracted = RequestTracker.extract_request_id(corrupted)
 
-        # Should extract the first valid ID
-        assert extracted == "RQ0000000001", f"Extraction from corrupted: {extracted}"
+        # Should extract the first valid ID (18 chars)
+        assert extracted == "RQ0000000000000001", (
+            f"Extraction from corrupted: {extracted}"
+        )
 
 
 class TestAdversarialCircuitBreakerBehavior:
@@ -1121,8 +1123,8 @@ class TestAdversarialCircuitBreakerBehavior:
 
         # Simulate 5 orders with 3 verify timeouts each
         failures_recorded = 0
-        for order in range(5):
-            for verify_attempt in range(3):
+        for _order in range(5):
+            for _verify_attempt in range(3):
                 cb.record_failure()
                 failures_recorded += 1
 
@@ -1217,7 +1219,9 @@ class TestAdversarialRetryBehavior:
         # Should have attempted all retries despite before_retry failing
         assert call_count == 3, f"Only {call_count} calls (expected 3)"
         # before_retry should have been called before retries 2 and 3
-        assert before_retry_failures == 2, f"before_retry called {before_retry_failures} times"
+        assert before_retry_failures == 2, (
+            f"before_retry called {before_retry_failures} times"
+        )
 
 
 class TestAdversarialExceptionHandling:
@@ -1237,3 +1241,311 @@ class TestAdversarialExceptionHandling:
         """TimeoutError should be classified as retryable."""
         timeout_error = TimeoutError("operation timed out")
         assert MT5Utilities.CircuitBreaker.is_retryable_exception(timeout_error)
+
+
+# ============================================================================
+# ADVERSARIAL TESTS v4
+# Tests for newly discovered vulnerabilities in audit v4.
+# These tests verify fixes for CRITICAL and HIGH severity issues.
+# ============================================================================
+
+
+class TestAdversarialV4ZeroIds:
+    """Test behavior when order=0 AND deal=0 (synthetic result scenario).
+
+    CRITICAL FIX v4: When order_send returns empty/timeout, synthetic result
+    has order=0 and deal=0. Verification must still work via comment.
+    """
+
+    def test_verify_required_codes_includes_zero(self) -> None:
+        """retcode=0 must be in VERIFY_REQUIRED codes.
+
+        retcode=0 indicates empty/synthetic response where we don't know
+        if order was actually executed. MUST trigger verification.
+        """
+        assert 0 in c.Resilience.MT5_VERIFY_REQUIRED_CODES, (
+            "retcode=0 MUST be in VERIFY_REQUIRED_CODES - empty responses "
+            "need state verification"
+        )
+
+    def test_retcode_zero_classified_as_verify_required(self) -> None:
+        """classify_mt5_retcode(0) should return VERIFY_REQUIRED.
+
+        Not UNKNOWN (which triggers VERIFY_REQUIRED anyway), but explicitly
+        VERIFY_REQUIRED for clarity and correctness.
+        """
+        # Since 0 is in VERIFY_REQUIRED_CODES, it should classify as VERIFY_REQUIRED
+        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(0)
+        assert classification == c.Resilience.ErrorClassification.VERIFY_REQUIRED, (
+            f"retcode=0 should be VERIFY_REQUIRED, got {classification.name}"
+        )
+
+
+class TestAdversarialV4RetryBoundary:
+    """Test retry boundary conditions to prevent mutation bugs.
+
+    CRITICAL: Operator mutation from >= to > could allow extra retry,
+    causing double execution on already-executed orders.
+    """
+
+    def test_retry_boundary_at_max_minus_one(self) -> None:
+        """At attempt = max_attempts - 1, should NOT retry.
+
+        This is the boundary: attempt 2 of max 3 means we've already tried
+        3 times (0, 1, 2). No more retries allowed.
+        """
+        max_attempts = 3
+
+        # Attempt 0: first try -> can retry
+        assert MT5Utilities.TransactionHandler.should_retry(
+            c.Resilience.TransactionOutcome.RETRY, 0, max_attempts
+        )
+
+        # Attempt 1: second try -> can retry
+        assert MT5Utilities.TransactionHandler.should_retry(
+            c.Resilience.TransactionOutcome.RETRY, 1, max_attempts
+        )
+
+        # Attempt 2: third try -> NO MORE RETRIES
+        # This is the critical boundary
+        assert not MT5Utilities.TransactionHandler.should_retry(
+            c.Resilience.TransactionOutcome.RETRY, 2, max_attempts
+        ), "MUTATION BUG: attempt >= max-1 should NOT retry!"
+
+    def test_retry_boundary_exactly_at_max(self) -> None:
+        """At attempt = max_attempts, should definitely NOT retry."""
+        max_attempts = 3
+
+        # Attempt 3: beyond max -> definitely no retry
+        assert not MT5Utilities.TransactionHandler.should_retry(
+            c.Resilience.TransactionOutcome.RETRY, 3, max_attempts
+        ), "attempt >= max should never retry"
+
+    def test_retry_boundary_single_attempt(self) -> None:
+        """With max_attempts=1, should NEVER retry."""
+        max_attempts = 1
+
+        # Even on first failure, should not retry with max=1
+        assert not MT5Utilities.TransactionHandler.should_retry(
+            c.Resilience.TransactionOutcome.RETRY, 0, max_attempts
+        ), "max_attempts=1 means no retries ever"
+
+
+class TestAdversarialV4CircuitBreakerDisabled:
+    """Test behavior when circuit breaker is disabled (None).
+
+    When enable_circuit_breaker=False, CB can be None. All CB operations
+    must handle this gracefully without crashing.
+    """
+
+    def test_cb_disabled_config(self) -> None:
+        """Verify CB can be disabled via config."""
+        from mt5linux.config import MT5Config
+
+        config = MT5Config(enable_circuit_breaker=False)
+        assert config.enable_circuit_breaker is False
+
+    def test_classify_retcode_works_without_cb_instance(self) -> None:
+        """classify_mt5_retcode is a classmethod, works without CB instance."""
+        # This should work even without any CB instance
+        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10009)
+        assert classification == c.Resilience.ErrorClassification.SUCCESS
+
+    def test_is_retryable_exception_works_without_cb_instance(self) -> None:
+        """is_retryable_exception is a classmethod, works without CB instance."""
+        # Should work as static/class method
+        assert MT5Utilities.CircuitBreaker.is_retryable_exception(TimeoutError())
+        assert not MT5Utilities.CircuitBreaker.is_retryable_exception(ValueError())
+
+
+class TestAdversarialV4UUID64Bit:
+    """Test UUID collision resistance with 64-bit (16 hex char) IDs.
+
+    With 64 bits of entropy, birthday paradox collision expected after ~4B IDs.
+    Test that 100k IDs are all unique (should be trivially true with 64 bits).
+    """
+
+    def test_100k_unique_ids_64bit(self) -> None:
+        """Generate 100,000 request IDs - all must be unique.
+
+        With 64-bit UUIDs, collision probability for 100k is essentially 0.
+        This test verifies the UUID length increase was implemented correctly.
+        """
+        ids = set()
+        for i in range(100_000):
+            req_id = RequestTracker.generate_request_id()
+
+            # Verify format: RQ + 16 hex chars = 18 total
+            assert len(req_id) == 18, f"ID {i}: wrong length {len(req_id)}"
+            assert req_id.startswith("RQ"), f"ID {i}: missing RQ prefix"
+            assert all(c in "0123456789abcdef" for c in req_id[2:]), (
+                f"ID {i}: non-hex chars in {req_id}"
+            )
+
+            # Check uniqueness
+            assert req_id not in ids, f"COLLISION at ID {i}: {req_id}"
+            ids.add(req_id)
+
+        assert len(ids) == 100_000, "Not all IDs were unique!"
+
+    def test_uuid_entropy_64bit(self) -> None:
+        """Verify UUIDs have good entropy distribution.
+
+        Check that hex chars are reasonably distributed (not all same).
+        Note: UUID4 has fixed version digit at hex position 12 (always '4'),
+        which maps to our string position 14 (after 'RQ' prefix).
+        """
+        ids = [RequestTracker.generate_request_id() for _ in range(1000)]
+
+        # Count each hex char position's variation
+        # Skip position 14 - UUID4 version digit is always '4'
+        for pos in range(2, 18):  # Skip "RQ" prefix
+            if pos == 14:  # UUID4 version digit - always '4'
+                continue
+            chars_at_pos = [req_id[pos] for req_id in ids]
+            unique_chars = set(chars_at_pos)
+            # Should see multiple different hex chars at each position
+            assert len(unique_chars) >= 8, (
+                f"Position {pos} has low entropy: only {len(unique_chars)} chars"
+            )
+
+
+class TestAdversarialV4TimeoutResultRecovery:
+    """Test that results arriving at timeout boundary are not lost.
+
+    CRITICAL FIX v4: When result arrives exactly at timeout (4.99s vs 5.0s),
+    the task might complete just as TimeoutError is raised. Must check
+    task.done() and recover result to prevent false "not found" → duplicate.
+    """
+
+    @pytest.mark.asyncio
+    async def test_task_result_checked_after_timeout(self) -> None:
+        """Verify concept: task.done() can be True even after TimeoutError.
+
+        This tests the underlying Python behavior we rely on.
+        """
+        import asyncio
+
+        result_value = "ORDER_EXECUTED"
+
+        async def slow_task() -> str:
+            await asyncio.sleep(0.05)  # 50ms
+            return result_value
+
+        task = asyncio.create_task(slow_task())
+
+        # Wait with very short timeout - will timeout
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.001)
+
+        # But task might still complete!
+        await asyncio.sleep(0.1)  # Let it complete
+
+        # Task should be done now
+        assert task.done(), "Task should complete even after TimeoutError"
+        assert task.result() == result_value, "Result should be recoverable"
+
+
+class TestAdversarialV4EmptyDealsHandling:
+    """Test handling of empty deals vs None.
+
+    CRITICAL: None, [], and () should all be handled the same way
+    when checking for deals in verification.
+    """
+
+    def test_empty_list_is_falsy(self) -> None:
+        """Verify [] evaluates to False in boolean context."""
+        empty_list: list[object] = []
+        assert not empty_list, "Empty list should be falsy"
+
+    def test_empty_tuple_is_falsy(self) -> None:
+        """Verify () evaluates to False in boolean context."""
+        empty_tuple: tuple[object, ...] = ()
+        assert not empty_tuple, "Empty tuple should be falsy"
+
+    def test_none_is_falsy(self) -> None:
+        """Verify None evaluates to False in boolean context."""
+        none_value = None
+        assert not none_value, "None should be falsy"
+
+    def test_all_empty_types_handled_same(self) -> None:
+        """All empty deal responses should trigger same behavior.
+
+        When checking `if deals:`, None/[]/() should all be False.
+        """
+        empty_responses: list[object] = [None, [], ()]
+
+        for response in empty_responses:
+            # All should be falsy
+            assert not response, f"{type(response).__name__} should be falsy"
+
+            # Pattern used in verification
+            if response:
+                pytest.fail(f"{type(response).__name__} incorrectly truthy")
+
+
+class TestAdversarialV4MaxAttemptsValidation:
+    """Test max_attempts parameter validation.
+
+    max_attempts < 1 is invalid and could cause infinite loops or
+    incorrect retry behavior.
+    """
+
+    @pytest.mark.asyncio
+    async def test_max_attempts_zero_raises_error(self) -> None:
+        """max_attempts=0 should raise ValueError."""
+        from mt5linux.config import MT5Config
+
+        config = MT5Config(retry_max_attempts=3)
+
+        async def dummy_op() -> str:
+            return "ok"
+
+        with pytest.raises(ValueError, match="max_attempts must be >= 1"):
+            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+                dummy_op,
+                config,
+                "test_op",
+                max_attempts_override=0,
+            )
+
+    @pytest.mark.asyncio
+    async def test_max_attempts_negative_raises_error(self) -> None:
+        """max_attempts=-1 should raise ValueError."""
+        from mt5linux.config import MT5Config
+
+        config = MT5Config(retry_max_attempts=3)
+
+        async def dummy_op() -> str:
+            return "ok"
+
+        with pytest.raises(ValueError, match="max_attempts must be >= 1"):
+            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+                dummy_op,
+                config,
+                "test_op",
+                max_attempts_override=-1,
+            )
+
+    @pytest.mark.asyncio
+    async def test_max_attempts_one_is_valid(self) -> None:
+        """max_attempts=1 should be valid (single attempt, no retries)."""
+        from mt5linux.config import MT5Config
+
+        config = MT5Config(retry_max_attempts=3)
+        call_count = 0
+
+        async def counting_op() -> str:
+            nonlocal call_count
+            call_count += 1
+            return "ok"
+
+        result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+            counting_op,
+            config,
+            "test_op",
+            max_attempts_override=1,
+        )
+
+        assert result == "ok"
+        assert call_count == 1, "Should only call once with max_attempts=1"

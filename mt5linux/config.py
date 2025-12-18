@@ -134,16 +134,34 @@ class MT5Config(BaseSettings):
     """Max delay for CRITICAL retries. If None, uses retry_max_delay/2."""
 
     # =========================================================================
-    # RESILIENCE FEATURE FLAGS (opt-in for backward compatibility)
+    # RESILIENCE FEATURE FLAGS (enabled by default for production reliability)
     # =========================================================================
-    enable_auto_reconnect: bool = False
+    enable_auto_reconnect: bool = True
     """Enable automatic reconnection with exponential backoff."""
 
-    enable_health_monitor: bool = False
+    enable_health_monitor: bool = True
     """Enable background health monitoring task."""
 
-    enable_circuit_breaker: bool = False
+    enable_circuit_breaker: bool = True
     """Enable circuit breaker pattern for cascading failure prevention."""
+
+    # =========================================================================
+    # REQUEST QUEUE - PARALLEL EXECUTION
+    # =========================================================================
+    queue_max_concurrent: int = 10
+    """Max SIMULTANEOUS operations executing in parallel (match server workers)."""
+
+    queue_max_depth: int = 1000
+    """Max pending requests before backpressure (raises QueueFullError)."""
+
+    # =========================================================================
+    # WRITE-AHEAD LOG (WAL) - ORDER PERSISTENCE
+    # =========================================================================
+    wal_path: str = "~/.mt5linux/wal.db"
+    """Path to WAL SQLite database for order persistence."""
+
+    wal_retention_days: int = 7
+    """Auto-cleanup verified/failed WAL entries older than this."""
 
     # =========================================================================
     # SERVER (bridge.py)  # noqa: ERA001
@@ -238,8 +256,7 @@ class MT5Config(BaseSettings):
             else self.retry_max_delay / 2
         )
         delay = min(
-            self.critical_retry_initial_delay
-            * (self.retry_exponential_base**attempt),
+            self.critical_retry_initial_delay * (self.retry_exponential_base**attempt),
             max_delay,
         )
         if self.retry_jitter:

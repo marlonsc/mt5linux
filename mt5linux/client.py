@@ -32,7 +32,7 @@ from mt5linux.config import MT5Config
 from mt5linux.protocols import MT5Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
+    from collections.abc import Callable, Coroutine
     from datetime import datetime
     from types import TracebackType
 
@@ -602,9 +602,7 @@ class MetaTrader5(MT5Protocol):
             )
         )
 
-    def order_check(
-        self, request: dict[str, Any]
-    ) -> MT5Models.OrderCheckResult | None:
+    def order_check(self, request: dict[str, Any]) -> MT5Models.OrderCheckResult | None:
         """Check order validity without sending.
 
         Args:
@@ -627,6 +625,89 @@ class MetaTrader5(MT5Protocol):
 
         """
         return self._run(self._async_client.order_send(request))
+
+    # =========================================================================
+    # MT5LINUX EXTENSIONS - ASYNC ORDER METHODS
+    # =========================================================================
+
+    def order_send_async(
+        self,
+        request: dict[str, Any],
+        on_complete: Callable[[MT5Models.OrderResult], None] | None = None,
+        on_error: Callable[[Exception], None] | None = None,
+    ) -> str:
+        """Send order asynchronously with callback notification.
+
+        This is an mt5linux extension (not in MetaTrader5 PyPI).
+        Returns immediately with request_id. Executes order in background.
+        Calls on_complete(result) or on_error(exception) when done.
+
+        Args:
+            request: Order request dict (same format as order_send).
+            on_complete: Callback called with OrderResult on success.
+            on_error: Callback called with Exception on failure.
+
+        Returns:
+            request_id: Unique ID to track this order (also in WAL).
+
+        Example:
+            def handle_result(result):
+                print(f"Order {result.order} executed: {result.retcode}")
+
+            request_id = mt5.order_send_async(
+                {"action": TRADE_ACTION_DEAL, "symbol": "EURUSD", ...},
+                on_complete=handle_result,
+            )
+            print(f"Order queued: {request_id}")
+
+        """
+        return self._run(
+            self._async_client.order_send_async(request, on_complete, on_error)
+        )
+
+    def order_send_batch(
+        self,
+        requests: list[dict[str, Any]],
+        on_each_complete: Callable[[str, MT5Models.OrderResult], None] | None = None,
+        on_each_error: Callable[[str, Exception], None] | None = None,
+        on_all_complete: (
+            Callable[[dict[str, MT5Models.OrderResult | Exception]], None] | None
+        ) = None,
+    ) -> list[str]:
+        """Send multiple orders in parallel with batch callbacks.
+
+        This is an mt5linux extension (not in MetaTrader5 PyPI).
+        All orders execute SIMULTANEOUSLY (up to queue_max_concurrent).
+        Each order gets individual callback, plus batch completion callback.
+
+        Args:
+            requests: List of order request dicts.
+            on_each_complete: Called for each successful order (request_id, result).
+            on_each_error: Called for each failed order (request_id, exception).
+            on_all_complete: Called when ALL orders complete (dict of results).
+
+        Returns:
+            List of request_ids for all orders.
+
+        Example:
+            def on_each(rid, result):
+                print(f"Order {rid}: {result.retcode}")
+
+            def on_all(all_results):
+                print(f"Batch complete: {len(all_results)} orders")
+
+            request_ids = mt5.order_send_batch(
+                [order1, order2, order3],
+                on_each_complete=on_each,
+                on_all_complete=on_all,
+            )
+
+        """
+        return self._run(
+            self._async_client.order_send_batch(
+                requests, on_each_complete, on_each_error, on_all_complete
+            )
+        )
 
     # =========================================================================
     # POSITIONS METHODS
@@ -715,9 +796,7 @@ class MetaTrader5(MT5Protocol):
             Count of historical orders.
 
         """
-        return self._run(
-            self._async_client.history_orders_total(date_from, date_to)
-        )
+        return self._run(self._async_client.history_orders_total(date_from, date_to))
 
     def history_orders_get(
         self,
@@ -765,9 +844,7 @@ class MetaTrader5(MT5Protocol):
             Count of historical deals.
 
         """
-        return self._run(
-            self._async_client.history_deals_total(date_from, date_to)
-        )
+        return self._run(self._async_client.history_deals_total(date_from, date_to))
 
     def history_deals_get(
         self,

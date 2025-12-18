@@ -226,7 +226,12 @@ def is_grpc_service_ready(
         num_constants = len(response.values)
         _log(f"gRPC check: ready (got {num_constants} constants)")
     except grpc.RpcError as e:
-        _log(f"gRPC check: FAILED - {type(e).__name__}")
+        error_code = e.code() if hasattr(e, "code") else "UNKNOWN"
+        error_details = e.details() if hasattr(e, "details") else str(e)
+        _log(
+            f"gRPC check: FAILED at {host}:{grpc_port} - "
+            f"{type(e).__name__} (code={error_code}): {error_details}"
+        )
         return False
 
     # Service is ready if we got any constants
@@ -475,7 +480,7 @@ def _run_codegen() -> None:
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,
-            timeout=60,
+            timeout=tc.CONTAINER_TIMEOUT,
             check=False,
         )
         if result.returncode != 0:
@@ -582,77 +587,29 @@ def mt5_raw(_mt5_session_raw: MetaTrader5) -> MetaTrader5:
 
 @pytest.fixture
 def mt5(_mt5_session_initialized: MetaTrader5) -> MetaTrader5:
-    """Return fully initialized MT5 client with auto-reconnect.
+    """Return fully initialized MT5 client.
 
     This fixture returns the session-scoped initialized connection.
-    Includes resilience: auto-reconnects if connection was lost by other tests.
-    Skips test if MT5_LOGIN is not configured (=0), credentials missing,
-    or if initialization fails.
+    The client itself handles resilience/auto-reconnect internally.
+    Skips test if MT5_LOGIN is not configured.
     """
     # Skip test if no MT5 credentials configured
     if not has_mt5_credentials():
         pytest.skip(SKIP_NO_CREDENTIALS)
 
-    # Resilience: reconnect if connection was lost
-    if not _mt5_session_initialized.is_connected:
-        _log("RESILIENCE: Reconnecting MT5 connection")
-        try:
-            _mt5_session_initialized.connect()
-        except (grpc.RpcError, ConnectionError, OSError) as e:
-            pytest.fail(f"MT5 reconnection failed: {e}")
+    # Simple validation - client handles resilience internally
+    info = _mt5_session_initialized.terminal_info()
+    if info is None:
+        pytest.fail("MT5 terminal_info returned None - check client resilience")
 
-    # Resilience: re-initialize if terminal state lost
-    try:
-        info = _mt5_session_initialized.terminal_info()
-        if info is None:
-            msg = "Terminal not initialized"
-            raise RuntimeError(msg)
+    if not info.connected:
+        pytest.fail("MT5 terminal not connected - check client auto-reconnect")
 
-        # Verify terminal is ready for trading
-        if not info.trade_allowed:
-            pytest.fail("MT5 terminal reports trade_allowed=False")
+    account = _mt5_session_initialized.account_info()
+    if account is None:
+        pytest.fail("MT5 account_info returned None")
 
-        if not info.connected:
-            pytest.fail("MT5 terminal reports connected=False")
-
-        # Verify account is accessible
-        account = _mt5_session_initialized.account_info()
-        if account is None:
-            pytest.fail("Cannot get account info - MT5 not ready")
-
-        if not account.trade_allowed:
-            pytest.fail("MT5 account reports trade_allowed=False")
-
-        _log(
-            f"MT5 ready: connected={info.connected}, trade_allowed={info.trade_allowed}, account_trade_allowed={account.trade_allowed}"
-        )
-
-    except Exception:  # noqa: BLE001 - catch all for resilience handling
-        _log("RESILIENCE: Re-initializing MT5 terminal")
-        try:
-            result = _mt5_session_initialized.initialize(
-                login=MT5_LOGIN,
-                password=MT5_PASSWORD,
-                server=MT5_SERVER,
-            )
-            if not result:
-                error = _mt5_session_initialized.last_error()
-                pytest.fail(f"MT5 re-initialize failed: {error}")
-
-            # Wait a bit for MT5 to be fully ready
-            time.sleep(2)
-
-            # Verify after re-initialization
-            info = _mt5_session_initialized.terminal_info()
-            if info is None or not info.trade_allowed or not info.connected:
-                pytest.fail("MT5 not ready for trading after re-initialization")
-
-            account = _mt5_session_initialized.account_info()
-            if account is None or not account.trade_allowed:
-                pytest.fail("MT5 account not ready for trading after re-initialization")
-
-        except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
-            pytest.fail(f"MT5 re-initialize failed: {e}")
+    _log(f"MT5 ready: connected={info.connected}, trade_allowed={info.trade_allowed}")
 
     return _mt5_session_initialized
 
@@ -717,7 +674,9 @@ def market_book_symbol(mt5: MetaTrader5) -> Generator[str]:
     Adds market book subscription and cleans up after test.
     """
     symbol = "EURUSD"
-    mt5.market_book_add(symbol)
+    result = mt5.market_book_add(symbol)
+    if not result:
+        pytest.skip(f"Failed to subscribe to market book for {symbol}")
     yield symbol
     with contextlib.suppress(Exception):
         mt5.market_book_release(symbol)
@@ -756,7 +715,16 @@ def cleanup_test_positions(mt5: MetaTrader5) -> Generator[None]:
                     "magic": tc.TEST_ORDER_MAGIC,
                     "comment": "pytest cleanup",
                 }
-                mt5.order_send(request)
+                try:
+                    result = mt5.order_send(request)
+                    if result is None:
+                        _log(f"Warning: Close pos {pos.ticket} - returned None")
+                    elif result.retcode != mt5.TRADE_RETCODE_DONE:
+                        _log(f"Warning: Close pos {pos.ticket} - ret {result.retcode}")
+                    else:
+                        _log(f"Cleanup: Closed position {pos.ticket}")
+                except Exception as e:  # noqa: BLE001 - cleanup should not fail test
+                    _log(f"Warning: Exception closing pos {pos.ticket}: {e}")
     except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
         _log(f"Warning: Failed to cleanup test positions: {e}")
 
@@ -795,12 +763,12 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
     tick = mt5.symbol_info_tick(symbol)
 
     if tick is None:
-        pytest.skip(f"Cannot get tick for {symbol} - market may be closed")
+        pytest.fail(f"Cannot get tick for {symbol} - market may be closed")
 
     # Get symbol filling mode to use correct one
     symbol_info = mt5.symbol_info(symbol)
     if symbol_info is None:
-        pytest.skip(f"Cannot get symbol_info for {symbol}")
+        pytest.fail(f"Cannot get symbol_info for {symbol}")
     filling_mode = _get_filling_mode(mt5, symbol_info.filling_mode)
 
     # Place buy order
@@ -820,13 +788,13 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
     try:
         result = mt5.order_send(buy_request)
     except MT5Utilities.Exceptions.Error as e:
-        pytest.skip(f"order_send failed with error: {e}")
+        pytest.fail(f"order_send failed with error: {e}")
 
     if result is None:
-        pytest.skip("order_send returned None")
+        pytest.fail("order_send returned None")
 
     if result.retcode != mt5.TRADE_RETCODE_DONE:
-        pytest.skip(f"order_send returned retcode {result.retcode}, expected DONE")
+        pytest.fail(f"order_send returned retcode {result.retcode}, expected DONE")
 
     order_ticket = result.order
     deal_ticket = result.deal
@@ -841,14 +809,14 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
                 break
 
     if position is None:
-        pytest.skip("Position not found after order_send - position tracking issue")
+        pytest.fail("Position not found after order_send - position tracking issue")
 
     position_id = position.ticket
 
     # Close the position immediately
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
-        pytest.skip(f"Cannot get tick for {symbol} to close position")
+        pytest.fail(f"Cannot get tick for {symbol} to close position")
 
     close_request = {
         "action": mt5.TRADE_ACTION_DEAL,
@@ -857,7 +825,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
         "type": mt5.ORDER_TYPE_SELL,
         "position": position.ticket,
         "price": tick.bid,
-        "deviation": 50,
+        "deviation": tc.HIGH_DEVIATION,
         "magic": c.Test.Order.HISTORY_MAGIC,
         "comment": "pytest history close",
         "type_time": mt5.ORDER_TIME_GTC,
@@ -867,18 +835,28 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
     try:
         close_result = mt5.order_send(close_request)
     except MT5Utilities.Exceptions.Error as e:
-        pytest.skip(f"Failed to close position: {e}")
+        pytest.fail(f"Failed to close position: {e}")
 
     if close_result is None:
-        pytest.skip("order_send for close returned None")
+        pytest.fail("order_send for close returned None")
 
-    return {
+    # Validate all tickets are positive before returning
+    result_dict = {
         "deal_ticket": deal_ticket,
         "order_ticket": order_ticket,
         "position_id": position_id,
         "close_deal_ticket": close_result.deal,
         "close_order_ticket": close_result.order,
     }
+
+    for key, value in result_dict.items():
+        if not isinstance(value, int) or value <= 0:
+            pytest.fail(
+                f"Invalid {key} after order execution: {value}. "
+                "Order/deal creation may have failed silently."
+            )
+
+    return result_dict
 
 
 # =============================================================================

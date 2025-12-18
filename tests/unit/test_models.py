@@ -12,24 +12,15 @@ import pytest
 from pydantic import ValidationError
 
 from mt5linux.models import MT5Models
-
-from .conftest import c, tc
-
-# Type aliases for test convenience
-OrderRequest = MT5Models.OrderRequest
-OrderResult = MT5Models.OrderResult
-AccountInfo = MT5Models.AccountInfo
-SymbolInfo = MT5Models.SymbolInfo
-Position = MT5Models.Position
-Tick = MT5Models.Tick
+from tests.conftest import c, tc
 
 
 class TestOrderRequest:
-    """Tests for OrderRequest model."""
+    """Tests for MT5Models.OrderRequest model."""
 
     def test_valid_market_order(self) -> None:
         """Test valid market buy order."""
-        request = OrderRequest(
+        request = MT5Models.OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
             volume=tc.TEST_VOLUME_MICRO,
@@ -43,7 +34,7 @@ class TestOrderRequest:
 
     def test_valid_limit_order(self) -> None:
         """Test valid limit order."""
-        request = OrderRequest(
+        request = MT5Models.OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
             volume=0.5,
@@ -59,7 +50,7 @@ class TestOrderRequest:
     def test_invalid_volume_zero(self) -> None:
         """Test validation rejects zero volume."""
         with pytest.raises(ValidationError) as exc_info:
-            OrderRequest(
+            MT5Models.OrderRequest(
                 action=c.Order.TradeAction.DEAL,
                 symbol="EURUSD",
                 volume=0,
@@ -70,7 +61,7 @@ class TestOrderRequest:
     def test_invalid_volume_negative(self) -> None:
         """Test validation rejects negative volume."""
         with pytest.raises(ValidationError):
-            OrderRequest(
+            MT5Models.OrderRequest(
                 action=c.Order.TradeAction.DEAL,
                 symbol="EURUSD",
                 volume=-tc.MINI_LOT,
@@ -80,7 +71,7 @@ class TestOrderRequest:
     def test_invalid_volume_too_large(self) -> None:
         """Test validation rejects volume > 1000."""
         with pytest.raises(ValidationError):
-            OrderRequest(
+            MT5Models.OrderRequest(
                 action=c.Order.TradeAction.DEAL,
                 symbol="EURUSD",
                 volume=tc.INVALID_VOLUME,
@@ -89,7 +80,7 @@ class TestOrderRequest:
 
     def test_to_mt5_request_basic(self) -> None:
         """Test to_mt5_request produces valid MT5 request."""
-        request = OrderRequest(
+        request = MT5Models.OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
             volume=tc.TEST_VOLUME_MICRO,
@@ -108,7 +99,7 @@ class TestOrderRequest:
 
     def test_to_mt5_request_with_sl_tp(self) -> None:
         """Test to_mt5_request includes sl/tp when set."""
-        request = OrderRequest(
+        request = MT5Models.OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
             volume=tc.TEST_VOLUME_MICRO,
@@ -124,7 +115,7 @@ class TestOrderRequest:
     def test_to_mt5_request_with_expiration(self) -> None:
         """Test to_mt5_request converts expiration to timestamp."""
         exp = datetime(2025, 12, 31, 23, 59, 59, tzinfo=UTC)
-        request = OrderRequest(
+        request = MT5Models.OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
             volume=tc.TEST_VOLUME_MICRO,
@@ -140,7 +131,7 @@ class TestOrderRequest:
 
     def test_frozen_model(self) -> None:
         """Test model is frozen (immutable)."""
-        request = OrderRequest(
+        request = MT5Models.OrderRequest(
             action=c.Order.TradeAction.DEAL,
             symbol="EURUSD",
             volume=tc.TEST_VOLUME_MICRO,
@@ -151,11 +142,11 @@ class TestOrderRequest:
 
 
 class TestOrderResult:
-    """Tests for OrderResult model."""
+    """Tests for MT5Models.OrderResult model."""
 
     def test_success_result(self) -> None:
         """Test successful order result."""
-        result = OrderResult(
+        result = MT5Models.OrderResult(
             retcode=c.Order.TradeRetcode.DONE,
             deal=tc.TEST_MAGIC_DEFAULT,
             order=tc.TEST_ORDER_DEFAULT,
@@ -169,7 +160,7 @@ class TestOrderResult:
 
     def test_partial_result(self) -> None:
         """Test partial fill result."""
-        result = OrderResult(
+        result = MT5Models.OrderResult(
             retcode=c.Order.TradeRetcode.DONE_PARTIAL,
             volume=0.05,
         )
@@ -178,7 +169,7 @@ class TestOrderResult:
 
     def test_error_result(self) -> None:
         """Test error result."""
-        result = OrderResult(
+        result = MT5Models.OrderResult(
             retcode=c.Order.TradeRetcode.NO_MONEY,
             comment="Not enough money",
         )
@@ -224,18 +215,18 @@ class TestOrderResult:
 
     def test_from_mt5_none(self) -> None:
         """Test from_mt5 with None returns error result."""
-        result = OrderResult.from_mt5(None)
+        result = MT5Models.OrderResult.from_mt5(None)
 
         assert result.retcode == c.Order.TradeRetcode.ERROR
         assert "No result" in result.comment
 
 
 class TestAccountInfo:
-    """Tests for AccountInfo model."""
+    """Tests for MT5Models.AccountInfo model."""
 
     def test_from_mt5(self) -> None:
-        """Test from_mt5 creates valid AccountInfo (using namedtuple)."""
-        # Create namedtuple with all 28 AccountInfo fields
+        """Test from_mt5 creates valid MT5Models.AccountInfo (using namedtuple)."""
+        # Create namedtuple with all 28 MT5Models.AccountInfo fields
         AccountInfoTuple = namedtuple(  # noqa: PYI024
             "AccountInfoTuple",
             [
@@ -300,7 +291,7 @@ class TestAccountInfo:
             trade_mode=0,
         )
 
-        account = AccountInfo.from_mt5(mt5_info)
+        account = MT5Models.AccountInfo.from_mt5(mt5_info)
 
         assert account.login == tc.TEST_MAGIC_DEFAULT
         assert account.balance == tc.TEST_ACCOUNT_BALANCE
@@ -309,16 +300,16 @@ class TestAccountInfo:
 
     def test_from_mt5_none(self) -> None:
         """Test from_mt5 with None returns None."""
-        account = AccountInfo.from_mt5(None)
+        account = MT5Models.AccountInfo.from_mt5(None)
         assert account is None
 
 
 class TestSymbolInfo:
-    """Tests for SymbolInfo model."""
+    """Tests for MT5Models.SymbolInfo model."""
 
     def test_from_mt5(self) -> None:
-        """Test from_mt5 creates valid SymbolInfo (using dict)."""
-        # Use dict since SymbolInfo has 96 fields - too many for namedtuple
+        """Test from_mt5 creates valid MT5Models.SymbolInfo (using dict)."""
+        # Use dict since MT5Models.SymbolInfo has 96 fields - too many for namedtuple
         mt5_info = {
             # Core identification
             "name": "EURUSD",
@@ -385,7 +376,7 @@ class TestSymbolInfo:
             "price_greeks_vega": 0.0,
             "price_greeks_rho": 0.0,
             "price_greeks_omega": 0.0,
-            # Point/Tick
+            # Point/MT5Models.Tick
             "point": 0.00001,
             "trade_tick_value": 1.0,
             "trade_tick_value_profit": 0.0,
@@ -435,7 +426,7 @@ class TestSymbolInfo:
             "session_price_limit_max": 0.0,
         }
 
-        symbol = SymbolInfo.from_mt5(mt5_info)
+        symbol = MT5Models.SymbolInfo.from_mt5(mt5_info)
 
         assert symbol.name == "EURUSD"
         assert symbol.bid == 1.0900
@@ -444,10 +435,10 @@ class TestSymbolInfo:
 
 
 class TestPosition:
-    """Tests for Position model."""
+    """Tests for MT5Models.Position model."""
 
     def test_from_mt5(self) -> None:
-        """Test from_mt5 creates valid Position (using namedtuple)."""
+        """Test from_mt5 creates valid MT5Models.Position (using namedtuple)."""
         PositionTuple = namedtuple(  # noqa: PYI024
             "PositionTuple",
             [
@@ -494,7 +485,7 @@ class TestPosition:
             external_id="",
         )
 
-        position = Position.from_mt5(mt5_pos)
+        position = MT5Models.Position.from_mt5(mt5_pos)
 
         assert position.ticket == tc.TEST_MAGIC_LARGE
         assert position.volume == 0.1
@@ -503,13 +494,22 @@ class TestPosition:
 
 
 class TestTick:
-    """Tests for Tick model."""
+    """Tests for MT5Models.Tick model."""
 
     def test_from_mt5(self) -> None:
-        """Test from_mt5 creates valid Tick (using namedtuple)."""
+        """Test from_mt5 creates valid MT5Models.Tick (using namedtuple)."""
         TickTuple = namedtuple(  # noqa: PYI024
             "TickTuple",
-            ["time", "bid", "ask", "last", "volume", "time_msc", "flags", "volume_real"],  # noqa: E501
+            [
+                "time",
+                "bid",
+                "ask",
+                "last",
+                "volume",
+                "time_msc",
+                "flags",
+                "volume_real",
+            ],
         )
         mt5_tick = TickTuple(
             time=tc.TEST_TIMESTAMP_EPOCH,
@@ -522,7 +522,7 @@ class TestTick:
             volume_real=100.0,
         )
 
-        tick = Tick.from_mt5(mt5_tick)
+        tick = MT5Models.Tick.from_mt5(mt5_tick)
 
         assert tick.time == tc.TEST_TIMESTAMP_EPOCH
         assert tick.bid == 1.0900

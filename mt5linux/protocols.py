@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
 
     import numpy as np
@@ -856,6 +857,60 @@ class AsyncMT5Protocol(Protocol):
 
     async def market_book_release(self, symbol: str) -> bool:
         """Unsubscribe from market depth (DOM) for a symbol (async)."""
+        ...
+
+    # =========================================================================
+    # MT5LINUX EXTENSIONS (NOT in MetaTrader5 PyPI)
+    # These methods are mt5linux-specific additions for enhanced functionality.
+    # =========================================================================
+
+    async def order_send_async(
+        self,
+        request: dict[str, JSONValue],
+        on_complete: Callable[[MT5Models.OrderResult], None] | None = None,
+        on_error: Callable[[Exception], None] | None = None,
+    ) -> str:
+        """Send order asynchronously with callback notification.
+
+        Returns IMMEDIATELY with request_id.
+        Executes order in background via queue.
+        Calls on_complete(result) or on_error(exception) when done.
+
+        Args:
+            request: Order request dict (same format as order_send).
+            on_complete: Callback called with OrderResult on success.
+            on_error: Callback called with Exception on failure.
+
+        Returns:
+            request_id: Unique ID to track this order.
+
+        """
+        ...
+
+    async def order_send_batch(
+        self,
+        requests: list[dict[str, JSONValue]],
+        on_each_complete: Callable[[str, MT5Models.OrderResult], None] | None = None,
+        on_each_error: Callable[[str, Exception], None] | None = None,
+        on_all_complete: (
+            Callable[[dict[str, MT5Models.OrderResult | Exception]], None] | None
+        ) = None,
+    ) -> list[str]:
+        """Send multiple orders in parallel with batch callbacks.
+
+        All orders execute SIMULTANEOUSLY (up to queue_max_concurrent).
+        Each order gets individual callback, plus batch completion callback.
+
+        Args:
+            requests: List of order request dicts.
+            on_each_complete: Called for each successful order (request_id, result).
+            on_each_error: Called for each failed order (request_id, exception).
+            on_all_complete: Called when ALL orders complete (dict of results/errors).
+
+        Returns:
+            List of request_ids for all orders.
+
+        """
         ...
 
 

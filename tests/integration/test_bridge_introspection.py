@@ -138,9 +138,7 @@ class TestGetTupleFieldOrder:
         assert result is not None
         assert result == ["time", "bid", "ask", "last", "volume", "flags"]
 
-    def test_empty_namedtuple(
-        self, get_tuple_field_order: TupleFieldOrderFn
-    ) -> None:
+    def test_empty_namedtuple(self, get_tuple_field_order: TupleFieldOrderFn) -> None:
         """Empty namedtuple should return empty list."""
         EmptyTuple = namedtuple("EmptyTuple", [])  # noqa: PYI024
 
@@ -206,9 +204,7 @@ class TestGetTupleFieldOrderIntegration:
         assert result[12] == "login"
         assert result[-1] == "trade_mode"
 
-    def test_position_structure(
-        self, get_tuple_field_order: TupleFieldOrderFn
-    ) -> None:
+    def test_position_structure(self, get_tuple_field_order: TupleFieldOrderFn) -> None:
         """Test with Position-like structure (19 fields)."""
         TradePosition = namedtuple(  # noqa: PYI024
             "TradePosition",
@@ -242,9 +238,7 @@ class TestGetTupleFieldOrderIntegration:
         assert result[0] == "ticket"
         assert result[-1] == "external_id"
 
-    def test_tick_structure(
-        self, get_tuple_field_order: TupleFieldOrderFn
-    ) -> None:
+    def test_tick_structure(self, get_tuple_field_order: TupleFieldOrderFn) -> None:
         """Test with Tick-like structure (8 fields)."""
         Tick = namedtuple(  # noqa: PYI024
             "Tick",

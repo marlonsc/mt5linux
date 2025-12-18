@@ -224,6 +224,7 @@ class MT5Constants:
 
         MT5_VERIFY_REQUIRED_CODES: ClassVar[frozenset[int]] = frozenset(
             {
+                0,  # EMPTY/SYNTHETIC - response was empty, verify state!
                 10012,  # TIMEOUT - order MAY have been executed!
                 10031,  # CONNECTION - order MAY have been sent!
             }

@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from mt5linux.async_client import AsyncMetaTrader5
-
 from tests.conftest import (
     TEST_GRPC_HOST,
     TEST_GRPC_PORT,
@@ -128,9 +127,9 @@ class TestAsyncMetaTrader5Terminal:
         """Test async terminal_info retrieval."""
         terminal = await async_mt5.terminal_info()
         assert terminal is not None
-        assert terminal.connected is True
-        assert hasattr(terminal, "name")
-        assert hasattr(terminal, "path")
+        assert terminal.connected is True, "Terminal should be connected"
+        assert terminal.name, f"Expected terminal name, got {terminal.name!r}"
+        assert terminal.path, f"Expected terminal path, got {terminal.path!r}"
 
 
 class TestAsyncMetaTrader5Account:
@@ -141,11 +140,18 @@ class TestAsyncMetaTrader5Account:
         """Test async account_info retrieval."""
         account = await async_mt5.account_info()
         assert account is not None, "account_info returned None"
-        assert account.login > 0
-        assert account.balance >= 0
-        assert hasattr(account, "equity")
-        assert hasattr(account, "margin")
-        assert hasattr(account, "currency")
+        assert account.login > 0, f"Expected positive login, got {account.login}"
+        assert isinstance(account.balance, float | int), (
+            f"Balance should be numeric, got {type(account.balance)}"
+        )
+        assert account.balance >= 0, (
+            f"Balance should be non-negative, got {account.balance}"
+        )
+        assert account.equity is not None, "Expected equity field"
+        assert account.margin is not None, "Expected margin field"
+        assert account.currency, (
+            f"Expected non-empty currency, got {account.currency!r}"
+        )
 
 
 class TestAsyncMetaTrader5Symbols:
@@ -175,11 +181,11 @@ class TestAsyncMetaTrader5Symbols:
         await async_mt5.symbol_select("EURUSD", enable=True)
         info = await async_mt5.symbol_info("EURUSD")
         assert info is not None, "symbol_info returned None"
-        assert info.name == "EURUSD"
-        assert hasattr(info, "bid")
-        assert hasattr(info, "ask")
-        assert hasattr(info, "point")
-        assert hasattr(info, "digits")
+        assert info.name == "EURUSD", f"Expected EURUSD, got {info.name}"
+        assert info.bid > 0, f"Expected positive bid, got {info.bid}"
+        assert info.ask > 0, f"Expected positive ask, got {info.ask}"
+        assert info.point > 0, f"Expected positive point, got {info.point}"
+        assert info.digits >= 0, f"Expected non-negative digits, got {info.digits}"
 
     @pytest.mark.asyncio
     async def test_symbol_info_tick(self, async_mt5: AsyncMetaTrader5) -> None:
@@ -187,9 +193,11 @@ class TestAsyncMetaTrader5Symbols:
         await async_mt5.symbol_select("EURUSD", enable=True)
         tick = await async_mt5.symbol_info_tick("EURUSD")
         assert tick is not None, "symbol_info_tick returned None"
-        assert tick.bid > 0 or tick.ask > 0
-        assert hasattr(tick, "time")
-        assert hasattr(tick, "volume")
+        assert tick.bid > 0 or tick.ask > 0, (
+            f"Expected positive bid or ask, got bid={tick.bid}, ask={tick.ask}"
+        )
+        assert tick.time > 0, f"Expected positive timestamp, got {tick.time}"
+        assert tick.volume >= 0, f"Expected non-negative volume, got {tick.volume}"
 
     @pytest.mark.asyncio
     async def test_symbol_select(self, async_mt5: AsyncMetaTrader5) -> None:
@@ -229,10 +237,10 @@ class TestAsyncMetaTrader5MarketData:
         # May return None if market closed or RPyC serialization issue
         if rates is None:
             pytest.fail("Market data not available (market may be closed)")
-        assert len(rates) > 0
-        assert hasattr(rates, "dtype")
+        assert len(rates) > 0, "copy_rates_from_pos returned empty array"
+        assert hasattr(rates, "dtype"), "rates should be numpy array with dtype"
         # Verify rate structure
-        assert rates.dtype.names is not None
+        assert rates.dtype.names is not None, "rates dtype should have named fields"
         assert "time" in rates.dtype.names
         assert "open" in rates.dtype.names
         assert "high" in rates.dtype.names
@@ -291,8 +299,10 @@ class TestAsyncMetaTrader5Positions:
     async def test_positions_total(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async positions_total."""
         total = await async_mt5.positions_total()
-        assert isinstance(total, int)
-        assert total >= 0
+        assert isinstance(total, int), (
+            f"positions_total should return int, got {type(total)}"
+        )
+        assert total >= 0, f"positions_total should be non-negative, got {total}"
 
     @pytest.mark.asyncio
     async def test_positions_get(self, async_mt5: AsyncMetaTrader5) -> None:
@@ -310,8 +320,10 @@ class TestAsyncMetaTrader5Orders:
     async def test_orders_total(self, async_mt5: AsyncMetaTrader5) -> None:
         """Test async orders_total."""
         total = await async_mt5.orders_total()
-        assert isinstance(total, int)
-        assert total >= 0
+        assert isinstance(total, int), (
+            f"orders_total should return int, got {type(total)}"
+        )
+        assert total >= 0, f"orders_total should be non-negative, got {total}"
 
     @pytest.mark.asyncio
     async def test_orders_get(self, async_mt5: AsyncMetaTrader5) -> None:
@@ -333,8 +345,12 @@ class TestAsyncMetaTrader5History:
         total = await async_mt5.history_orders_total(date_from, date_to)
         # May return None if no history
         if total is not None:
-            assert isinstance(total, int)
-            assert total >= 0
+            assert isinstance(total, int), (
+                f"history_orders_total should return int, got {type(total)}"
+            )
+            assert total >= 0, (
+                f"history_orders_total should be non-negative, got {total}"
+            )
 
     @pytest.mark.asyncio
     async def test_history_orders_get(self, async_mt5: AsyncMetaTrader5) -> None:
@@ -356,8 +372,12 @@ class TestAsyncMetaTrader5History:
         total = await async_mt5.history_deals_total(date_from, date_to)
         # May return None if no history
         if total is not None:
-            assert isinstance(total, int)
-            assert total >= 0
+            assert isinstance(total, int), (
+                f"history_deals_total should return int, got {type(total)}"
+            )
+            assert total >= 0, (
+                f"history_deals_total should be non-negative, got {total}"
+            )
 
     @pytest.mark.asyncio
     async def test_history_deals_get(self, async_mt5: AsyncMetaTrader5) -> None:
@@ -436,7 +456,9 @@ class TestAsyncMetaTrader5Trading:
         if result is None:
             pytest.fail("Order check not available (market may be closed)")
         # Check result has expected fields
-        assert hasattr(result, "retcode")
+        assert hasattr(result, "retcode"), (
+            "order_check result should have retcode field"
+        )
 
 
 class TestAsyncMetaTrader5Concurrent:
@@ -462,7 +484,7 @@ class TestAsyncMetaTrader5Concurrent:
             for r in results:
                 if isinstance(r, Exception):
                     if "timeout" in str(r).lower() or "grpc" in str(r).lower():
-                        pytest.fail("gRPC timeout during concurrent fetch: r")
+                        pytest.fail(f"gRPC timeout during concurrent fetch: {r}")
                     non_timeout_exception = r
                 else:
                     valid_results.append(r)
@@ -496,9 +518,13 @@ class TestAsyncMetaTrader5Concurrent:
         if account is None or symbol is None or tick is None:
             pytest.fail("Concurrent data fetch returned None (MT5 connection issue)")
 
-        assert account.balance >= 0
-        assert symbol.name == "EURUSD"
-        assert tick.bid > 0 or tick.ask > 0
+        assert account.balance >= 0, (
+            f"Balance should be non-negative, got {account.balance}"
+        )
+        assert symbol.name == "EURUSD", f"Expected EURUSD, got {symbol.name}"
+        assert tick.bid > 0 or tick.ask > 0, (
+            f"Expected positive bid or ask, got bid={tick.bid}, ask={tick.ask}"
+        )
 
     @pytest.mark.asyncio
     async def test_concurrent_rates_fetching(self, async_mt5: AsyncMetaTrader5) -> None:
@@ -523,7 +549,7 @@ class TestAsyncMetaTrader5Concurrent:
                 # Skip exceptions (RPyC pickling may fail)
                 if isinstance(rates, Exception):
                     if "timeout" in str(rates).lower():
-                        pytest.fail("gRPC timeout: rates")
+                        pytest.fail(f"gRPC timeout: {rates}")
                     continue
                 if rates is not None:
                     assert len(rates) > 0
@@ -575,7 +601,7 @@ class TestAsyncMetaTrader5HealthCheck:
 
         assert isinstance(health, dict)
         if health.get("healthy") is not True:
-            pytest.fail("health_check returned unhealthy: health")
+            pytest.fail(f"health_check returned unhealthy: {health}")
 
     @pytest.mark.integration
     @pytest.mark.asyncio

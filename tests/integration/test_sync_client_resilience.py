@@ -114,6 +114,7 @@ class TestCircuitBreakerIntegration:
         try:
             # Initialize and make successful operations
             from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+
             mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
             # Multiple successful operations
@@ -158,6 +159,7 @@ class TestAutoReconnect:
         mt5.connect()
 
         from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+
         result = mt5.initialize(
             login=MT5_LOGIN,
             password=MT5_PASSWORD,
@@ -190,6 +192,7 @@ class TestAutoReconnect:
         # Reconnect
         mt5.connect()
         from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+
         result = mt5.initialize(
             login=MT5_LOGIN,
             password=MT5_PASSWORD,
@@ -238,6 +241,7 @@ class TestConnectionRecovery:
         mt5.connect()
 
         from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+
         mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
         # Test operations before disconnect
@@ -273,6 +277,7 @@ class TestConnectionRecovery:
         mt5.connect()
 
         from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+
         mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
         try:
@@ -348,6 +353,7 @@ class TestResilienceInheritance:
         mt5.connect()
 
         from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+
         mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
         try:
