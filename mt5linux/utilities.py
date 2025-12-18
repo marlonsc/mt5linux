@@ -40,7 +40,7 @@ import logging
 import random
 import threading
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
 import orjson
@@ -177,6 +177,32 @@ class MT5Utilities:
                 """
                 super().__init__(message)
                 self.recovery_time = recovery_time
+
+        class EmptyResponseError(RetryableError):
+            """Raised when MT5 returns empty response that should have data.
+
+            This is a transient condition that should trigger retry.
+            Used to distinguish between:
+            - Valid None (e.g., symbol doesn't exist)
+            - Transient failure (e.g., MT5 not ready, connection hiccup)
+
+            """
+
+            def __init__(self, operation: str, detail: str = "") -> None:
+                """Initialize empty response error.
+
+                Args:
+                    operation: Name of the operation that returned empty.
+                    detail: Additional context about the empty response.
+
+                """
+                msg = f"Empty response from {operation}"
+                if detail:
+                    msg += f": {detail}"
+                # Use code -1 to indicate empty response (not a real MT5 error)
+                super().__init__(code=-1, description=msg)
+                self.operation = operation
+                self.detail = detail
 
     # =========================================================================
     # DATA UTILITIES
@@ -382,6 +408,23 @@ class MT5Utilities:
             return dt
 
         @staticmethod
+        def json_to_dict(json_data: str) -> dict[str, object] | None:
+            """Convert JSON string from gRPC to dict.
+
+            Used by both sync and async clients for gRPC responses.
+
+            Args:
+                json_data: JSON string to parse.
+
+            Returns:
+                Parsed dictionary or None if empty.
+
+            """
+            if not json_data:
+                return None
+            return orjson.loads(json_data)
+
+        @staticmethod
         def unwrap_proto_list_to_dicts(
             json_items: list[str],
         ) -> list[dict[str, object]] | None:
@@ -402,6 +445,27 @@ class MT5Utilities:
             return [orjson.loads(item) for item in json_items if item]
 
         @staticmethod
+        def unwrap_proto_list_to_tuple(
+            json_items: list[str],
+        ) -> tuple[dict[str, object], ...] | None:
+            """Convert list of JSON strings from gRPC to tuple of dicts.
+
+            Maintains compatibility with original MetaTrader5 API which
+            returns tuples from methods like positions_get(), orders_get().
+
+            Args:
+                json_items: List of JSON strings to parse.
+
+            Returns:
+                Tuple of dictionaries or None if empty.
+
+            """
+            result = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
+            if result is None:
+                return None
+            return tuple(result)
+
+        @staticmethod
         def numpy_from_proto(
             proto: _NumpyArrayProto | None,
         ) -> NDArray[np.void] | None:
@@ -409,6 +473,9 @@ class MT5Utilities:
 
             Used by both sync and async clients to deserialize OHLCV and tick data
             from gRPC NumpyArray protobuf messages.
+
+            Handles both simple dtypes ('float64') and structured array dtypes
+            ("[('time', '<i8'), ('open', '<f8'), ...]").
 
             Args:
                 proto: NumpyArray protobuf message with .data, .dtype, .shape
@@ -418,10 +485,22 @@ class MT5Utilities:
                 NumPy structured array or None if empty.
 
             """
+            import ast
+
             if proto is None or not proto.data or not proto.dtype:
                 return None
 
-            arr: NDArray[np.void] = np.frombuffer(proto.data, dtype=proto.dtype)
+            # Parse dtype string to numpy dtype
+            dtype_str = proto.dtype
+            if dtype_str.startswith("["):
+                # Structured array dtype - parse the list of tuples
+                dtype_spec = ast.literal_eval(dtype_str)
+                dtype = np.dtype(dtype_spec)
+            else:
+                # Simple dtype like 'float64', '<f8'
+                dtype = np.dtype(dtype_str)
+
+            arr: NDArray[np.void] = np.frombuffer(proto.data, dtype=dtype)
             if proto.shape:
                 arr = arr.reshape(tuple(proto.shape))
             return arr
@@ -449,6 +528,75 @@ class MT5Utilities:
                 chunk_data: list[dict[str, object]] = orjson.loads(chunk)
                 result.extend(chunk_data)
             return result
+
+    # =========================================================================
+    # INTROSPECTION UTILITIES
+    # =========================================================================
+
+    class Introspection:
+        """Python introspection utilities for tuple subclasses."""
+
+        @staticmethod
+        def get_tuple_field_order(tuple_cls: type) -> list[str] | None:
+            """Get field names in correct positional order from tuple subclass.
+
+            Uses Python's built-in introspection - NO hardcoding.
+            Tries multiple methods in order of reliability:
+            1. __match_args__ (Python 3.10+ structseq types)
+            2. _fields (standard namedtuples)
+            3. Test instance mapping (universal for member_descriptor types)
+
+            Args:
+                tuple_cls: The tuple subclass to introspect.
+
+            Returns:
+                List of field names in positional order, or None if fails.
+
+            """
+            # Python 3.10+ structseq types have __match_args__
+            if hasattr(tuple_cls, "__match_args__"):
+                return list(tuple_cls.__match_args__)
+
+            # Standard namedtuples have _fields
+            if hasattr(tuple_cls, "_fields"):
+                return list(tuple_cls._fields)
+
+            # For types without either, create test instance and map indices
+            member_fields = [
+                name
+                for name in dir(tuple_cls)
+                if not name.startswith("_")
+                and type(getattr(tuple_cls, name, None)).__name__
+                == "member_descriptor"
+            ]
+
+            if not member_fields:
+                return None
+
+            # Create instance with sentinel values to determine positional order
+            try:
+                n = len(member_fields)
+                instance = tuple_cls.__new__(tuple_cls, tuple(range(n)))
+
+                # Map each field to its positional index
+                field_to_index: dict[str, int] = {}
+                for field_name in member_fields:
+                    value = getattr(instance, field_name)
+                    if isinstance(value, int) and 0 <= value < n:
+                        field_to_index[field_name] = value
+
+                # Sort by index to get positional order
+                if len(field_to_index) == n:
+                    return [
+                        f
+                        for f, _ in sorted(
+                            field_to_index.items(), key=lambda x: x[1]
+                        )
+                    ]
+            except (TypeError, ValueError, AttributeError):
+                pass
+
+            return None
 
     # =========================================================================
     # CIRCUIT BREAKER
@@ -627,147 +775,581 @@ class MT5Utilities:
 
                 return status
 
-    # =========================================================================
-    # RETRY UTILITIES
-    # =========================================================================
+        # -----------------------------------------------------------------
+        # Retry helpers (part of CircuitBreaker resilience pattern)
+        # -----------------------------------------------------------------
 
-    @staticmethod
-    async def async_retry_with_backoff(
-        coro_factory: Callable[[], Awaitable[T]],
-        config: MT5Config,
-        operation_name: str = "operation",
-    ) -> T:
-        """Execute async operation with exponential backoff retry.
+        @staticmethod
+        def is_retryable_grpc_code(code: int) -> bool:
+            """Check if gRPC status code is retryable.
 
-        Uses MT5Config values for retry parameters.
+            Args:
+                code: gRPC status code (integer value).
 
-        Args:
-            coro_factory: Callable that returns an awaitable (not a coroutine).
-            config: MT5Config with retry_* settings.
-            operation_name: Name for logging purposes.
+            Returns:
+                True if the code indicates a transient error.
 
-        Returns:
-            Result of successful operation.
+            """
+            retryable_codes = {
+                c.Resilience.GrpcRetryableCode.UNAVAILABLE,
+                c.Resilience.GrpcRetryableCode.DEADLINE_EXCEEDED,
+                c.Resilience.GrpcRetryableCode.ABORTED,
+                c.Resilience.GrpcRetryableCode.RESOURCE_EXHAUSTED,
+            }
+            return code in retryable_codes
 
-        Raises:
-            MT5Utilities.Exceptions.MaxRetriesError: If all retries fail.
+        @staticmethod
+        def is_retryable_exception(error: Exception) -> bool:
+            """Check if exception should trigger retry.
 
-        Example:
-            >>> async def fetch():
-            ...     return await client.get_data()
-            >>> result = await MT5Utilities.async_retry_with_backoff(
-            ...     fetch, config, "get_data"
-            ... )
+            Args:
+                error: Exception to check.
 
-        """
-        last_exception: Exception | None = None
+            Returns:
+                True if exception is retryable.
 
-        for attempt in range(config.retry_max_attempts):
-            try:
-                return await coro_factory()
-            except Exception as e:
-                last_exception = e
-                if attempt == config.retry_max_attempts - 1:
-                    log.exception(
-                        "Operation '%s' failed after %d attempts",
-                        operation_name,
-                        config.retry_max_attempts,
-                    )
-                    raise MT5Utilities.Exceptions.MaxRetriesError(
-                        operation_name,
-                        config.retry_max_attempts,
-                        last_exception,
-                    ) from e
+            """
+            # Check for gRPC errors (duck typing to avoid import)
+            if hasattr(error, "code") and callable(error.code):
+                code = error.code()
+                # grpc.StatusCode is an enum, get its value
+                code_value = code.value[0] if hasattr(code, "value") else int(code)
+                return MT5Utilities.CircuitBreaker.is_retryable_grpc_code(code_value)
 
-                # Calculate backoff delay using config
-                delay = config.calculate_retry_delay(attempt)
+            # MT5 retryable errors (includes EmptyResponseError)
+            if isinstance(error, MT5Utilities.Exceptions.RetryableError):
+                return True
 
-                log.warning(
-                    "Operation '%s' attempt %d/%d failed: %s. Retrying in %.2fs",
-                    operation_name,
-                    attempt + 1,
-                    config.retry_max_attempts,
-                    e,
-                    delay,
-                )
+            # Connection/timeout errors are retryable, EXCEPT "not established"
+            # which means client was never connected (programming error, not transient)
+            if isinstance(error, ConnectionError):
+                msg = str(error).lower()
+                # Client never connected is not retryable; connection lost is retryable
+                return "not established" not in msg and "call connect" not in msg
 
-                await asyncio.sleep(delay)
+            return isinstance(error, (TimeoutError, OSError))
 
-        # Should not reach here, but satisfy type checker
-        if last_exception:
-            raise MT5Utilities.Exceptions.MaxRetriesError(
-                operation_name,
-                config.retry_max_attempts,
-                last_exception,
+        # -----------------------------------------------------------------
+        # MT5 Retcode Classification (transaction error handling)
+        # -----------------------------------------------------------------
+
+        @staticmethod
+        def classify_mt5_retcode(  # noqa: PLR0911
+            retcode: int,
+        ) -> c.Resilience.ErrorClassification:
+            """Classify MT5 retcode into error category.
+
+            Used to determine how each error should be handled:
+            - SUCCESS: Operation completed successfully
+            - PARTIAL: Partially completed (may need follow-up)
+            - RETRYABLE: Transient error, safe to retry (order NOT executed)
+            - VERIFY_REQUIRED: MUST verify state before retry (order MAY executed)
+            - CONDITIONAL: May be retryable depending on context
+            - PERMANENT: Permanent error, do not retry
+            - UNKNOWN: Unknown error code
+
+            Args:
+                retcode: MT5 TradeRetcode value.
+
+            Returns:
+                ErrorClassification indicating how to handle this code.
+
+            """
+            if retcode in c.Resilience.MT5_SUCCESS_CODES:
+                return c.Resilience.ErrorClassification.SUCCESS
+            if retcode in c.Resilience.MT5_PARTIAL_CODES:
+                return c.Resilience.ErrorClassification.PARTIAL
+            if retcode in c.Resilience.MT5_VERIFY_REQUIRED_CODES:
+                return c.Resilience.ErrorClassification.VERIFY_REQUIRED
+            if retcode in c.Resilience.MT5_RETRYABLE_CODES:
+                return c.Resilience.ErrorClassification.RETRYABLE
+            if retcode in c.Resilience.MT5_CONDITIONAL_CODES:
+                return c.Resilience.ErrorClassification.CONDITIONAL
+            if retcode in c.Resilience.MT5_PERMANENT_CODES:
+                return c.Resilience.ErrorClassification.PERMANENT
+            return c.Resilience.ErrorClassification.UNKNOWN
+
+        @staticmethod
+        def is_retryable_mt5_code(retcode: int) -> bool:
+            """Check if MT5 TradeRetcode is retryable.
+
+            Args:
+                retcode: MT5 TradeRetcode value.
+
+            Returns:
+                True if the code indicates a transient error.
+
+            """
+            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(retcode)
+            return classification == c.Resilience.ErrorClassification.RETRYABLE
+
+        @staticmethod
+        def is_permanent_mt5_code(retcode: int) -> bool:
+            """Check if MT5 TradeRetcode is permanent.
+
+            Args:
+                retcode: MT5 TradeRetcode value.
+
+            Returns:
+                True if the code indicates a permanent error.
+
+            """
+            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(retcode)
+            return classification == c.Resilience.ErrorClassification.PERMANENT
+
+        @staticmethod
+        def get_operation_criticality(
+            operation: str,
+        ) -> c.Resilience.OperationCriticality:
+            """Get criticality level for an operation.
+
+            Used to determine retry strategy and state verification:
+            - CRITICAL: More retries, state verification on ambiguous errors
+            - HIGH/NORMAL/LOW: Standard retry behavior
+
+            Args:
+                operation: Operation name (e.g., "order_send").
+
+            Returns:
+                OperationCriticality level (defaults to NORMAL if unknown).
+
+            """
+            criticality_value = c.Resilience.OPERATION_CRITICALITY.get(
+                operation,
+                c.Resilience.OperationCriticality.NORMAL,
             )
-        msg = f"Retry failed for '{operation_name}' with no exception recorded"
-        raise RuntimeError(msg)
+            return c.Resilience.OperationCriticality(criticality_value)
 
-    @staticmethod
-    async def async_reconnect_with_backoff(
-        connect_factory: Callable[[], Awaitable[bool]],
-        config: MT5Config,
-        name: str = "reconnect",
-    ) -> bool:
-        """Attempt reconnection with exponential backoff and jitter.
+        @staticmethod
+        def should_verify_state(
+            operation: str,
+            classification: c.Resilience.ErrorClassification,
+        ) -> bool:
+            """Determine if state verification is needed after error.
 
-        Uses MT5Config values for retry parameters.
+            For CRITICAL operations with ambiguous errors (CONDITIONAL, UNKNOWN),
+            we need to verify the actual state before reporting to caller.
 
-        Args:
-            connect_factory: Callable that returns awaitable bool (True=success).
-            config: MT5Config with retry_* settings.
-            name: Name for logging purposes.
+            Args:
+                operation: Operation name.
+                classification: Error classification from classify_mt5_retcode().
 
-        Returns:
-            True if reconnection successful, False otherwise.
+            Returns:
+                True if state verification is recommended.
 
-        """
-        delay = config.retry_initial_delay
+            """
+            criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
+                operation
+            )
+            if criticality != c.Resilience.OperationCriticality.CRITICAL:
+                return False
 
-        for attempt in range(config.retry_max_attempts):
-            try:
-                log.info(
-                    "Reconnection '%s' attempt %d/%d",
-                    name,
-                    attempt + 1,
+            # For critical ops, verify state on ambiguous errors
+            return classification in {
+                c.Resilience.ErrorClassification.CONDITIONAL,
+                c.Resilience.ErrorClassification.UNKNOWN,
+                c.Resilience.ErrorClassification.VERIFY_REQUIRED,
+            }
+
+        @staticmethod
+        async def async_retry_with_backoff(
+            coro_factory: Callable[[], Awaitable[T]],
+            config: MT5Config,
+            operation_name: str = "operation",
+        ) -> T:
+            """Execute async operation with exponential backoff retry.
+
+            Part of CircuitBreaker since retry is a resilience pattern.
+            Uses MT5Config values for retry parameters.
+
+            Args:
+                coro_factory: Callable that returns an awaitable (not a coroutine).
+                config: MT5Config with retry_* settings.
+                operation_name: Name for logging purposes.
+
+            Returns:
+                Result of successful operation.
+
+            Raises:
+                MT5Utilities.Exceptions.MaxRetriesError: If all retries fail.
+
+            Example:
+                >>> async def fetch():
+                ...     return await client.get_data()
+                >>> result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+                ...     fetch, config, "get_data"
+                ... )
+
+            """
+            last_exception: Exception | None = None
+
+            for attempt in range(config.retry_max_attempts):
+                try:
+                    return await coro_factory()
+                except Exception as e:
+                    last_exception = e
+                    if attempt == config.retry_max_attempts - 1:
+                        log.exception(
+                            "Operation '%s' failed after %d attempts",
+                            operation_name,
+                            config.retry_max_attempts,
+                        )
+                        raise MT5Utilities.Exceptions.MaxRetriesError(
+                            operation_name,
+                            config.retry_max_attempts,
+                            last_exception,
+                        ) from e
+
+                    # Calculate backoff delay using config
+                    delay = config.calculate_retry_delay(attempt)
+
+                    log.warning(
+                        "Operation '%s' attempt %d/%d failed: %s. Retrying in %.2fs",
+                        operation_name,
+                        attempt + 1,
+                        config.retry_max_attempts,
+                        e,
+                        delay,
+                    )
+
+                    await asyncio.sleep(delay)
+
+            # Should not reach here, but satisfy type checker
+            if last_exception:
+                raise MT5Utilities.Exceptions.MaxRetriesError(
+                    operation_name,
                     config.retry_max_attempts,
+                    last_exception,
                 )
+            msg = f"Retry failed for '{operation_name}' with no exception recorded"
+            raise RuntimeError(msg)
 
-                success = await connect_factory()
-                if success:
+        @staticmethod
+        async def async_reconnect_with_backoff(
+            connect_factory: Callable[[], Awaitable[bool]],
+            config: MT5Config,
+            name: str = "reconnect",
+        ) -> bool:
+            """Attempt reconnection with exponential backoff and jitter.
+
+            Part of CircuitBreaker since reconnection is a resilience pattern.
+            Uses MT5Config values for retry parameters.
+
+            Args:
+                connect_factory: Callable that returns awaitable bool (True=success).
+                config: MT5Config with retry_* settings.
+                name: Name for logging purposes.
+
+            Returns:
+                True if reconnection successful, False otherwise.
+
+            """
+            delay = config.retry_initial_delay
+
+            for attempt in range(config.retry_max_attempts):
+                try:
                     log.info(
-                        "Reconnection '%s' successful after %d attempts",
+                        "Reconnection '%s' attempt %d/%d",
                         name,
                         attempt + 1,
+                        config.retry_max_attempts,
                     )
-                    return True
 
-            except Exception as e:  # noqa: BLE001
-                log.warning(
-                    "Reconnection '%s' attempt %d/%d failed: %s",
-                    name,
-                    attempt + 1,
-                    config.retry_max_attempts,
-                    e,
+                    success = await connect_factory()
+                    if success:
+                        log.info(
+                            "Reconnection '%s' successful after %d attempts",
+                            name,
+                            attempt + 1,
+                        )
+                        return True
+
+                except Exception as e:  # noqa: BLE001
+                    log.warning(
+                        "Reconnection '%s' attempt %d/%d failed: %s",
+                        name,
+                        attempt + 1,
+                        config.retry_max_attempts,
+                        e,
+                    )
+
+                # Exponential backoff with jitter
+                if config.retry_jitter:
+                    # S311: random is fine for jitter - not cryptographic
+                    jitter = random.uniform(0, delay * 0.1)  # noqa: S311
+                    wait_time = delay + jitter
+                else:
+                    wait_time = delay
+
+                await asyncio.sleep(wait_time)
+                delay = min(
+                    delay * config.retry_exponential_base,
+                    config.retry_max_delay,
                 )
 
-            # Exponential backoff with jitter
-            if config.retry_jitter:
-                # S311: random is fine for jitter - not cryptographic
-                jitter = random.uniform(0, delay * 0.1)  # noqa: S311
-                wait_time = delay + jitter
-            else:
-                wait_time = delay
+            log.error(
+                "Reconnection '%s' failed after %d attempts",
+                name,
+                config.retry_max_attempts,
+            )
+            return False
 
-            await asyncio.sleep(wait_time)
-            delay = min(
-                delay * config.retry_exponential_base,
-                config.retry_max_delay,
+    # =========================================================================
+    # TRANSACTION HANDLER (order_send orchestration)
+    # =========================================================================
+
+    class TransactionHandler:
+        """Handler for critical transaction orchestration.
+
+        Centralizes transaction logic used by _safe_order_send:
+        - Request preparation with idempotency markers
+        - Result classification and outcome determination
+        - Retry decision logic
+
+        All methods are static - no state stored.
+
+        Contains RequestTracker as nested class for idempotency tracking.
+        """
+
+        class RequestTracker:
+            """Track order requests to prevent double execution.
+
+            Uses comment field as idempotency marker since MT5 doesn't have
+            native support for request deduplication. Each order_send gets
+            a unique request_id embedded in the comment field.
+
+            MT5 Limitations:
+            - No native idempotency (each request creates new order)
+            - Comment field is 31 chars max
+            - No "order already exists" detection
+
+            Format: RQ<10chars>|<original_comment>
+            Example: RQ1a2b3c4d5e|my_strategy_order
+
+            Nested inside TransactionHandler since it's only used
+            for transaction idempotency tracking.
+            """
+
+            @staticmethod
+            def generate_request_id() -> str:
+                """Generate unique request ID for idempotency.
+
+                Format: RQ + 10 hex chars = 12 chars total.
+                Fits comfortably in MT5 comment field (31 chars max).
+
+                Returns:
+                    12-character request ID starting with 'RQ'.
+
+                """
+                import uuid
+
+                return f"RQ{uuid.uuid4().hex[:10]}"
+
+            @staticmethod
+            def mark_comment(comment: str | None, request_id: str) -> str:
+                """Add request_id marker to comment field.
+
+                Embeds request_id at the start of comment for later extraction.
+                Preserves as much of original comment as possible.
+
+                Args:
+                    comment: Original comment (may be None or empty).
+                    request_id: Request ID to embed (12 chars).
+
+                Returns:
+                    Marked comment: 'RQ<10chars>|<original>' or just 'RQ<10chars>'.
+
+                """
+                if comment:
+                    # Leave room for request_id + separator + some original
+                    max_original = 31 - len(request_id) - 1
+                    return f"{request_id}|{comment[:max_original]}"
+                return request_id
+
+            @staticmethod
+            def extract_request_id(comment: str | None) -> str | None:
+                """Extract request_id from marked comment field.
+
+                Args:
+                    comment: Comment field from order/deal.
+
+                Returns:
+                    Request ID if found, None otherwise.
+
+                """
+                if comment and comment.startswith("RQ"):
+                    return comment.split("|")[0]
+                return None
+
+        @staticmethod
+        def prepare_request(
+            request: dict[str, object],
+            operation: str,
+        ) -> tuple[dict[str, object], str]:
+            """Prepare request with idempotency marker.
+
+            Adds request_id to comment field for tracking and verification.
+
+            Args:
+                request: Order request dictionary.
+                operation: Operation name for logging.
+
+            Returns:
+                Tuple of (modified_request, request_id).
+
+            """
+            tracker = MT5Utilities.TransactionHandler.RequestTracker
+            request_id = tracker.generate_request_id()
+            original_comment = request.get("comment", "") or ""
+            request["comment"] = tracker.mark_comment(
+                str(original_comment), request_id
+            )
+            log.debug(
+                "TX_PREPARE: %s request_id=%s",
+                operation,
+                request_id,
+            )
+            return request, request_id
+
+        @staticmethod
+        def classify_result(
+            retcode: int,
+        ) -> c.Resilience.TransactionOutcome:
+            """Classify result retcode into transaction outcome.
+
+            Maps ErrorClassification to TransactionOutcome for simpler handling.
+
+            Args:
+                retcode: MT5 TradeRetcode value.
+
+            Returns:
+                TransactionOutcome indicating next action.
+
+            """
+            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(retcode)
+
+            if classification == c.Resilience.ErrorClassification.SUCCESS:
+                return c.Resilience.TransactionOutcome.SUCCESS
+            if classification == c.Resilience.ErrorClassification.PARTIAL:
+                return c.Resilience.TransactionOutcome.PARTIAL
+            if classification == c.Resilience.ErrorClassification.RETRYABLE:
+                return c.Resilience.TransactionOutcome.RETRY
+            if classification == c.Resilience.ErrorClassification.VERIFY_REQUIRED:
+                return c.Resilience.TransactionOutcome.VERIFY_REQUIRED
+            if classification == c.Resilience.ErrorClassification.PERMANENT:
+                return c.Resilience.TransactionOutcome.PERMANENT_FAILURE
+            # CONDITIONAL and UNKNOWN - treat as retry with verification
+            return c.Resilience.TransactionOutcome.VERIFY_REQUIRED
+
+        @staticmethod
+        def should_retry(
+            outcome: c.Resilience.TransactionOutcome,
+            attempt: int,
+            max_attempts: int,
+        ) -> bool:
+            """Determine if transaction should be retried.
+
+            Args:
+                outcome: Current transaction outcome.
+                attempt: Current attempt number (0-based).
+                max_attempts: Maximum attempts allowed.
+
+            Returns:
+                True if retry is allowed.
+
+            """
+            if attempt >= max_attempts - 1:
+                return False
+            return outcome == c.Resilience.TransactionOutcome.RETRY
+
+        @staticmethod
+        def get_retry_config(
+            config: MT5Config,
+            operation: str,
+        ) -> tuple[int, bool]:
+            """Get retry configuration for operation.
+
+            Args:
+                config: MT5Config instance.
+                operation: Operation name.
+
+            Returns:
+                Tuple of (max_attempts, is_critical).
+
+            """
+            criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
+                operation
+            )
+            is_critical = (
+                criticality == c.Resilience.OperationCriticality.CRITICAL
+            )
+            max_attempts = (
+                config.critical_retry_max_attempts
+                if is_critical
+                else config.retry_max_attempts
+            )
+            return max_attempts, is_critical
+
+        @staticmethod
+        def handle_success(
+            cb: object,
+            result: object,
+            outcome: c.Resilience.TransactionOutcome,
+        ) -> None:
+            """Record success in circuit breaker and log if partial.
+
+            Args:
+                cb: CircuitBreaker instance.
+                result: Order result for logging.
+                outcome: Transaction outcome (SUCCESS or PARTIAL).
+
+            """
+            cb.record_success()
+            if outcome == c.Resilience.TransactionOutcome.PARTIAL:
+                log.warning("Order partially filled: %s", result)
+
+        @staticmethod
+        def raise_permanent(retcode: int, comment: str | None) -> NoReturn:
+            """Raise PermanentError for non-retryable errors.
+
+            Args:
+                retcode: MT5 retcode that caused the error.
+                comment: Error description.
+
+            Raises:
+                PermanentError: Always raised.
+
+            """
+            raise MT5Utilities.Exceptions.PermanentError(
+                retcode, comment or f"Permanent error: {retcode}"
             )
 
-        log.error(
-            "Reconnection '%s' failed after %d attempts",
-            name,
-            config.retry_max_attempts,
-        )
-        return False
+        @staticmethod
+        def raise_exhausted(
+            operation: str,
+            max_attempts: int,
+            last_result: object | None,
+            last_error: Exception | None,
+        ) -> NoReturn:
+            """Raise appropriate error after all retries exhausted.
+
+            Args:
+                operation: Operation name for error message.
+                max_attempts: Number of attempts made.
+                last_result: Last result received (if any).
+                last_error: Last exception (if any).
+
+            Raises:
+                PermanentError: If we have a result with retcode.
+                MaxRetriesError: Otherwise.
+
+            """
+            if last_result and hasattr(last_result, "retcode") and last_result.retcode:
+                raise MT5Utilities.Exceptions.PermanentError(
+                    last_result.retcode,
+                    f"Max retries exceeded. Last retcode: {last_result.retcode}",
+                )
+            raise MT5Utilities.Exceptions.MaxRetriesError(
+                operation, max_attempts, last_error
+            )
+

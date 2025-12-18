@@ -259,34 +259,34 @@ class TestTypedDictFieldTypes:
     def test_tick_dict_time_is_int(self) -> None:
         """TickDict.time should be int."""
         hints = get_type_hints(MT5Types.TickDict)
-        assert hints["time"] == int
+        assert hints["time"] is int
 
     def test_tick_dict_bid_is_float(self) -> None:
         """TickDict.bid should be float."""
         hints = get_type_hints(MT5Types.TickDict)
-        assert hints["bid"] == float
+        assert hints["bid"] is float
 
     def test_rate_dict_time_is_int(self) -> None:
         """RateDict.time should be int."""
         hints = get_type_hints(MT5Types.RateDict)
-        assert hints["time"] == int
+        assert hints["time"] is int
 
     def test_rate_dict_open_is_float(self) -> None:
         """RateDict.open should be float."""
         hints = get_type_hints(MT5Types.RateDict)
-        assert hints["open"] == float
+        assert hints["open"] is float
 
     def test_order_request_dict_action_is_int(self) -> None:
         """OrderRequestDict.action should be int."""
         hints = get_type_hints(MT5Types.OrderRequestDict)
-        assert hints["action"] == int
+        assert hints["action"] is int
 
     def test_order_request_dict_symbol_is_str(self) -> None:
         """OrderRequestDict.symbol should be str."""
         hints = get_type_hints(MT5Types.OrderRequestDict)
-        assert hints["symbol"] == str
+        assert hints["symbol"] is str
 
     def test_order_request_dict_volume_is_float(self) -> None:
         """OrderRequestDict.volume should be float."""
         hints = get_type_hints(MT5Types.OrderRequestDict)
-        assert hints["volume"] == float
+        assert hints["volume"] is float

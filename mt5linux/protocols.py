@@ -4,14 +4,16 @@ Defines ONE protocol that EXACTLY matches the MetaTrader5 PyPI interface.
 Both sync and async clients implement the same protocol structure.
 
 Protocol contains 32 methods matching MetaTrader5 PyPI:
-- Terminal: initialize, login, shutdown, version, last_error, terminal_info, account_info
+- Terminal: initialize, login, shutdown, version, last_error,
+            terminal_info, account_info
 - Symbol: symbols_total, symbols_get, symbol_info, symbol_info_tick, symbol_select
 - Market Data: copy_rates_from, copy_rates_from_pos, copy_rates_range,
               copy_ticks_from, copy_ticks_range
 - Trading: order_calc_margin, order_calc_profit, order_check, order_send
 - Positions: positions_total, positions_get
 - Orders: orders_total, orders_get
-- History: history_orders_total, history_orders_get, history_deals_total, history_deals_get
+- History: history_orders_total, history_orders_get,
+           history_deals_total, history_deals_get
 - Market Depth: market_book_add, market_book_get, market_book_release
 
 Note: connect(), disconnect(), health_check(), is_connected are NOT in the protocol.

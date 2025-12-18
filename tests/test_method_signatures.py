@@ -131,15 +131,15 @@ class TestParameterTypes:
         sig = inspect.signature(method)
         params = sig.parameters
 
-        # path: str | None = None
+        # Verify path parameter
         assert "path" in params
         assert params["path"].default is None
 
-        # login: int | None = None
+        # Verify login parameter
         assert "login" in params
         assert params["login"].default is None
 
-        # portable: bool = False (keyword-only)
+        # Verify portable parameter (keyword-only)
         assert "portable" in params
         assert params["portable"].default is False
         assert params["portable"].kind == inspect.Parameter.KEYWORD_ONLY
@@ -150,10 +150,10 @@ class TestParameterTypes:
         sig = inspect.signature(method)
         params = sig.parameters
 
-        # login: int (positional)
+        # Verify login parameter (positional)
         assert "login" in params
 
-        # timeout: int = 60000
+        # Verify timeout parameter with default
         assert "timeout" in params
         assert params["timeout"].default == 60000
 
@@ -163,10 +163,10 @@ class TestParameterTypes:
         sig = inspect.signature(method)
         params = sig.parameters
 
-        # symbol: str
+        # Verify symbol parameter
         assert "symbol" in params
 
-        # enable: bool = True (keyword-only)
+        # Verify enable parameter (keyword-only)
         assert "enable" in params
         assert params["enable"].default is True
         assert params["enable"].kind == inspect.Parameter.KEYWORD_ONLY
@@ -212,8 +212,8 @@ class TestProtocolMethodSignaturesMatch:
 
     def _compare_signatures(
         self,
-        protocol_method: Any,
-        client_method: Any,
+        protocol_method: Any,  # noqa: ANN401
+        client_method: Any,  # noqa: ANN401
         method_name: str,
     ) -> list[str]:
         """Compare two method signatures and return list of differences."""
@@ -258,13 +258,15 @@ class TestProtocolMethodSignaturesMatch:
                 )
 
             # Compare defaults (if present)
-            if protocol_param.default != inspect.Parameter.empty:
-                if client_param.default != protocol_param.default:
-                    differences.append(
-                        f"{method_name}.{param_name}: default mismatch - "
-                        f"protocol={protocol_param.default}, "
-                        f"client={client_param.default}"
-                    )
+            if (
+                protocol_param.default != inspect.Parameter.empty  # noqa: PLR1714
+                and client_param.default != protocol_param.default
+            ):
+                differences.append(
+                    f"{method_name}.{param_name}: default mismatch - "
+                    f"protocol={protocol_param.default}, "
+                    f"client={client_param.default}"
+                )
 
         return differences
 

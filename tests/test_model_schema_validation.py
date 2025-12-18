@@ -15,7 +15,7 @@ NO MOCKING - tests validate actual model behavior.
 from __future__ import annotations
 
 from collections import namedtuple
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 from pydantic import ValidationError
@@ -168,7 +168,8 @@ class TestModelFieldStructure:
         required = REQUIRED_FIELDS[model_name]
 
         if not required:
-            pytest.skip(f"{model_name} has no required fields")
+            # Model has no required fields - nothing to validate, test passes
+            return
 
         # Try to create without any required fields
         with pytest.raises(ValidationError) as exc_info:
@@ -220,7 +221,7 @@ class TestFromMT5Factory:
     def test_from_mt5_with_namedtuple(self) -> None:
         """from_mt5() should work with namedtuple input."""
         # Create a namedtuple that mimics MT5 response
-        AccountTuple = namedtuple("AccountTuple", ["login", "balance", "currency"])
+        AccountTuple = namedtuple("AccountTuple", ["login", "balance", "currency"])  # noqa: PYI024
         data = AccountTuple(login=12345, balance=10000.0, currency="EUR")
 
         result = MT5Models.AccountInfo.from_mt5(data)
@@ -542,7 +543,7 @@ class TestOrderRequestExport:
 class TestModelCatalog:
     """Validate all expected models exist."""
 
-    EXPECTED_MODELS = [
+    EXPECTED_MODELS: ClassVar[list[str]] = [
         "Base",
         "OrderRequest",
         "OrderResult",

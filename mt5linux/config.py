@@ -104,6 +104,24 @@ class MT5Config(BaseSettings):
     cb_half_open_max: int = 3
 
     # =========================================================================
+    # TRANSACTION HANDLING (for CRITICAL operations like order_send)
+    # =========================================================================
+    tx_log_critical: bool = True
+    """Log TX_INTENT/TX_RESULT for CRITICAL operations (order_send)."""
+
+    tx_verify_timeout: float = 5.0
+    """Timeout in seconds for state verification after ambiguous errors."""
+
+    tx_verify_on_ambiguous: bool = True
+    """Verify order state when receiving CONDITIONAL/UNKNOWN retcodes."""
+
+    critical_retry_max_attempts: int = 5
+    """Max retry attempts for CRITICAL operations (more than standard)."""
+
+    critical_retry_initial_delay: float = 0.1
+    """Initial retry delay for CRITICAL ops (faster than standard)."""
+
+    # =========================================================================
     # RESILIENCE FEATURE FLAGS (opt-in for backward compatibility)
     # =========================================================================
     enable_auto_reconnect: bool = False
@@ -181,6 +199,35 @@ class MT5Config(BaseSettings):
         # S311: random is fine for jitter - not cryptographic
         jitter = delay * self.jitter_factor * (2 * random.random() - 1)
         return max(0, delay + jitter)
+
+    def calculate_critical_retry_delay(self, attempt: int) -> float:
+        """Calculate retry delay for CRITICAL operations (faster).
+
+        Uses critical_retry_initial_delay (0.1s default) instead of
+        retry_initial_delay (0.5s default) for faster retry on
+        CRITICAL trading operations like order_send.
+
+        The shorter delay is appropriate because:
+        1. CRITICAL operations need faster recovery
+        2. We've already verified state, so retry is safe
+        3. Market conditions may change quickly
+
+        Args:
+            attempt: Current attempt number (0-indexed).
+
+        Returns:
+            Delay in seconds before next retry (shorter than standard).
+
+        """
+        delay = min(
+            self.critical_retry_initial_delay
+            * (self.retry_exponential_base**attempt),
+            self.retry_max_delay / 2,  # Cap at half normal max
+        )
+        if self.retry_jitter:
+            # Add 0-100% jitter (S311: random is fine for jitter)
+            delay *= 0.5 + random.random()
+        return delay
 
     def get_grpc_channel_options(self) -> list[tuple[str, int]]:
         """Get gRPC channel options from configuration.

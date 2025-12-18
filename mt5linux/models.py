@@ -255,70 +255,170 @@ class MT5Models:
             return super().from_mt5(result)
 
     class AccountInfo(Base):
-        """MT5 account information."""
+        """MT5 account information (28 fields, positional order from real MT5)."""
 
-        login: int
-        trade_mode: int = 0
-        leverage: int = 0
-        limit_orders: int = 0
-        margin_so_mode: int = 0
-        trade_allowed: bool = False
-        trade_expert: bool = False
-        margin_mode: int = 0
-        currency_digits: int = 2
-        fifo_close: bool = False
-        balance: float = 0.0
-        credit: float = 0.0
-        profit: float = 0.0
-        equity: float = 0.0
-        margin: float = 0.0
-        margin_free: float = 0.0
-        margin_level: float = 0.0
-        margin_so_call: float = 0.0
-        margin_so_so: float = 0.0
-        margin_initial: float = 0.0
-        margin_maintenance: float = 0.0
-        assets: float = 0.0
-        liabilities: float = 0.0
-        commission_blocked: float = 0.0
-        name: str = ""
-        server: str = ""
-        currency: str = "USD"
-        company: str = ""
+        # Positional order matching real MT5 namedtuple
+        login: int  # 0: Required field
+        trade_mode: int = 0  # 1
+        leverage: int = 0  # 2
+        limit_orders: int = 0  # 3
+        margin_so_mode: int = 0  # 4
+        trade_allowed: bool = False  # 5
+        trade_expert: bool = False  # 6
+        margin_mode: int = 0  # 7
+        currency_digits: int = 2  # 8
+        fifo_close: bool = False  # 9
+        balance: float = 0.0  # 10
+        credit: float = 0.0  # 11
+        profit: float = 0.0  # 12
+        equity: float = 0.0  # 13
+        margin: float = 0.0  # 14
+        margin_free: float = 0.0  # 15
+        margin_level: float = 0.0  # 16
+        margin_so_call: float = 0.0  # 17
+        margin_so_so: float = 0.0  # 18
+        margin_initial: float = 0.0  # 19
+        margin_maintenance: float = 0.0  # 20
+        assets: float = 0.0  # 21
+        liabilities: float = 0.0  # 22
+        commission_blocked: float = 0.0  # 23
+        name: str = ""  # 24
+        server: str = ""  # 25
+        currency: str = "USD"  # 26
+        company: str = ""  # 27
 
     class SymbolInfo(Base):
-        """MT5 symbol information (subset of commonly used fields)."""
+        """MT5 symbol information (complete 96 fields from real MT5)."""
 
+        # Core identification
         name: str
+        description: str = ""
+        path: str = ""
+        isin: str = ""
+        bank: str = ""
+        page: str = ""
+        category: str = ""
+        exchange: str = ""
+        formula: str = ""
+        basis: str = ""
+
+        # Currency
+        currency_base: str = ""
+        currency_profit: str = ""
+        currency_margin: str = ""
+
+        # Selection/Visibility
         visible: bool = False
         select: bool = False
+        custom: bool = False
+
+        # Time
         time: int = 0
+        start_time: int = 0
+        expiration_time: int = 0
+
+        # Digits/Spread
         digits: int = 0
         spread: int = 0
         spread_float: bool = False
+
+        # Trade mode/settings
         trade_mode: int = 0
         trade_calc_mode: int = 0
         trade_stops_level: int = 0
         trade_freeze_level: int = 0
-        filling_mode: int = 0  # Bitmask: 1=FOK, 2=IOC, 4=RETURN
+        trade_exemode: int = 0
+        chart_mode: int = 0
+        filling_mode: int = 0
         expiration_mode: int = 0
         order_mode: int = 0
+        order_gtc_mode: int = 0
+
+        # Option fields
+        option_mode: int = 0
+        option_right: int = 0
+        option_strike: float = 0.0
+
+        # Prices - current
         bid: float = 0.0
         ask: float = 0.0
         last: float = 0.0
-        volume: float = 0.0
+
+        # Prices - high/low
+        bidhigh: float = 0.0
+        bidlow: float = 0.0
+        askhigh: float = 0.0
+        asklow: float = 0.0
+        lasthigh: float = 0.0
+        lastlow: float = 0.0
+
+        # Price change/volatility
+        price_change: float = 0.0
+        price_volatility: float = 0.0
+        price_theoretical: float = 0.0
+        price_sensitivity: float = 0.0
+
+        # Greeks
+        price_greeks_delta: float = 0.0
+        price_greeks_gamma: float = 0.0
+        price_greeks_theta: float = 0.0
+        price_greeks_vega: float = 0.0
+        price_greeks_rho: float = 0.0
+        price_greeks_omega: float = 0.0
+
+        # Point/Tick
         point: float = 0.0
         trade_tick_value: float = 0.0
+        trade_tick_value_profit: float = 0.0
+        trade_tick_value_loss: float = 0.0
         trade_tick_size: float = 0.0
+        ticks_bookdepth: int = 0
+
+        # Contract
         trade_contract_size: float = 0.0
+        trade_face_value: float = 0.0
+        trade_accrued_interest: float = 0.0
+        trade_liquidity_rate: float = 0.0
+
+        # Volume
+        volume: float = 0.0
+        volume_real: float = 0.0
         volume_min: float = 0.0
         volume_max: float = 0.0
         volume_step: float = 0.0
-        currency_base: str = ""
-        currency_profit: str = ""
-        currency_margin: str = ""
-        description: str = ""
-        path: str = ""
+        volume_limit: float = 0.0
+        volumehigh: float = 0.0
+        volumehigh_real: float = 0.0
+        volumelow: float = 0.0
+        volumelow_real: float = 0.0
+
+        # Margin
+        margin_initial: float = 0.0
+        margin_maintenance: float = 0.0
+        margin_hedged: float = 0.0
+        margin_hedged_use_leg: bool = False
+
+        # Swap
+        swap_mode: int = 0
+        swap_long: float = 0.0
+        swap_short: float = 0.0
+        swap_rollover3days: int = 0
+
+        # Session data
+        session_volume: float = 0.0
+        session_turnover: float = 0.0
+        session_interest: float = 0.0
+        session_deals: float = 0.0
+        session_buy_orders: float = 0.0
+        session_buy_orders_volume: float = 0.0
+        session_sell_orders: float = 0.0
+        session_sell_orders_volume: float = 0.0
+        session_open: float = 0.0
+        session_close: float = 0.0
+        session_aw: float = 0.0
+        session_price_settlement: float = 0.0
+        session_price_limit_min: float = 0.0
+        session_price_limit_max: float = 0.0
 
     class Position(Base):
         """MT5 open position."""
@@ -416,12 +516,13 @@ class MT5Models:
         """MT5 market depth (DOM) entry.
 
         Represents a single entry from market_book_get().
+        Fields match real MT5 BookInfo: price, type, volume, volume_dbl
         """
 
-        type: int
         price: float = 0.0
+        type: int  # Required field
         volume: float = 0.0
-        volume_real: float = 0.0
+        volume_dbl: float = 0.0
 
     class TerminalInfo(Base):
         """MT5 terminal information.

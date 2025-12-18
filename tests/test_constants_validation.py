@@ -23,35 +23,42 @@ from .conftest import tc
 # Default config instance
 _config = MT5Config()
 
-# Mapping of MT5 constant prefixes to c nested class names
-PREFIX_TO_CLASS: dict[str, str] = {
-    "TIMEFRAME_": "TimeFrame",
-    "ORDER_TYPE_": "OrderType",
-    "TRADE_ACTION_": "TradeAction",
-    "ORDER_STATE_": "OrderState",
-    "ORDER_FILLING_": "OrderFilling",
-    "ORDER_TIME_": "OrderTime",
-    "ORDER_REASON_": "OrderReason",
-    "DEAL_TYPE_": "DealType",
-    "DEAL_ENTRY_": "DealEntry",
-    "DEAL_REASON_": "DealReason",
-    "POSITION_TYPE_": "PositionType",
-    "POSITION_REASON_": "PositionReason",
-    "ACCOUNT_TRADE_MODE_": "AccountTradeMode",
-    "ACCOUNT_STOPOUT_MODE_": "AccountStopoutMode",
-    "ACCOUNT_MARGIN_MODE_": "AccountMarginMode",
-    "SYMBOL_CALC_MODE_": "SymbolCalcMode",
-    "SYMBOL_CHART_MODE_": "SymbolChartMode",
-    "SYMBOL_OPTION_MODE_": "SymbolOptionMode",
-    "SYMBOL_OPTION_RIGHT_": "SymbolOptionRight",
-    "SYMBOL_SWAP_MODE_": "SymbolSwapMode",
-    "SYMBOL_TRADE_EXECUTION_": "SymbolTradeExecution",
-    "SYMBOL_TRADE_MODE_": "SymbolTradeMode",
-    "BOOK_TYPE_": "BookType",
-    "TRADE_RETCODE_": "TradeRetcode",
-    "COPY_TICKS_": "CopyTicksFlag",
-    "TICK_FLAG_": "TickFlag",
-    "DAY_OF_WEEK_": "DayOfWeek",
+# Mapping of MT5 constant prefixes to (namespace_path, class_name)
+# Namespace path is dot-separated (e.g., "Order" or "MarketData")
+PREFIX_TO_CLASS: dict[str, tuple[str, str]] = {
+    # MarketData namespace
+    "TIMEFRAME_": ("MarketData", "TimeFrame"),
+    "TICK_FLAG_": ("MarketData", "TickFlag"),
+    "COPY_TICKS_": ("MarketData", "CopyTicksFlag"),
+    "BOOK_TYPE_": ("MarketData", "BookType"),
+    # Order namespace
+    "ORDER_TYPE_": ("Order", "OrderType"),
+    "TRADE_ACTION_": ("Order", "TradeAction"),
+    "ORDER_STATE_": ("Order", "OrderState"),
+    "ORDER_FILLING_": ("Order", "OrderFilling"),
+    "ORDER_TIME_": ("Order", "OrderTime"),
+    "ORDER_REASON_": ("Order", "OrderReason"),
+    "TRADE_RETCODE_": ("Order", "TradeRetcode"),
+    # Trading namespace
+    "DEAL_TYPE_": ("Trading", "DealType"),
+    "DEAL_ENTRY_": ("Trading", "DealEntry"),
+    "DEAL_REASON_": ("Trading", "DealReason"),
+    "POSITION_TYPE_": ("Trading", "PositionType"),
+    "POSITION_REASON_": ("Trading", "PositionReason"),
+    # Account namespace
+    "ACCOUNT_TRADE_MODE_": ("Account", "TradeMode"),
+    "ACCOUNT_STOPOUT_MODE_": ("Account", "StopoutMode"),
+    "ACCOUNT_MARGIN_MODE_": ("Account", "MarginMode"),
+    # Symbol namespace
+    "SYMBOL_CALC_MODE_": ("Symbol", "CalcMode"),
+    "SYMBOL_CHART_MODE_": ("Symbol", "ChartMode"),
+    "SYMBOL_OPTION_MODE_": ("Symbol", "OptionMode"),
+    "SYMBOL_OPTION_RIGHT_": ("Symbol", "OptionRight"),
+    "SYMBOL_SWAP_MODE_": ("Symbol", "SwapMode"),
+    "SYMBOL_TRADE_EXECUTION_": ("Symbol", "TradeExecution"),
+    "SYMBOL_TRADE_MODE_": ("Symbol", "TradeMode"),
+    # Calendar namespace
+    "DAY_OF_WEEK_": ("Calendar", "DayOfWeek"),
 }
 
 
@@ -97,56 +104,33 @@ def _extract_mt5_constants(host: str, port: int) -> dict[str, int]:
 def _get_local_constants() -> dict[str, int]:
     """Extract MT5-related constants from c class.
 
+    Traverses the namespace hierarchy using PREFIX_TO_CLASS mapping.
     Only extracts IntEnums that map to known MT5 prefixes.
-    Skips internal constants like CircuitBreakerState.
     """
     constants: dict[str, int] = {}
 
-    # Build reverse mapping: class_name -> prefix
-    class_to_prefix = {v: k for k, v in PREFIX_TO_CLASS.items()}
-
-    for attr_name in dir(c):
-        if attr_name.startswith("_"):
+    for prefix, (namespace_name, class_name) in PREFIX_TO_CLASS.items():
+        # Get the namespace (e.g., c.Order, c.MarketData)
+        namespace = getattr(c, namespace_name, None)
+        if namespace is None:
             continue
 
-        attr = getattr(c, attr_name)
+        # Get the enum class within the namespace
+        enum_class = getattr(namespace, class_name, None)
+        if enum_class is None:
+            continue
 
-        # Check if this is a namespace class (like Order, Position, etc.)
-        if isinstance(attr, type) and not issubclass(attr, int):
-            # Look for nested IntEnum classes inside namespaces
-            for nested_name in dir(attr):
-                if nested_name.startswith("_"):
+        # Extract enum members
+        if isinstance(enum_class, type):
+            for member_name in dir(enum_class):
+                if member_name.startswith("_"):
                     continue
-                nested = getattr(attr, nested_name, None)
-                if nested is None:
+                member = getattr(enum_class, member_name, None)
+                if member is None:
                     continue
-                # Check if it's an IntEnum class that maps to MT5
-                if isinstance(nested, type) and nested_name in class_to_prefix:
-                    prefix = class_to_prefix[nested_name]
-                    # Extract enum members
-                    for member_name in dir(nested):
-                        if member_name.startswith("_"):
-                            continue
-                        member = getattr(nested, member_name, None)
-                        if member is None:
-                            continue
-                        if hasattr(member, "value") and isinstance(member.value, int):
-                            full_name = f"{prefix}{member_name}"
-                            constants[full_name] = member.value
-
-        # Also check top-level enums that match MT5 prefixes
-        if attr_name in class_to_prefix:
-            prefix = class_to_prefix[attr_name]
-            if isinstance(attr, type):
-                for member_name in dir(attr):
-                    if member_name.startswith("_"):
-                        continue
-                    member = getattr(attr, member_name, None)
-                    if member is None:
-                        continue
-                    if hasattr(member, "value") and isinstance(member.value, int):
-                        full_name = f"{prefix}{member_name}"
-                        constants[full_name] = member.value
+                if hasattr(member, "value") and isinstance(member.value, int):
+                    full_name = f"{prefix}{member_name}"
+                    constants[full_name] = member.value
 
     return constants
 
@@ -156,12 +140,13 @@ def _group_by_class(constants: dict[str, int]) -> dict[str, dict[str, int]]:
     groups: dict[str, dict[str, int]] = {}
 
     for name, value in constants.items():
-        for prefix, class_name in PREFIX_TO_CLASS.items():
+        for prefix, (namespace_name, class_name) in PREFIX_TO_CLASS.items():
             if name.startswith(prefix):
-                if class_name not in groups:
-                    groups[class_name] = {}
-                member_name = name[len(prefix) :]
-                groups[class_name][member_name] = value
+                key = f"{namespace_name}.{class_name}"
+                if key not in groups:
+                    groups[key] = {}
+                member_name = name[len(prefix):]
+                groups[key][member_name] = value
                 break
 
     return groups
@@ -298,13 +283,17 @@ class TestConstantsValidation:
 
     def test_enum_classes_exist(self) -> None:
         """Verify all expected enum classes exist in c."""
-        expected_classes = set(PREFIX_TO_CLASS.values())
+        for namespace_name, class_name in PREFIX_TO_CLASS.values():
+            # Check namespace exists
+            namespace = getattr(c, namespace_name, None)
+            full_path = f"c.{namespace_name}"
+            assert namespace is not None, f"Missing namespace: {full_path}"
 
-        for class_name in expected_classes:
-            assert hasattr(c, class_name), f"c missing class: {class_name}"
-
-            cls = getattr(c, class_name)
-            assert isinstance(cls, type), f"c.{class_name} is not a class"
+            # Check enum class exists within namespace
+            enum_class = getattr(namespace, class_name, None)
+            full_class_path = f"c.{namespace_name}.{class_name}"
+            assert enum_class is not None, f"Missing class: {full_class_path}"
+            assert isinstance(enum_class, type), f"{full_class_path} is not a class"
 
     def test_timeframe_constants(self, mt5_constants: dict[str, int]) -> None:
         """Validate TimeFrame constants specifically (commonly used)."""
@@ -328,11 +317,12 @@ class TestConstantsValidation:
 
             # Also check local
             member_name = name.replace("TIMEFRAME_", "")
-            assert hasattr(c.TimeFrame, member_name), (
-                f"c.TimeFrame missing {member_name}"
+            tf = c.MarketData.TimeFrame
+            assert hasattr(tf, member_name), (
+                f"c.MarketData.TimeFrame missing {member_name}"
             )
-            assert getattr(c.TimeFrame, member_name).value == expected_value, (
-                f"c.TimeFrame.{member_name} value mismatch"
+            assert getattr(tf, member_name).value == expected_value, (
+                f"c.MarketData.TimeFrame.{member_name} value mismatch"
             )
 
     def test_trade_retcode_constants(self, mt5_constants: dict[str, int]) -> None:

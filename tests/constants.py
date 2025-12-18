@@ -732,7 +732,7 @@ used EXCLUSIVELY in tests.
 2. c.* (mt5linux/constants.py) - SHARED CONSTANTS
    - Constants that SHARE DATA with MT5 source code
    - These exist in the actual MT5 API or core logic
-   - Examples: c.OrderType.BUY, c.TimeFrame.H1
+   - Examples: c.Order.OrderType.BUY, c.MarketData.TimeFrame.H1
 
 3. NEVER MIX:
    - Source constants should NEVER be duplicated here
@@ -744,15 +744,15 @@ used EXCLUSIVELY in tests.
 
 EXAMPLES:
 ---------
-# ✅ CORRECT: Test-only constant (defined in TestConstants)
+# Correct: Test-only constant (defined in TestConstants)
 assert request.price == tc.TEST_PRICE_BASE
 
-# ✅ CORRECT: Shared constant (imported from mt5linux.constants)
-assert mt5.ORDER_TYPE_BUY == c.OrderType.BUY
+# Correct: Shared constant (imported from mt5linux.constants)
+assert mt5.ORDER_TYPE_BUY == c.Order.OrderType.BUY
 
-# ❌ WRONG: Don't duplicate source constants
-# tc.ORDER_TYPE_BUY = 0  # NEVER DO THIS
+# Wrong: Don't duplicate source constants
+# tc.ORDER_TYPE_BUY = 0  <- NEVER DO THIS
 
-# ❌ WRONG: Don't reference test constants from source
-# TEST_PRICE_BASE = c.Validation.TEST_PRICE_BASE  # NEVER DO THIS
+# Wrong: Don't reference test constants from source
+# TEST_PRICE_BASE = c.Validation.TEST_PRICE_BASE  <- NEVER DO THIS
 """

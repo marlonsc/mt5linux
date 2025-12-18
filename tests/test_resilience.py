@@ -194,7 +194,7 @@ class TestCircuitBreaker:
 
 
 class TestAsyncRetryWithBackoff:
-    """Tests for MT5Utilities.async_retry_with_backoff function."""
+    """Tests for MT5Utilities.CircuitBreaker.async_retry_with_backoff function."""
 
     @pytest.fixture
     def config(self) -> MT5Config:
@@ -216,7 +216,7 @@ class TestAsyncRetryWithBackoff:
             call_count += 1
             return "success"
 
-        result = await MT5Utilities.async_retry_with_backoff(
+        result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
             success_op, config, "test_op"
         )
 
@@ -242,7 +242,7 @@ class TestAsyncRetryWithBackoff:
             retry_jitter=False,
         )
 
-        result = await MT5Utilities.async_retry_with_backoff(
+        result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
             fail_then_succeed,
             config_5_attempts,
             "test_op",
@@ -265,7 +265,7 @@ class TestAsyncRetryWithBackoff:
             raise ValueError(msg)
 
         with pytest.raises(MT5Utilities.Exceptions.MaxRetriesError) as exc_info:
-            await MT5Utilities.async_retry_with_backoff(
+            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
                 always_fail,
                 config,
                 "test_op",
@@ -305,7 +305,7 @@ class TestAsyncRetryWithBackoff:
             patch("mt5linux.utilities.asyncio.sleep", track_sleep),
             pytest.raises(MT5Utilities.Exceptions.MaxRetriesError),
         ):
-            await MT5Utilities.async_retry_with_backoff(
+            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
                 fail_op,
                 config,
                 "test_op",
@@ -316,7 +316,7 @@ class TestAsyncRetryWithBackoff:
 
 
 class TestAsyncReconnectWithBackoff:
-    """Tests for MT5Utilities.async_reconnect_with_backoff function."""
+    """Tests for MT5Utilities.CircuitBreaker.async_reconnect_with_backoff function."""
 
     @pytest.fixture
     def config(self) -> MT5Config:
@@ -335,7 +335,7 @@ class TestAsyncReconnectWithBackoff:
         async def success_connect() -> bool:
             return True
 
-        result = await MT5Utilities.async_reconnect_with_backoff(
+        result = await MT5Utilities.CircuitBreaker.async_reconnect_with_backoff(
             success_connect, config, "test"
         )
         assert result is True
@@ -347,7 +347,7 @@ class TestAsyncReconnectWithBackoff:
         async def fail_connect() -> bool:
             return False
 
-        result = await MT5Utilities.async_reconnect_with_backoff(
+        result = await MT5Utilities.CircuitBreaker.async_reconnect_with_backoff(
             fail_connect, config, "test"
         )
         assert result is False
@@ -365,7 +365,7 @@ class TestAsyncReconnectWithBackoff:
                 raise ConnectionError(msg)
             return True
 
-        result = await MT5Utilities.async_reconnect_with_backoff(
+        result = await MT5Utilities.CircuitBreaker.async_reconnect_with_backoff(
             fail_then_succeed, config, "test"
         )
 

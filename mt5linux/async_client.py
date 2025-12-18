@@ -26,20 +26,19 @@ Compatible with grpcio 1.60+ and Python 3.13+.
 from __future__ import annotations
 
 # pylint: disable=no-member  # Protobuf generated code has dynamic members
-import ast
 import asyncio
 import logging
 from contextlib import suppress
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Self, TypeVar
 
 import grpc
 import grpc.aio
-import numpy as np
 import orjson
 
 from mt5linux import mt5_pb2, mt5_pb2_grpc
 from mt5linux.config import MT5Config
+from mt5linux.constants import MT5Constants as c
 from mt5linux.models import MT5Models
 from mt5linux.protocols import AsyncMT5Protocol
 from mt5linux.types import MT5Types
@@ -48,6 +47,7 @@ from mt5linux.utilities import MT5Utilities
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    import numpy as np
     from numpy.typing import NDArray
 
 # TypeVar for generic return type in _resilient_call
@@ -243,7 +243,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
     async def _reconnect_with_backoff(self) -> bool:
         """Attempt reconnection with exponential backoff and jitter.
 
-        Uses MT5Utilities.async_reconnect_with_backoff with MT5Config values.
+        Uses MT5Utilities.CircuitBreaker.async_reconnect_with_backoff
+        with MT5Config values.
 
         Returns:
             True if reconnection successful, False otherwise.
@@ -269,7 +270,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             self._consecutive_failures = 0
             return True
 
-        return await MT5Utilities.async_reconnect_with_backoff(
+        return await MT5Utilities.CircuitBreaker.async_reconnect_with_backoff(
             attempt_connect,
             self._config,
             name=f"mt5-{self._host}:{self._port}",
@@ -405,10 +406,10 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         operation: str,
         call_factory: Callable[[], Awaitable[T]],
     ) -> T:
-        """Execute gRPC call with circuit breaker protection.
+        """Execute gRPC call with circuit breaker AND retry protection.
 
-        Integrates existing CircuitBreaker into all operations.
-        Checks circuit breaker before call, records success/failure after.
+        Integrates CircuitBreaker and retry with exponential backoff.
+        Only retries transient errors (gRPC UNAVAILABLE, connection issues, etc).
 
         Args:
             operation: Name of the operation for logging.
@@ -419,23 +420,69 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         Raises:
             ConnectionError: If circuit breaker is OPEN.
-            Exception: Re-raises any exception from the call after recording failure.
+            MT5Utilities.Exceptions.MaxRetriesError: If all retries fail.
+            Exception: Non-retryable exceptions propagate immediately.
 
         """
         # 1. Check if circuit allows execution
         self._check_circuit_breaker(operation)
 
-        try:
-            # 2. Execute the operation
-            result = await call_factory()
-        except Exception:
-            # 4. Record failure
-            self._record_circuit_failure()
-            raise
-        else:
-            # 3. Record success (in else block per TRY300)
-            self._record_circuit_success()
-            return result
+        last_exception: Exception | None = None
+        max_attempts = _config.retry_max_attempts
+
+        for attempt in range(max_attempts):
+            try:
+                # 2. Execute the operation
+                result = await call_factory()
+            except Exception as e:
+                last_exception = e
+
+                # 4. Check if retryable
+                if not MT5Utilities.CircuitBreaker.is_retryable_exception(e):
+                    # Non-retryable: record failure and propagate
+                    self._record_circuit_failure()
+                    raise
+
+                # 5. Retryable error - check if more attempts
+                if attempt < max_attempts - 1:
+                    delay = _config.calculate_retry_delay(attempt)
+                    log.warning(
+                        "%s failed (attempt %d/%d), retrying in %.2fs: %s",
+                        operation,
+                        attempt + 1,
+                        max_attempts,
+                        delay,
+                        e,
+                    )
+                    await asyncio.sleep(delay)
+
+                    # Reconnect if needed
+                    if not self.is_connected:
+                        with suppress(Exception):
+                            await self._reconnect_with_backoff()
+                else:
+                    # Last attempt failed
+                    self._record_circuit_failure()
+                    log.exception(
+                        "%s failed after %d attempts",
+                        operation,
+                        max_attempts,
+                    )
+                    raise MT5Utilities.Exceptions.MaxRetriesError(
+                        operation, max_attempts, last_exception
+                    ) from e
+            else:
+                # 3. Record success (in else block per TRY300)
+                self._record_circuit_success()
+                return result
+
+        # Should not reach here, but satisfy type checker
+        if last_exception:
+            raise MT5Utilities.Exceptions.MaxRetriesError(
+                operation, max_attempts, last_exception
+            )
+        msg = f"Retry failed for '{operation}' with no exception recorded"
+        raise RuntimeError(msg)
 
     # =========================================================================
     # Public connection methods
@@ -448,128 +495,6 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
     async def disconnect(self) -> None:
         """Disconnect from gRPC server (public API)."""
         await self._disconnect()
-
-    # =========================================================================
-    # HELPER METHODS
-    # =========================================================================
-
-    def _json_to_dict(self, json_data: str) -> dict[str, JSONValue] | None:
-        """Convert JSON string to dict.
-
-        Args:
-            json_data: JSON string to parse.
-
-        Returns:
-            Parsed dictionary or None if empty.
-
-        """
-        if not json_data:
-            return None
-        result: dict[str, JSONValue] = orjson.loads(json_data)
-        return result
-
-    def _json_list_to_dicts(
-        self, json_items: list[str]
-    ) -> list[dict[str, JSONValue]] | None:
-        """Convert list of JSON strings to list of dicts.
-
-        Args:
-            json_items: List of JSON strings to parse.
-
-        Returns:
-            List of parsed dictionaries or None if empty.
-
-        """
-        if not json_items:
-            return None
-        result: list[dict[str, JSONValue]] = [
-            orjson.loads(item) for item in json_items if item
-        ]
-        return result
-
-    def _json_list_to_tuple(
-        self, json_items: list[str]
-    ) -> tuple[dict[str, JSONValue], ...] | None:
-        """Convert list of JSON strings to tuple of dicts.
-
-        This maintains compatibility with the original MetaTrader5 API
-        which returns tuples from methods like positions_get(), orders_get(), etc.
-
-        Args:
-            json_items: List of JSON strings to parse.
-
-        Returns:
-            Tuple of parsed dictionaries or None if empty.
-
-        """
-        result = self._json_list_to_dicts(json_items)
-        if result is None:
-            return None
-        return tuple(result)
-
-    def _numpy_from_proto(self, proto: mt5_pb2.NumpyArray) -> NDArray[np.void] | None:
-        """Convert NumpyArray proto to numpy array.
-
-        Args:
-            proto: NumpyArray protobuf message.
-
-        Returns:
-            Numpy structured array or None if empty.
-
-        """
-        if not proto.data or not proto.dtype:
-            return None
-        # Parse dtype string back to numpy dtype
-        # The dtype comes as str(arr.dtype) e.g. "[('time', '<i8'), ...]"
-        dtype_str = proto.dtype
-        if dtype_str.startswith("["):
-            # Structured array dtype - parse the list of tuples
-            dtype_spec = ast.literal_eval(dtype_str)
-            dtype = np.dtype(dtype_spec)
-        else:
-            # Simple dtype like 'float64', '<f8'
-            dtype = np.dtype(dtype_str)
-        arr = np.frombuffer(proto.data, dtype=dtype)
-        if proto.shape:
-            arr = arr.reshape(tuple(proto.shape))
-        return arr
-
-    def _unwrap_symbols_chunks(
-        self, response: mt5_pb2.SymbolsResponse
-    ) -> tuple[MT5Models.SymbolInfo, ...] | None:
-        """Unwrap chunked symbols response.
-
-        Args:
-            response: SymbolsResponse with chunked JSON data.
-
-        Returns:
-            Tuple of SymbolInfo objects or None if empty.
-
-        """
-        if response.total == 0:
-            return None
-        result: list[MT5Models.SymbolInfo] = []
-        for chunk in response.chunks:
-            chunk_data: list[dict[str, JSONValue]] = orjson.loads(chunk)
-            for symbol_dict in chunk_data:
-                symbol_info = MT5Models.SymbolInfo.from_mt5(symbol_dict)
-                if symbol_info is not None:
-                    result.append(symbol_info)
-        return tuple(result) if result else None
-
-    def _to_timestamp(self, dt: datetime | int) -> int:
-        """Convert datetime or int to Unix timestamp.
-
-        Args:
-            dt: Datetime object or Unix timestamp.
-
-        Returns:
-            Unix timestamp as integer.
-
-        """
-        if isinstance(dt, datetime):
-            return int(dt.timestamp())
-        return int(dt)
 
     # =========================================================================
     # TERMINAL METHODS
@@ -734,7 +659,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         async def _call() -> MT5Models.TerminalInfo | None:
             stub = self._ensure_connected()
             response = await stub.TerminalInfo(mt5_pb2.Empty(), timeout=self._timeout)
-            result_dict = self._json_to_dict(response.json_data)
+            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
             return MT5Models.TerminalInfo.from_mt5(result_dict)
 
         return await self._resilient_call("terminal_info", _call)
@@ -750,7 +675,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         async def _call() -> MT5Models.AccountInfo | None:
             stub = self._ensure_connected()
             response = await stub.AccountInfo(mt5_pb2.Empty(), timeout=self._timeout)
-            result_dict = self._json_to_dict(response.json_data)
+            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
             return MT5Models.AccountInfo.from_mt5(result_dict)
 
         return await self._resilient_call("account_info", _call)
@@ -793,7 +718,13 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             if group is not None:
                 request.group = group
             response = await stub.SymbolsGet(request, timeout=self._timeout)
-            return self._unwrap_symbols_chunks(response)
+            dicts = MT5Utilities.Data.unwrap_symbols_chunks(response)
+            if dicts is None:
+                return None
+            result = [
+                s for d in dicts if (s := MT5Models.SymbolInfo.from_mt5(d)) is not None
+            ]
+            return tuple(result) if result else None
 
         return await self._resilient_call("symbols_get", _call)
 
@@ -812,7 +743,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.SymbolRequest(symbol=symbol)
             response = await stub.SymbolInfo(request, timeout=self._timeout)
-            result_dict = self._json_to_dict(response.json_data)
+            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
             return MT5Models.SymbolInfo.from_mt5(result_dict)
 
         return await self._resilient_call("symbol_info", _call)
@@ -832,7 +763,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.SymbolRequest(symbol=symbol)
             response = await stub.SymbolInfoTick(request, timeout=self._timeout)
-            result_dict = self._json_to_dict(response.json_data)
+            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
             return MT5Models.Tick.from_mt5(result_dict)
 
         return await self._resilient_call("symbol_info_tick", _call)
@@ -886,11 +817,11 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             request = mt5_pb2.CopyRatesRequest(
                 symbol=symbol,
                 timeframe=timeframe,
-                date_from=self._to_timestamp(date_from),
+                date_from=MT5Utilities.Data.to_timestamp(date_from),
                 count=count,
             )
             response = await stub.CopyRatesFrom(request, timeout=self._timeout)
-            return self._numpy_from_proto(response)
+            return MT5Utilities.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_rates_from", _call)
 
@@ -923,7 +854,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 count=count,
             )
             response = await stub.CopyRatesFromPos(request, timeout=self._timeout)
-            return self._numpy_from_proto(response)
+            return MT5Utilities.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_rates_from_pos", _call)
 
@@ -952,11 +883,11 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             request = mt5_pb2.CopyRatesRangeRequest(
                 symbol=symbol,
                 timeframe=timeframe,
-                date_from=self._to_timestamp(date_from),
-                date_to=self._to_timestamp(date_to),
+                date_from=MT5Utilities.Data.to_timestamp(date_from),
+                date_to=MT5Utilities.Data.to_timestamp(date_to),
             )
             response = await stub.CopyRatesRange(request, timeout=self._timeout)
-            return self._numpy_from_proto(response)
+            return MT5Utilities.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_rates_range", _call)
 
@@ -984,12 +915,12 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.CopyTicksRequest(
                 symbol=symbol,
-                date_from=self._to_timestamp(date_from),
+                date_from=MT5Utilities.Data.to_timestamp(date_from),
                 count=count,
                 flags=flags,
             )
             response = await stub.CopyTicksFrom(request, timeout=self._timeout)
-            return self._numpy_from_proto(response)
+            return MT5Utilities.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_ticks_from", _call)
 
@@ -1017,12 +948,12 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.CopyTicksRangeRequest(
                 symbol=symbol,
-                date_from=self._to_timestamp(date_from),
-                date_to=self._to_timestamp(date_to),
+                date_from=MT5Utilities.Data.to_timestamp(date_from),
+                date_to=MT5Utilities.Data.to_timestamp(date_to),
                 flags=flags,
             )
             response = await stub.CopyTicksRange(request, timeout=self._timeout)
-            return self._numpy_from_proto(response)
+            return MT5Utilities.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_ticks_range", _call)
 
@@ -1118,7 +1049,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 json_request=orjson.dumps(request).decode()
             )
             response = await stub.OrderCheck(grpc_request, timeout=self._timeout)
-            result_dict = self._json_to_dict(response.json_data)
+            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
             return MT5Models.OrderCheckResult.from_mt5(result_dict)
 
         return await self._resilient_call("order_check", _call)
@@ -1128,24 +1059,362 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
     ) -> MT5Models.OrderResult | None:
         """Send trading order to MT5.
 
+        For CRITICAL operations like order_send, uses enhanced transaction
+        handling with proper error classification and state verification.
+
         Args:
             request: Order request dictionary.
 
         Returns:
             Order execution result object or None.
 
+        Raises:
+            PermanentError: For non-retryable errors (REJECT, NO_MONEY, etc).
+            MaxRetriesError: After exhausting all retry attempts.
+
         """
+        return await self._safe_order_send(request)
 
-        async def _call() -> MT5Models.OrderResult | None:
-            stub = self._ensure_connected()
-            grpc_request = mt5_pb2.OrderRequest(
-                json_request=orjson.dumps(request).decode()
+    async def _safe_order_send(
+        self,
+        request: dict[str, JSONValue],
+    ) -> MT5Models.OrderResult | None:
+        """Send order with full transaction handling.
+
+        Uses TransactionHandler for orchestration:
+        1. Prepare request with idempotency marker
+        2. Execute with circuit breaker protection
+        3. Classify result and handle by outcome
+        4. Verify state when required (TIMEOUT/CONNECTION)
+
+        Args:
+            request: Order request dictionary.
+
+        Returns:
+            OrderResult with guaranteed correct status, or None.
+
+        Raises:
+            PermanentError: For non-retryable errors.
+            MaxRetriesError: After exhausting retries.
+
+        """
+        th = MT5Utilities.TransactionHandler
+        operation = "order_send"
+
+        max_attempts, _ = th.get_retry_config(self._config, operation)
+        request, request_id = th.prepare_request(request, operation)  # type: ignore[arg-type]
+
+        last_result: MT5Models.OrderResult | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(max_attempts):
+            try:
+                # PRE-EXECUTION: Check circuit breaker
+                self._check_circuit_breaker(operation)
+
+                # EXECUTION: Send order via gRPC
+                result = await self._execute_order_grpc(request, attempt)
+                if result is None:
+                    raise MT5Utilities.Exceptions.EmptyResponseError(operation)  # noqa: TRY301
+                last_result = result
+
+                # CLASSIFY and HANDLE
+                outcome = th.classify_result(result.retcode)
+
+                if outcome in (
+                    c.Resilience.TransactionOutcome.SUCCESS,
+                    c.Resilience.TransactionOutcome.PARTIAL,
+                ):
+                    th.handle_success(self._circuit_breaker, result, outcome)
+                    return result
+
+                if outcome == c.Resilience.TransactionOutcome.PERMANENT_FAILURE:
+                    self._circuit_breaker.record_failure()
+                    th.raise_permanent(result.retcode, result.comment)
+
+                if outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED:
+                    log.warning(
+                        "TX_VERIFY_REQUIRED: retcode=%d, request_id=%s",
+                        result.retcode,
+                        request_id,
+                    )
+                    verified = await self._verify_order_state(result, request_id)
+                    if verified:
+                        self._circuit_breaker.record_success()
+                        return verified
+                    self._circuit_breaker.record_failure()
+                    th.raise_permanent(
+                        result.retcode,
+                        f"Verification failed: {request_id}",
+                    )
+
+                # RETRY: Record failure and delay
+                self._circuit_breaker.record_failure()
+                delay = self._config.calculate_critical_retry_delay(attempt)
+                log.warning(
+                    "Retryable error %d, attempt %d/%d, retrying in %.2fs",
+                    result.retcode,
+                    attempt + 1,
+                    max_attempts,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+            except MT5Utilities.Exceptions.PermanentError:
+                raise
+            except Exception as e:
+                last_error = e
+                if not MT5Utilities.CircuitBreaker.is_retryable_exception(e):
+                    self._circuit_breaker.record_failure()
+                    raise
+                self._circuit_breaker.record_failure()
+                delay = self._config.calculate_critical_retry_delay(attempt)
+                log.warning(
+                    "Exception in order_send: %s, attempt %d/%d, retrying in %.2fs",
+                    e,
+                    attempt + 1,
+                    max_attempts,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        th.raise_exhausted(operation, max_attempts, last_result, last_error)
+        return None  # Unreachable - raise_exhausted always raises
+
+    async def _execute_order_grpc(
+        self,
+        request: dict[str, JSONValue],
+        attempt: int,
+    ) -> MT5Models.OrderResult | None:
+        """Execute order via gRPC and parse result.
+
+        Args:
+            request: Order request dictionary.
+            attempt: Current attempt number.
+
+        Returns:
+            Parsed OrderResult or None.
+
+        """
+        if self._config.tx_log_critical:
+            log.info(
+                "TX_INTENT: order_send attempt=%d request=%s", attempt + 1, request
             )
-            response = await stub.OrderSend(grpc_request, timeout=self._timeout)
-            result_dict = self._json_to_dict(response.json_data)
-            return MT5Models.OrderResult.from_mt5(result_dict)
 
-        return await self._resilient_call("order_send", _call)
+        stub = self._ensure_connected()
+        grpc_request = mt5_pb2.OrderRequest(json_request=orjson.dumps(request).decode())
+        response = await stub.OrderSend(grpc_request, timeout=self._timeout)
+        result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
+        result = MT5Models.OrderResult.from_mt5(result_dict)
+
+        if result and self._config.tx_log_critical:
+            log.info(
+                "TX_RESULT: order_send retcode=%d deal=%d order=%d",
+                result.retcode,
+                result.deal,
+                result.order,
+            )
+        return result
+
+    async def _verify_order_state(  # noqa: C901, PLR0912
+        self,
+        result: MT5Models.OrderResult,
+        request_id: str | None = None,
+    ) -> MT5Models.OrderResult | None:
+        """Verify actual order state after ambiguous response.
+
+        For CRITICAL operations (especially TIMEOUT/CONNECTION errors),
+        we MUST know the true state before deciding to retry.
+
+        Improvements for safety:
+        - Initial propagation delay (500ms) for MT5 internal sync
+        - Multiple verification attempts with delay between
+        - Verification by comment field (request_id) for definitive match
+
+        Args:
+            result: The ambiguous result from order_send.
+            request_id: Optional request ID for comment field matching.
+
+        Returns:
+            Verified OrderResult if state determined, None otherwise.
+
+        """
+        if not self._config.tx_verify_on_ambiguous:
+            return None
+
+        # Get verification timeout from config (default 5.0s)
+        verify_timeout = self._config.tx_verify_timeout
+
+        # Initial propagation delay - MT5 may not have synced yet
+        await asyncio.sleep(0.5)
+
+        # Retry verification up to 3 times with delay
+        for attempt in range(3):
+            if attempt > 0:
+                await asyncio.sleep(0.5)  # Delay between retries
+
+            try:
+                # Check 1: Pending orders (if we have order ticket)
+                if result.order:
+                    orders = await asyncio.wait_for(
+                        self.orders_get(ticket=result.order),
+                        timeout=verify_timeout,
+                    )
+                    if orders:
+                        log.info(
+                            "TX_VERIFY: Order %d found pending (attempt %d)",
+                            result.order,
+                            attempt + 1,
+                        )
+                        return MT5Models.OrderResult(
+                            retcode=c.Order.TradeRetcode.PLACED,
+                            deal=result.deal,
+                            order=result.order,
+                            volume=result.volume,
+                            price=result.price,
+                            bid=result.bid,
+                            ask=result.ask,
+                            comment=result.comment,
+                            request_id=result.request_id,
+                        )
+
+                    # Check 2: History orders
+                    history = await asyncio.wait_for(
+                        self.history_orders_get(ticket=result.order),
+                        timeout=verify_timeout,
+                    )
+                    if history:
+                        log.info(
+                            "TX_VERIFY: Order %d found in history (attempt %d)",
+                            result.order,
+                            attempt + 1,
+                        )
+                        return MT5Models.OrderResult(
+                            retcode=c.Order.TradeRetcode.DONE,
+                            deal=result.deal,
+                            order=result.order,
+                            volume=result.volume,
+                            price=result.price,
+                            bid=result.bid,
+                            ask=result.ask,
+                            comment=result.comment,
+                            request_id=result.request_id,
+                        )
+
+                # Check 3: Deals (definitive execution proof)
+                if result.deal:
+                    deals = await asyncio.wait_for(
+                        self.history_deals_get(ticket=result.deal),
+                        timeout=verify_timeout,
+                    )
+                    if deals:
+                        log.info(
+                            "TX_VERIFY: Deal %d confirmed (attempt %d)",
+                            result.deal,
+                            attempt + 1,
+                        )
+                        return MT5Models.OrderResult(
+                            retcode=c.Order.TradeRetcode.DONE,
+                            deal=result.deal,
+                            order=result.order,
+                            volume=result.volume,
+                            price=result.price,
+                            bid=result.bid,
+                            ask=result.ask,
+                            comment=result.comment,
+                            request_id=result.request_id,
+                        )
+
+                # Check 4: Verify by comment field (if we have request_id)
+                if request_id:
+                    verified = await asyncio.wait_for(
+                        self._verify_by_comment(request_id, result),
+                        timeout=verify_timeout,
+                    )
+                    if verified:
+                        log.info(
+                            "TX_VERIFY: Found by comment %s (attempt %d)",
+                            request_id,
+                            attempt + 1,
+                        )
+                        return verified
+
+            except TimeoutError:
+                # Transient - verification timed out, retry
+                log.warning(
+                    "TX_VERIFY attempt %d: timeout after %.1fs",
+                    attempt + 1,
+                    verify_timeout,
+                )
+                continue
+            except grpc.RpcError as e:
+                # Transient - gRPC error, retry
+                log.warning(
+                    "TX_VERIFY attempt %d: gRPC error: %s",
+                    attempt + 1,
+                    e.code() if hasattr(e, "code") else str(e),
+                )
+                continue
+            except (NameError, TypeError, AttributeError):
+                # Bug in code - don't hide it!
+                log.exception("TX_VERIFY BUG detected")
+                raise
+            except Exception:
+                # Unexpected error - log and propagate
+                log.exception("TX_VERIFY unexpected error")
+                raise
+
+        log.warning("TX_VERIFY: Could not verify after 3 attempts")
+        return None
+
+    async def _verify_by_comment(
+        self,
+        request_id: str,
+        result: MT5Models.OrderResult,
+    ) -> MT5Models.OrderResult | None:
+        """Verify order by comment field match.
+
+        Searches recent history deals for matching request_id in comment.
+        This provides definitive proof of execution when order/deal IDs
+        weren't returned in the ambiguous response.
+
+        Args:
+            request_id: Request ID to search for.
+            result: Original result to copy fields from.
+
+        Returns:
+            Verified OrderResult if found, None otherwise.
+
+        """
+        now = datetime.now(UTC)
+        # Use 15-minute window to handle clock skew and propagation delays
+        from_time = now - timedelta(minutes=15)
+
+        # Search recent deals by comment
+        deals = await self.history_deals_get(date_from=from_time, date_to=now)
+        tracker = MT5Utilities.TransactionHandler.RequestTracker
+        if deals:
+            for deal in deals:
+                req_id = tracker.extract_request_id(deal.comment)
+                if req_id == request_id:
+                    log.info(
+                        "TX_VERIFY: Found deal %d by comment match %s",
+                        deal.ticket,
+                        request_id,
+                    )
+                    return MT5Models.OrderResult(
+                        retcode=c.Order.TradeRetcode.DONE,
+                        deal=deal.ticket,
+                        order=deal.order,
+                        volume=deal.volume,
+                        price=deal.price,
+                        bid=result.bid,
+                        ask=result.ask,
+                        comment=deal.comment,
+                        request_id=result.request_id,
+                    )
+
+        return None
 
     # =========================================================================
     # POSITIONS METHODS
@@ -1194,7 +1463,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             if ticket is not None:
                 request.ticket = ticket
             response = await stub.PositionsGet(request, timeout=self._timeout)
-            dicts = self._json_list_to_dicts(list(response.json_items))
+            json_items = list(response.json_items)
+            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.Position.model_validate(d) for d in dicts)
@@ -1248,7 +1518,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             if ticket is not None:
                 request.ticket = ticket
             response = await stub.OrdersGet(request, timeout=self._timeout)
-            dicts = self._json_list_to_dicts(list(response.json_items))
+            json_items = list(response.json_items)
+            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.Order.model_validate(d) for d in dicts)
@@ -1278,8 +1549,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         async def _call() -> int:
             stub = self._ensure_connected()
             request = mt5_pb2.HistoryRequest(
-                date_from=self._to_timestamp(date_from),
-                date_to=self._to_timestamp(date_to),
+                date_from=MT5Utilities.Data.to_timestamp(date_from),
+                date_to=MT5Utilities.Data.to_timestamp(date_to),
             )
             response = await stub.HistoryOrdersTotal(request, timeout=self._timeout)
             return response.value
@@ -1312,9 +1583,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.HistoryRequest()
             if date_from is not None:
-                request.date_from = self._to_timestamp(date_from)
+                request.date_from = MT5Utilities.Data.to_timestamp(date_from)
             if date_to is not None:
-                request.date_to = self._to_timestamp(date_to)
+                request.date_to = MT5Utilities.Data.to_timestamp(date_to)
             if group is not None:
                 request.group = group
             if ticket is not None:
@@ -1322,7 +1593,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             if position is not None:
                 request.position = position
             response = await stub.HistoryOrdersGet(request, timeout=self._timeout)
-            dicts = self._json_list_to_dicts(list(response.json_items))
+            json_items = list(response.json_items)
+            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.Order.model_validate(d) for d in dicts)
@@ -1348,8 +1620,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         async def _call() -> int:
             stub = self._ensure_connected()
             request = mt5_pb2.HistoryRequest(
-                date_from=self._to_timestamp(date_from),
-                date_to=self._to_timestamp(date_to),
+                date_from=MT5Utilities.Data.to_timestamp(date_from),
+                date_to=MT5Utilities.Data.to_timestamp(date_to),
             )
             response = await stub.HistoryDealsTotal(request, timeout=self._timeout)
             return response.value
@@ -1382,9 +1654,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.HistoryRequest()
             if date_from is not None:
-                request.date_from = self._to_timestamp(date_from)
+                request.date_from = MT5Utilities.Data.to_timestamp(date_from)
             if date_to is not None:
-                request.date_to = self._to_timestamp(date_to)
+                request.date_to = MT5Utilities.Data.to_timestamp(date_to)
             if group is not None:
                 request.group = group
             if ticket is not None:
@@ -1392,7 +1664,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             if position is not None:
                 request.position = position
             response = await stub.HistoryDealsGet(request, timeout=self._timeout)
-            dicts = self._json_list_to_dicts(list(response.json_items))
+            json_items = list(response.json_items)
+            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.Deal.model_validate(d) for d in dicts)
@@ -1443,7 +1716,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.SymbolRequest(symbol=symbol)
             response = await stub.MarketBookGet(request, timeout=self._timeout)
-            dicts = self._json_list_to_dicts(list(response.json_items))
+            json_items = list(response.json_items)
+            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.BookEntry.model_validate(d) for d in dicts)

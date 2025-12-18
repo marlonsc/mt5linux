@@ -5,8 +5,8 @@ Access via: from mt5linux.constants import MT5Constants as c
 Usage: c.Network.GRPC_PORT, c.Order.TradeAction.DEAL, etc.
 """
 
-from enum import IntEnum
-from typing import Final
+from enum import IntEnum, IntFlag
+from typing import ClassVar, Final
 
 
 class MT5Constants:
@@ -76,6 +76,184 @@ class MT5Constants:
             CLOSED = 0
             OPEN = 1
             HALF_OPEN = 2
+
+        class GrpcRetryableCode(IntEnum):
+            """gRPC status codes that should trigger retry.
+
+            These are transient errors that may succeed on retry.
+            Values match grpc.StatusCode enum.
+            """
+
+            UNAVAILABLE = 14  # Server not reachable
+            DEADLINE_EXCEEDED = 4  # Timeout
+            ABORTED = 10  # Operation aborted
+            RESOURCE_EXHAUSTED = 8  # Rate limiting
+
+        class ErrorClassification(IntEnum):
+            """Classification of MT5 retcodes for error handling.
+
+            Determines how each error should be handled:
+            - SUCCESS: Operation completed successfully
+            - PARTIAL: Partially completed (may need follow-up)
+            - RETRYABLE: Transient error, safe to retry (order NOT executed)
+            - VERIFY_REQUIRED: MUST verify state before retry (order MAY executed)
+            - CONDITIONAL: May be retryable depending on context
+            - PERMANENT: Permanent error, do not retry
+            - UNKNOWN: Unknown error code
+            """
+
+            SUCCESS = 0
+            PARTIAL = 1
+            RETRYABLE = 2
+            VERIFY_REQUIRED = 3  # TIMEOUT/CONNECTION - verify before retry!
+            CONDITIONAL = 4
+            PERMANENT = 5
+            UNKNOWN = 6
+
+        class OperationCriticality(IntEnum):
+            """Criticality level for MT5 operations.
+
+            Determines retry strategy and state verification:
+            - LOW: Read-only, no side effects (symbol_info, totals)
+            - NORMAL: Standard operations (account_info, market data)
+            - HIGH: Important ops (positions_get, history)
+            - CRITICAL: State-changing ops (order_send, order_check)
+            """
+
+            LOW = 0
+            NORMAL = 1
+            HIGH = 2
+            CRITICAL = 3
+
+        class TransactionOutcome(IntEnum):
+            """Outcome of a transaction attempt.
+
+            Used by TransactionHandler to communicate result to caller:
+            - SUCCESS: Order executed successfully
+            - PARTIAL: Order partially filled
+            - RETRY: Safe to retry (order NOT executed)
+            - VERIFY_REQUIRED: Must verify state (order MAY have executed)
+            - PERMANENT_FAILURE: Do not retry
+            """
+
+            SUCCESS = 0
+            PARTIAL = 1
+            RETRY = 2
+            VERIFY_REQUIRED = 3
+            PERMANENT_FAILURE = 4
+
+        # ===================================================================
+        # MT5 TradeRetcode Classification Sets
+        # ===================================================================
+
+        MT5_SUCCESS_CODES: ClassVar[frozenset[int]] = frozenset(
+            {
+                10008,  # PLACED
+                10009,  # DONE
+            }
+        )
+
+        MT5_PARTIAL_CODES: ClassVar[frozenset[int]] = frozenset(
+            {
+                10010,  # DONE_PARTIAL
+            }
+        )
+
+        MT5_RETRYABLE_CODES: ClassVar[frozenset[int]] = frozenset(
+            {
+                10004,  # REQUOTE - price changed, safe to retry
+                10020,  # PRICE_CHANGED - similar to requote, safe
+                10021,  # PRICE_OFF - price not available, safe
+                10024,  # TOO_MANY_REQUESTS - rate limited, safe
+                # NOTE: 10012 (TIMEOUT) and 10031 (CONNECTION) moved to
+                # MT5_VERIFY_REQUIRED_CODES - order MAY have been executed!
+            }
+        )
+
+        MT5_VERIFY_REQUIRED_CODES: ClassVar[frozenset[int]] = frozenset(
+            {
+                10012,  # TIMEOUT - order MAY have been executed!
+                10031,  # CONNECTION - order MAY have been sent!
+            }
+        )
+
+        MT5_CONDITIONAL_CODES: ClassVar[frozenset[int]] = frozenset(
+            {
+                10007,  # CANCEL - may be retryable if user didn't cancel
+                10018,  # MARKET_CLOSED - retryable when market opens
+                10023,  # ORDER_CHANGED - verify state before retry
+                10025,  # NO_CHANGES - may be success (idempotent)
+            }
+        )
+
+        MT5_PERMANENT_CODES: ClassVar[frozenset[int]] = frozenset(
+            {
+                10006,  # REJECT - broker rejected
+                10011,  # ERROR - generic error
+                10013,  # INVALID - invalid request
+                10014,  # INVALID_VOLUME - bad volume
+                10015,  # INVALID_PRICE - bad price
+                10016,  # INVALID_STOPS - bad SL/TP
+                10017,  # TRADE_DISABLED - trading disabled
+                10019,  # NO_MONEY - insufficient funds
+                10022,  # INVALID_EXPIRATION - bad expiration
+                10026,  # SERVER_DISABLES_AT - auto-trading disabled
+                10027,  # CLIENT_DISABLES_AT - auto-trading disabled
+                10028,  # LOCKED - order locked
+                10029,  # FROZEN - order frozen
+                10030,  # INVALID_FILL - invalid fill mode
+                10032,  # ONLY_REAL - demo not allowed
+                10033,  # LIMIT_ORDERS - order limit reached
+                10034,  # LIMIT_VOLUME - volume limit reached
+                10035,  # INVALID_ORDER - order doesn't exist
+                10036,  # POSITION_CLOSED - position already closed
+                10038,  # INVALID_CLOSE_VOLUME - bad close volume
+                10039,  # CLOSE_ORDER_EXIST - close order exists
+                10040,  # LIMIT_POSITIONS - position limit reached
+                10041,  # REJECT_CANCEL - cancel rejected
+                10042,  # LONG_ONLY - only long allowed
+                10043,  # SHORT_ONLY - only short allowed
+                10044,  # CLOSE_ONLY - only close allowed
+                10045,  # FIFO_CLOSE - FIFO rule violation
+            }
+        )
+
+        # ===================================================================
+        # Operation Criticality Mapping
+        # ===================================================================
+
+        # Uses string keys for operation name to criticality level mapping
+        OPERATION_CRITICALITY: ClassVar[dict[str, int]] = {
+            # Level 3: CRITICAL - state changing, financial impact
+            "order_send": 3,
+            "order_check": 3,
+            # Level 2: HIGH - important data, affects decisions
+            "positions_get": 2,
+            "orders_get": 2,
+            "history_orders_get": 2,
+            "history_deals_get": 2,
+            "account_info": 2,
+            # Level 1: NORMAL - standard operations
+            "terminal_info": 1,
+            "symbol_info": 1,
+            "symbol_info_tick": 1,
+            "copy_rates_from": 1,
+            "copy_rates_from_pos": 1,
+            "copy_rates_range": 1,
+            "copy_ticks_from": 1,
+            "copy_ticks_range": 1,
+            # Level 0: LOW - read-only, cacheable data
+            "symbols_total": 0,
+            "symbols_get": 0,
+            "positions_total": 0,
+            "orders_total": 0,
+            "history_orders_total": 0,
+            "history_deals_total": 0,
+            "symbol_select": 0,
+            "market_book_add": 0,
+            "market_book_get": 0,
+            "market_book_release": 0,
+        }
 
     # ==================== ORDER MANAGEMENT ====================
     class Order:
@@ -242,6 +420,7 @@ class MT5Constants:
             OUT = 1  # Exit
             INOUT = 2  # Entry and exit
             OUT_BY = 3  # Exit by
+            STATE = 4  # Status record (from MQL5 source)
 
         class DealReason(IntEnum):
             """Reason for deal execution."""
@@ -378,6 +557,7 @@ class MT5Constants:
             EXCH_BONDS = 37
             EXCH_STOCKS_MOEX = 38
             EXCH_BONDS_MOEX = 39
+            EXCH_FUTURES_FORTS = 40  # FORTS futures (from MQL5 source)
             SERV_COLLATERAL = 64
 
         class ChartMode(IntEnum):
@@ -428,6 +608,31 @@ class MT5Constants:
             MARKET = 2
             EXCHANGE = 3
 
+        class ExpirationMode(IntFlag):
+            """Symbol order expiration flags (SYMBOL_EXPIRATION_MODE)."""
+
+            GTC = 1  # Good-till-canceled orders allowed
+            DAY = 2  # Day orders allowed
+            SPECIFIED = 4  # Orders with specified expiration time allowed
+            SPECIFIED_DAY = 8  # Orders with specified expiration day allowed
+
+        class FillingMode(IntFlag):
+            """Symbol order filling flags (SYMBOL_FILLING_MODE)."""
+
+            FOK = 1  # Fill-or-Kill orders supported
+            IOC = 2  # Immediate-or-Cancel orders supported
+
+        class OrderMode(IntFlag):
+            """Symbol order types allowed (SYMBOL_ORDER_MODE)."""
+
+            MARKET = 1  # Market orders allowed
+            LIMIT = 2  # Limit orders allowed
+            STOP = 4  # Stop orders allowed
+            STOP_LIMIT = 8  # Stop-limit orders allowed
+            SL = 16  # Stop Loss allowed
+            TP = 32  # Take Profit allowed
+            CLOSE_BY = 64  # Close by opposite position allowed
+
     # ==================== CALENDAR & TIMING ====================
     class Calendar:
         """Day of week and calendar constants."""
@@ -442,6 +647,48 @@ class MT5Constants:
             THURSDAY = 4
             FRIDAY = 5
             SATURDAY = 6
+
+    # ==================== EXPERT ADVISOR FRAMEWORK ====================
+    class Expert:
+        """Expert Advisor framework constants from MQL5 ExpertBase.mqh."""
+
+        class TrendType(IntEnum):
+            """Trend identification types (ENUM_TYPE_TREND)."""
+
+            HARD_DOWN = 0  # Strong downtrend
+            DOWN = 1  # Downtrend
+            SOFT_DOWN = 2  # Weak downtrend
+            FLAT = 3  # No trend (sideways)
+            SOFT_UP = 4  # Weak uptrend
+            UP = 5  # Uptrend
+            HARD_UP = 6  # Strong uptrend
+
+        class UsedSeries(IntFlag):
+            """Flags for timeseries usage (ENUM_USED_SERIES)."""
+
+            OPEN = 0x1
+            HIGH = 0x2
+            LOW = 0x4
+            CLOSE = 0x8
+            SPREAD = 0x10
+            TIME = 0x20
+            TICK_VOLUME = 0x40
+            REAL_VOLUME = 0x80
+
+        class InitPhase(IntEnum):
+            """Initialization phases (ENUM_INIT_PHASE)."""
+
+            FIRST = 0  # Start phase (only Init can be called)
+            TUNING = 1  # Tuning phase (set in Init)
+            VALIDATION = 2  # Validation phase (set in ValidationSettings)
+            COMPLETE = 3  # Complete phase (set in InitIndicators)
+
+        class LogLevel(IntEnum):
+            """Log levels for trading operations (ENUM_LOG_LEVELS)."""
+
+            NO = 0  # No logging
+            ERRORS = 1  # Only errors
+            ALL = 2  # All operations
 
     # ==================== VALIDATION & UTILITIES ====================
     class Validation:
@@ -616,46 +863,6 @@ class MT5Constants:
             DAYS_BACK_LONG_MIN: Final = 30
             DAYS_BACK_LONG_MAX: Final = 365
 
-    # ==================== TOP-LEVEL ALIASES FOR COMPATIBILITY ====================
-    # These aliases allow direct access to enum classes at the top level
-    # e.g., c.TimeFrame instead of c.MarketData.TimeFrame
-    TimeFrame = MarketData.TimeFrame
-    TickFlag = MarketData.TickFlag
-    CopyTicksFlag = MarketData.CopyTicksFlag
-    BookType = MarketData.BookType
-
-    TradeAction = Order.TradeAction
-    OrderType = Order.OrderType
-    OrderFilling = Order.OrderFilling
-    OrderTime = Order.OrderTime
-    OrderState = Order.OrderState
-    OrderReason = Order.OrderReason
-    TradeRetcode = Order.TradeRetcode
-
-    PositionType = Trading.PositionType
-    DealType = Trading.DealType
-    DealEntry = Trading.DealEntry
-    DealReason = Trading.DealReason
-    PositionReason = Trading.PositionReason
-
-    MarginMode = Account.MarginMode
-    StopoutMode = Account.StopoutMode
-    AccountTradeMode = Account.TradeMode
-
-    # Account aliases with different naming
-    AccountStopoutMode = Account.StopoutMode
-    AccountMarginMode = Account.MarginMode
-
-    SymbolCalcMode = Symbol.CalcMode
-    SymbolChartMode = Symbol.ChartMode
-    SymbolTradeMode = Symbol.TradeMode
-    SymbolSwapMode = Symbol.SwapMode
-    SymbolOptionMode = Symbol.OptionMode
-    SymbolOptionRight = Symbol.OptionRight
-    SymbolTradeExecution = Symbol.TradeExecution
-
-    DayOfWeek = Calendar.DayOfWeek
-
 
 # Convenient alias for shorter imports: from mt5linux.constants import c
 c = MT5Constants  # pylint: disable=invalid-name  # Intentional short alias
@@ -671,7 +878,7 @@ CONSTANTS SEPARATION RULES - CRITICAL FOR MAINTAINABILITY
 1. c.* (mt5linux/constants.py) - SHARED CONSTANTS
    - Use c.* ONLY when constants SHARE DATA with MT5 source code
    - These constants exist in the actual MT5 API or core MT5 logic
-   - Examples: c.OrderType.BUY, c.TimeFrame.H1, c.TradeRetcode.DONE
+   - Examples: c.Order.OrderType.BUY, c.MarketData.TimeFrame.H1
 
 2. tc.* (mt5linux/tests/constants.py) - TEST-ONLY CONSTANTS
    - Use tc.* ONLY for constants used EXCLUSIVELY in tests
@@ -695,15 +902,15 @@ This separation ensures:
 
 EXAMPLES:
 ---------
-# ✅ CORRECT: Shared MT5 constant
-assert mt5.ORDER_TYPE_BUY == c.OrderType.BUY
+# Correct: Shared MT5 constant
+assert mt5.ORDER_TYPE_BUY == c.Order.OrderType.BUY
 
-# ✅ CORRECT: Test-only constant
+# Correct: Test-only constant
 assert request.price == tc.TEST_PRICE_BASE
 
-# ❌ WRONG: Don't put test constants in source
-# c.TEST_PRICE_BASE = 1.0900  # NEVER DO THIS
+# Wrong: Don't put test constants in source
+# c.TEST_PRICE_BASE = 1.0900  <- NEVER DO THIS
 
-# ❌ WRONG: Don't duplicate source constants in tests
-# tc.ORDER_TYPE_BUY = 0  # NEVER DO THIS
+# Wrong: Don't duplicate source constants in tests
+# tc.ORDER_TYPE_BUY = 0  <- NEVER DO THIS
 """

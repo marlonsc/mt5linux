@@ -123,13 +123,15 @@ def compare_signatures(
             )
 
         # Check defaults match (if protocol has default)
-        if protocol_param.default != inspect.Parameter.empty:
-            if client_param.default != protocol_param.default:
-                differences.append(
-                    f"{method_name}.{param_name}: Default mismatch - "
-                    f"protocol={protocol_param.default!r}, "
-                    f"client={client_param.default!r}"
-                )
+        if (
+            protocol_param.default != inspect.Parameter.empty  # noqa: PLR1714
+            and client_param.default != protocol_param.default
+        ):
+            differences.append(
+                f"{method_name}.{param_name}: Default mismatch - "
+                f"protocol={protocol_param.default!r}, "
+                f"client={client_param.default!r}"
+            )
 
     # Check for extra required parameters in client (no default)
     extra_params = set(client_params.keys()) - set(protocol_params.keys())
@@ -172,7 +174,8 @@ class TestProtocolMethodCount:
     def test_expected_methods_list_has_32_items(self) -> None:
         """Our expected methods list should have exactly 32 items."""
         assert len(MT5_PROTOCOL_METHODS) == 32, (
-            f"MT5_PROTOCOL_METHODS should have 32 items, found {len(MT5_PROTOCOL_METHODS)}"
+            f"MT5_PROTOCOL_METHODS should have 32 items, "
+            f"found {len(MT5_PROTOCOL_METHODS)}"
         )
 
 

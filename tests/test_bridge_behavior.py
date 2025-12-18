@@ -110,7 +110,7 @@ class TestConnectionLimits:
             mt5.initialize()
             result = mt5.login(
                 login=999999999,
-                password="invalid_password",
+                password="invalid_password",  # noqa: S106
                 server="InvalidServer",
                 timeout=3000,
             )
@@ -231,7 +231,7 @@ class TestBridgeLogin:
         # Try login with invalid credentials
         result = mt5.login(
             login=999999999,  # Invalid login
-            password="invalid",
+            password="invalid",  # noqa: S106
             server="InvalidServer",
             timeout=5000,  # Short timeout
         )
