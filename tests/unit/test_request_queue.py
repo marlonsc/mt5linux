@@ -1,4 +1,4 @@
-"""Tests for MT5Utilities.RequestQueue - Priority Queue with Parallel Execution.
+"""Tests for u.RequestQueue - Priority Queue with Parallel Execution.
 
 Tests verify:
 1. Priority ordering (CRITICAL > HIGH > NORMAL > LOW)
@@ -18,23 +18,27 @@ import contextlib
 
 import pytest
 
-from mt5linux.config import MT5Config
 from mt5linux.constants import MT5Constants as c
-from mt5linux.utilities import MT5Utilities
+from mt5linux.settings import MT5Settings
+from mt5linux.utilities import MT5Utilities as u
+from tests.constants import TestConstants as tc
 
 # Aliases for convenience
-RequestQueue = MT5Utilities.RequestQueue
-QueueFullError = MT5Utilities.Exceptions.QueueFullError
+RequestQueue = u.RequestQueue
+QueueFullError = u.Exceptions.QueueFullError
 
 
 @pytest.fixture
-def config() -> MT5Config:
+def config() -> MT5Settings:
     """Return default config for tests."""
-    return MT5Config(queue_max_concurrent=3, queue_max_depth=10)
+    return MT5Settings(
+        queue_max_concurrent=tc.Queue.MAX_CONCURRENT_DEFAULT,
+        queue_max_depth=tc.Queue.MAX_DEPTH_DEFAULT,
+    )
 
 
 @pytest.fixture
-async def queue(config: MT5Config) -> RequestQueue:
+async def queue(config: MT5Settings) -> RequestQueue:
     """Return started request queue for tests."""
     q = RequestQueue(config)
     await q.start()
@@ -45,7 +49,7 @@ async def queue(config: MT5Config) -> RequestQueue:
 class TestRequestQueueLifecycle:
     """Test queue start/stop lifecycle."""
 
-    async def test_start_sets_running(self, config: MT5Config) -> None:
+    async def test_start_sets_running(self, config: MT5Settings) -> None:
         """start() sets is_running to True."""
         queue = RequestQueue(config)
         assert not queue.is_running
@@ -63,7 +67,7 @@ class TestRequestQueueLifecycle:
         await queue.start()
         assert queue.is_running
 
-    async def test_stop_clears_state(self, config: MT5Config) -> None:
+    async def test_stop_clears_state(self, config: MT5Settings) -> None:
         """stop() clears all internal state."""
         queue = RequestQueue(config)
         await queue.start()
@@ -125,7 +129,10 @@ class TestRequestQueuePriority:
         This tests the internal priority ordering mechanism by directly
         adding items to the queue while dispatcher is paused.
         """
-        config = MT5Config(queue_max_concurrent=1, queue_max_depth=20)
+        config = MT5Settings(
+            queue_max_concurrent=tc.Queue.MAX_CONCURRENT_SINGLE,
+            queue_max_depth=tc.Queue.MAX_DEPTH_LARGE,
+        )
         queue = RequestQueue(config)
         await queue.start()
 
@@ -142,7 +149,7 @@ class TestRequestQueuePriority:
 
         # Submit blocker to hold the semaphore
         blocker = asyncio.create_task(queue.submit("test", blocking))
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(tc.Timing.SLEEP_SHORT)
 
         # Pause dispatcher to queue items without immediate processing
         queue._running = False
@@ -165,7 +172,7 @@ class TestRequestQueuePriority:
         )
         queue._queue.put_nowait(low_req)
 
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(tc.Timing.SLEEP_VERY_SHORT)
 
         # Add CRITICAL priority item second (priority=0)
         critical_future: asyncio.Future[str] = loop.create_future()
@@ -204,9 +211,11 @@ class TestRequestQueuePriority:
 class TestRequestQueueParallelExecution:
     """Test parallel (NOT sequential) execution."""
 
-    async def test_parallel_execution_not_sequential(self, config: MT5Config) -> None:
+    async def test_parallel_execution_not_sequential(self, config: MT5Settings) -> None:
         """Multiple requests execute in PARALLEL, not sequentially."""
-        config = MT5Config(queue_max_concurrent=5, queue_max_depth=20)
+        config = MT5Settings(
+            queue_max_concurrent=5, queue_max_depth=tc.Queue.MAX_DEPTH_LARGE
+        )
         queue = RequestQueue(config)
         await queue.start()
 
@@ -248,7 +257,10 @@ class TestRequestQueueSemaphore:
 
     async def test_semaphore_limits_concurrency(self) -> None:
         """Semaphore limits concurrent executions to max_concurrent."""
-        config = MT5Config(queue_max_concurrent=2, queue_max_depth=20)
+        config = MT5Settings(
+            queue_max_concurrent=tc.Queue.MAX_CONCURRENT_DUAL,
+            queue_max_depth=tc.Queue.MAX_DEPTH_LARGE,
+        )
         queue = RequestQueue(config)
         await queue.start()
 
@@ -359,37 +371,46 @@ class TestRequestQueueBackpressure:
 
     async def test_queue_full_raises_error(self) -> None:
         """QueueFullError raised when queue at max_depth."""
-        # Very small queue
-        config = MT5Config(queue_max_concurrent=1, queue_max_depth=2)
+        # Queue with max_depth=2 and max_concurrent=1
+        # Requires 4 tasks to fill: 1 running + 1 waiting for semaphore + 2 in queue
+        config = MT5Settings(
+            queue_max_concurrent=tc.Queue.MAX_CONCURRENT_SINGLE,
+            queue_max_depth=2,
+        )
         queue = RequestQueue(config)
         await queue.start()
 
-        # Block the first request
+        # Block the first request to hold the semaphore
         gate = asyncio.Event()
 
         async def blocking() -> None:
             await gate.wait()
 
-        # Fill queue
-        task1 = asyncio.create_task(queue.submit("test", blocking))
-        await asyncio.sleep(0.02)  # Let it be picked up
-
-        # These fill the queue
         async def noop() -> None:
             pass
 
+        # Submit blocking task (will acquire semaphore and hold it)
+        task1 = asyncio.create_task(queue.submit("test", blocking))
+        await asyncio.sleep(tc.Timing.SLEEP_BRIEF)  # Let dispatcher pick it up
+
+        # Submit more tasks to fill the system:
+        # - task1: has semaphore, running (blocked on gate)
+        # - task2: will be dequeued, waiting for semaphore
+        # - task3, task4: fill the queue (max_depth=2)
         task2 = asyncio.create_task(queue.submit("test", noop))
+        await asyncio.sleep(tc.Timing.SLEEP_VERY_SHORT)  # Let dispatcher dequeue task2
         task3 = asyncio.create_task(queue.submit("test", noop))
+        task4 = asyncio.create_task(queue.submit("test", noop))
 
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(tc.Timing.SLEEP_BRIEF)  # Let queue stabilize
 
-        # Next should fail with QueueFullError
+        # Next should fail with QueueFullError (queue has 2 items = max_depth)
         with pytest.raises(QueueFullError, match="queue full"):
             await queue.submit("test", noop)
 
         # Cleanup
         gate.set()
-        await asyncio.gather(task1, task2, task3, return_exceptions=True)
+        await asyncio.gather(task1, task2, task3, task4, return_exceptions=True)
         await queue.stop()
 
 
@@ -398,7 +419,10 @@ class TestRequestQueueCounts:
 
     async def test_active_count_during_execution(self) -> None:
         """active_count reflects running tasks."""
-        config = MT5Config(queue_max_concurrent=5, queue_max_depth=20)
+        config = MT5Settings(
+            queue_max_concurrent=5,
+            queue_max_depth=tc.Queue.MAX_DEPTH_LARGE,
+        )
         queue = RequestQueue(config)
         await queue.start()
 
@@ -421,14 +445,17 @@ class TestRequestQueueCounts:
         await asyncio.gather(*tasks)
 
         # After completion, no active
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(tc.Timing.SLEEP_SHORT)
         assert queue.active_count == 0
 
         await queue.stop()
 
     async def test_pending_count_reflects_queue_size(self) -> None:
         """pending_count reflects items waiting in queue."""
-        config = MT5Config(queue_max_concurrent=1, queue_max_depth=20)
+        config = MT5Settings(
+            queue_max_concurrent=tc.Queue.MAX_CONCURRENT_SINGLE,
+            queue_max_depth=tc.Queue.MAX_DEPTH_LARGE,
+        )
         queue = RequestQueue(config)
         await queue.start()
 
@@ -439,7 +466,7 @@ class TestRequestQueueCounts:
 
         # Block with one task
         task1 = asyncio.create_task(queue.submit("test", wait_for_gate))
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(tc.Timing.SLEEP_SHORT)
 
         # Queue more
         async def noop() -> None:
@@ -448,7 +475,7 @@ class TestRequestQueueCounts:
         task2 = asyncio.create_task(queue.submit("test", noop))
         task3 = asyncio.create_task(queue.submit("test", noop))
 
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(tc.Timing.SLEEP_SHORT)
 
         # Should have pending items
         assert queue.pending_count >= 1
@@ -487,7 +514,10 @@ class TestRequestQueueGracefulShutdown:
 
     async def test_stop_waits_for_active_tasks(self) -> None:
         """stop() waits for active tasks to complete."""
-        config = MT5Config(queue_max_concurrent=5, queue_max_depth=20)
+        config = MT5Settings(
+            queue_max_concurrent=5,
+            queue_max_depth=tc.Queue.MAX_DEPTH_LARGE,
+        )
         queue = RequestQueue(config)
         await queue.start()
 
@@ -505,7 +535,7 @@ class TestRequestQueueGracefulShutdown:
         ]
 
         # Give tasks time to start
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(tc.Timing.SLEEP_SHORT)
 
         # Stop should wait for completion
         await queue.stop()

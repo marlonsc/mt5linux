@@ -26,22 +26,46 @@ from tests.conftest import tc
 # =============================================================================
 
 # Volume strategies (lot size)
-volume_micro = st.floats(min_value=0.01, max_value=0.1)
-volume_mini = st.floats(min_value=0.1, max_value=1.0)
-volume_standard = st.floats(min_value=1.0, max_value=10.0)
-volume_valid = st.floats(min_value=0.01, max_value=10.0)
+volume_micro = st.floats(
+    min_value=tc.Generators.VOLUME_MIN, max_value=tc.Generators.VOLUME_DEFAULT
+)
+volume_mini = st.floats(
+    min_value=tc.Generators.VOLUME_DEFAULT, max_value=tc.Generators.VOLUME_MAX
+)
+volume_standard = st.floats(
+    min_value=tc.Generators.VOLUME_DEFAULT, max_value=tc.Generators.VOLUME_MAX
+)
+volume_valid = st.floats(
+    min_value=tc.Generators.VOLUME_MIN, max_value=tc.Generators.VOLUME_MAX
+)
 
 # Price deviation (slippage tolerance in points)
-deviation_tight = st.integers(min_value=1, max_value=10)
-deviation_normal = st.integers(min_value=10, max_value=50)
-deviation_wide = st.integers(min_value=50, max_value=100)
-deviation_valid = st.integers(min_value=1, max_value=100)
+deviation_tight = st.integers(
+    min_value=tc.Generators.DEVIATION_MIN, max_value=tc.Generators.DEVIATION_TIGHT
+)
+deviation_normal = st.integers(
+    min_value=tc.Generators.DEVIATION_TIGHT, max_value=tc.Generators.DEVIATION_NORMAL
+)
+deviation_wide = st.integers(
+    min_value=tc.Generators.DEVIATION_NORMAL, max_value=tc.Generators.DEVIATION_WIDE
+)
+deviation_valid = st.integers(
+    min_value=tc.Generators.DEVIATION_MIN, max_value=tc.Generators.DEVIATION_WIDE
+)
 
 # Bar/tick count strategies
-bar_count_small = st.integers(min_value=1, max_value=100)
-bar_count_medium = st.integers(min_value=100, max_value=1000)
-bar_count_large = st.integers(min_value=1000, max_value=10000)
-bar_count_valid = st.integers(min_value=1, max_value=10000)
+bar_count_small = st.integers(
+    min_value=tc.Generators.BAR_COUNT_MIN, max_value=tc.Generators.BAR_COUNT_SMALL
+)
+bar_count_medium = st.integers(
+    min_value=tc.Generators.BAR_COUNT_SMALL, max_value=tc.Generators.BAR_COUNT_MEDIUM
+)
+bar_count_large = st.integers(
+    min_value=tc.Generators.BAR_COUNT_MEDIUM, max_value=tc.Generators.BAR_COUNT_LARGE
+)
+bar_count_valid = st.integers(
+    min_value=tc.Generators.BAR_COUNT_MIN, max_value=tc.Generators.BAR_COUNT_LARGE
+)
 
 # Days back for history queries
 days_back_recent = st.integers(min_value=1, max_value=7)

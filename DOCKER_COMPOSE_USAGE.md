@@ -45,6 +45,7 @@ pytest tests/
 ```
 
 **What happens**:
+
 - conftest.py reads `.env` for MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 - conftest.py uses defaults for container name and ports
 - Docker container starts as `mt5linux-unit` on port 38812
@@ -63,10 +64,11 @@ pytest tests/
 ```
 
 **What happens**:
+
 - Container starts as `mt5-test-custom` on port 48812
 - VNC accessible on port 43000
 - Tests connect to `localhost:48812`
-- Volumes: `mt5-test-custom_config`, `mt5-test-custom_downloads`, `mt5-test-custom_cache`
+- Volumes: `mt5-test-custom_settings`, `mt5-test-custom_downloads`, `mt5-test-custom_cache`
 
 ### 3. Custom MT5 Credentials
 
@@ -80,6 +82,7 @@ pytest tests/
 ```
 
 **What happens**:
+
 - Container initializes with custom MT5 credentials
 - Uses default container name `mt5linux-unit` and ports
 
@@ -120,13 +123,14 @@ docker compose down -v
 Volumes are automatically named based on container name:
 
 ```
-${MT5_CONTAINER_NAME}_config
+${MT5_CONTAINER_NAME}_settings
 ${MT5_CONTAINER_NAME}_downloads
 ${MT5_CONTAINER_NAME}_cache
 ```
 
 **Example with custom container name**:
-- `mt5-test-custom_config`
+
+- `mt5-test-custom_settings`
 - `mt5-test-custom_downloads`
 - `mt5-test-custom_cache`
 
@@ -179,6 +183,7 @@ Set environment variables in CI/CD pipeline:
 ## Troubleshooting
 
 ### Container won't start
+
 ```bash
 # Check if port is in use
 lsof -i :38812
@@ -193,6 +198,7 @@ docker system prune -f
 ```
 
 ### Connection refused
+
 ```bash
 # Verify container is running
 docker ps | grep mt5
@@ -205,12 +211,13 @@ nc -zv localhost 38812
 ```
 
 ### Volume cleanup issues
+
 ```bash
 # List all mt5 volumes
 docker volume ls | grep mt5
 
 # Remove specific volume
-docker volume rm mt5linux-unit_config
+docker volume rm mt5linux-unit_settings
 
 # Clean all unused volumes
 docker volume prune -f

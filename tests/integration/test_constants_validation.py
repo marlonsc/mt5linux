@@ -6,21 +6,21 @@ MetaTrader5 library values.
 
 REQUIRES: Docker test container running (use conftest.py fixtures)
 """
-
 from __future__ import annotations
 
 import socket
+import warnings
 
 import grpc
 import pytest
 
 from mt5linux import mt5_pb2, mt5_pb2_grpc
-from mt5linux.config import MT5Config
 from mt5linux.constants import c
-from tests.conftest import tc
+from mt5linux.settings import MT5Settings
+from tests.conftest import TEST_GRPC_HOST, TEST_GRPC_PORT, tc
 
 # Default config instance
-_config = MT5Config()
+_settings = MT5Settings()
 
 # Mapping of MT5 constant prefixes to (namespace_path, class_name)
 # Namespace path is dot-separated (e.g., "Order" or "MarketData")
@@ -155,7 +155,6 @@ def _group_by_class(constants: dict[str, int]) -> dict[str, dict[str, int]]:
 def mt5_constants() -> dict[str, int]:
     """Fixture that provides real MT5 constants from Docker container."""
     # Use test port from shared conftest configuration
-    from tests.conftest import TEST_GRPC_HOST, TEST_GRPC_PORT
 
     host = TEST_GRPC_HOST
     port = TEST_GRPC_PORT
@@ -272,7 +271,6 @@ class TestConstantsValidation:
         if missing:
             # Report missing constants - this is informational
             # New MT5 versions might add constants we should track
-            import warnings
 
             warnings.warn(
                 f"Found {len(missing)} MT5 constants not in c "

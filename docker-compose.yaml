@@ -1,13 +1,13 @@
 # docker-compose.yaml - Parametrized MT5 test container
 #
-# Configuration aligned with MT5Config (mt5linux/config.py) - Single Source of Truth
+# Configuration aligned with MT5Settings (mt5linux/config.py) - Single Source of Truth
 #
 # Port Strategy:
 #   - Container INTERNAL ports: 8001 (gRPC), 3000 (VNC), 8002 (health)
-#   - Test defaults (isolated): 28812, 23000, 28002 (matches test_* in MT5Config)
-#   - Docker defaults: 38812, 33000, 38002 (matches docker_* in MT5Config)
+#   - Test defaults (isolated): 28812, 23000, 28002 (matches test_* in MT5Settings)
+#   - Docker defaults: 38812, 33000, 38002 (matches docker_* in MT5Settings)
 #
-# Environment Variables (with test defaults from MT5Config.test_*):
+# Environment Variables (with test defaults from MT5Settings.test_*):
 #   MT5_CONTAINER_NAME - Container name (default: mt5linux-test)
 #   MT5_GRPC_PORT     - gRPC server port (default: 28812 - isolated for tests)
 #   MT5_VNC_PORT      - VNC port (default: 23000 - isolated for tests)
@@ -33,13 +33,13 @@ services:
     image: marlonsc/mt5-docker:debian
     container_name: ${MT5_CONTAINER_NAME:-mt5linux-test}
     ports:
-      # Defaults aligned with MT5Config.test_* (isolated test ports)
-      - "${MT5_VNC_PORT:-23000}:3000"     # VNC (test default: 23000)
-      - "${MT5_GRPC_PORT:-28812}:8001"    # gRPC server (test default: 28812)
-      - "${MT5_HEALTH_PORT:-28002}:8002"  # Health check (test default: 28002)
+      # Defaults aligned with MT5Settings.test_* (isolated test ports)
+      - "${MT5_VNC_PORT:-23000}:3000" # VNC (test default: 23000)
+      - "${MT5_GRPC_PORT:-28812}:8001" # gRPC server (test default: 28812)
+      - "${MT5_HEALTH_PORT:-28002}:8002" # Health check (test default: 28002)
     volumes:
       # Isolated volumes (not shared with production or neptor)
-      - mt5_config:/config:uid=911,gid=911
+      - mt5_settings:/config:uid=911,gid=911
     env_file:
       - ${ENV_FILE:-.env}
     environment:
@@ -58,7 +58,7 @@ services:
       start_period: 120s
 
 volumes:
-  mt5_config:
-    name: ${MT5_CONTAINER_NAME:-mt5linux-test}_config
+  mt5_settings:
+    name: ${MT5_CONTAINER_NAME:-mt5linux-test}_settings
     labels:
       description: "MT5 test configuration (isolated)"

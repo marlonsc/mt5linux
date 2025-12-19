@@ -13,8 +13,8 @@ Configuration Sources (precedence high to low):
 3. Defaults defined here
 
 Usage:
-    >>> from mt5linux.config import MT5Config
-    >>> config = MT5Config()  # loads from env
+    >>> from mt5linux.settings import MT5Settings
+    >>> config = MT5Settings()  # loads from env
     >>> print(config.grpc_port)  # 8001 or env override
     >>> delay = config.calculate_retry_delay(attempt=2)
 """
@@ -26,7 +26,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from mt5linux.constants import MT5Constants
 
 
-class MT5Config(BaseSettings):
+class MT5Settings(BaseSettings):
     """MetaTrader5 configuration with automatic env loading.
 
     Single source of truth for all MT5 configuration across the project.
@@ -38,8 +38,8 @@ class MT5Config(BaseSettings):
     - test_*_port: Isolated ports for pytest (28812/23000/28002)
 
     Usage:
-        config = MT5Config()  # loads from env
-        config = MT5Config(host="custom")  # override
+        config = MT5Settings()  # loads from env
+        config = MT5Settings(host="custom")  # override
     """
 
     model_config = SettingsConfigDict(
@@ -166,7 +166,7 @@ class MT5Config(BaseSettings):
     # =========================================================================
     # SERVER (bridge.py)  # noqa: ERA001
     # =========================================================================
-    server_host: str = "0.0.0.0"  # Server bind address
+    server_host: str = "0.0.0.0"  # Server bind address  # noqa: S104
     server_port: int = 8001  # Server listen port (aligned with grpc_port)
     server_grace_period: int = 5  # Graceful shutdown timeout
     thread_pool_size: int = 10
@@ -210,8 +210,8 @@ class MT5Config(BaseSettings):
             self.retry_max_delay,
         )
         if self.retry_jitter:
-            # Add 0-100% jitter (S311: random is fine for jitter)
-            delay *= 0.5 + random.random()
+            # Add 0-100% jitter (random is fine for jitter)
+            delay *= 0.5 + random.random()  # noqa: S311
         return delay
 
     def calculate_backoff_delay(self, attempt: int) -> float:
@@ -226,8 +226,8 @@ class MT5Config(BaseSettings):
         """
         delay = self.restart_delay_base * (self.restart_delay_multiplier**attempt)
         delay = min(delay, self.restart_delay_max)
-        # S311: random is fine for jitter - not cryptographic
-        jitter = delay * self.jitter_factor * (2 * random.random() - 1)
+        # random is fine for jitter - not cryptographic
+        jitter = delay * self.jitter_factor * (2 * random.random() - 1)  # noqa: S311
         return max(0, delay + jitter)
 
     def calculate_critical_retry_delay(self, attempt: int) -> float:
@@ -260,8 +260,8 @@ class MT5Config(BaseSettings):
             max_delay,
         )
         if self.retry_jitter:
-            # Add 0-100% jitter (S311: random is fine for jitter)
-            delay *= 0.5 + random.random()
+            # Add 0-100% jitter (random is fine for jitter)
+            delay *= 0.5 + random.random()  # noqa: S311
         return delay
 
     def get_grpc_channel_options(self) -> list[tuple[str, int]]:

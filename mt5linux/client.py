@@ -27,9 +27,10 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Self
 
+from mt5linux import mt5_pb2
 from mt5linux.async_client import AsyncMetaTrader5
-from mt5linux.config import MT5Config
 from mt5linux.protocols import MT5Protocol
+from mt5linux.settings import MT5Settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # Default config instance - Single Source of Truth
-_config = MT5Config()
+_settings = MT5Settings()
 
 
 class MetaTrader5(MT5Protocol):
@@ -66,9 +67,9 @@ class MetaTrader5(MT5Protocol):
 
     def __init__(
         self,
-        host: str = _config.host,
-        port: int = _config.grpc_port,
-        timeout: int = _config.timeout_connection,
+        host: str = _settings.host,
+        port: int = _settings.grpc_port,
+        timeout: int = _settings.timeout_connection,
     ) -> None:
         """Initialize sync MT5 client.
 
@@ -172,7 +173,6 @@ class MetaTrader5(MT5Protocol):
             ConnectionError: If not connected.
 
         """
-        from mt5linux import mt5_pb2
 
         async def _async_impl() -> list[dict[str, object]]:
             stub = self._async_client._ensure_connected()  # noqa: SLF001
@@ -219,7 +219,6 @@ class MetaTrader5(MT5Protocol):
             ConnectionError: If not connected.
 
         """
-        from mt5linux import mt5_pb2
 
         async def _async_impl() -> list[dict[str, object]]:
             stub = self._async_client._ensure_connected()  # noqa: SLF001

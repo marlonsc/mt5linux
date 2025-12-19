@@ -18,7 +18,7 @@ from mt5linux.constants import MT5Constants as c
 from tests.conftest import tc
 
 if TYPE_CHECKING:
-    from mt5linux import MetaTrader5
+    from mt5linux.client import MetaTrader5
 
 
 def _get_filling_mode(mt5: MetaTrader5, filling_mode_mask: int) -> int:
@@ -106,7 +106,7 @@ class TestOrderCheck:
             "price": tick.ask if tick else 1.0,
             "deviation": tc.DEFAULT_DEVIATION,
             "magic": tc.INVALID_TEST_MAGIC,
-            "comment": "test_zero_volume",
+            "comment": tc.TestSamples.COMMENT_ZERO_VOLUME,
             "type_time": c.Order.OrderTime.GTC,
             "type_filling": c.Order.OrderFilling.IOC,
         }
@@ -268,7 +268,8 @@ class TestOrderSend:
         # Skip if order_check fails (may be broker/demo limitations)
         if check_result.retcode != 0:
             pytest.fail(
-                f"order_check failed with retcode {check_result.retcode}: {check_result.comment}"
+                f"order_check failed with retcode {check_result.retcode}: "
+                f"{check_result.comment}"
             )
 
         result = mt5.order_send(limit_request)

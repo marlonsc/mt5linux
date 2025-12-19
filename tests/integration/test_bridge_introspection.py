@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 import pytest
 
-from mt5linux.utilities import MT5Utilities
+from mt5linux.utilities import MT5Utilities as u
 
 # Type alias for the introspection function
 TupleFieldOrderFn = Callable[[type], list[str] | None]
@@ -32,7 +32,7 @@ class TestGetTupleFieldOrder:
     @pytest.fixture
     def get_tuple_field_order(self) -> TupleFieldOrderFn:
         """Import the function from utilities module."""
-        return MT5Utilities.Introspection.get_tuple_field_order
+        return u.Introspection.get_tuple_field_order
 
     def test_standard_namedtuple(
         self, get_tuple_field_order: TupleFieldOrderFn
@@ -154,7 +154,7 @@ class TestGetTupleFieldOrderIntegration:
     @pytest.fixture
     def get_tuple_field_order(self) -> TupleFieldOrderFn:
         """Import the function from utilities module."""
-        return MT5Utilities.Introspection.get_tuple_field_order
+        return u.Introspection.get_tuple_field_order
 
     def test_account_info_structure(
         self, get_tuple_field_order: TupleFieldOrderFn
@@ -276,7 +276,7 @@ class TestMemberDescriptorFallback:
     @pytest.fixture
     def get_tuple_field_order(self) -> TupleFieldOrderFn:
         """Import the function from utilities module."""
-        return MT5Utilities.Introspection.get_tuple_field_order
+        return u.Introspection.get_tuple_field_order
 
     def test_tuple_subclass_with_member_descriptors(
         self, get_tuple_field_order: TupleFieldOrderFn

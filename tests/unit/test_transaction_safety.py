@@ -14,13 +14,19 @@ NO MOCKING - tests use real classification and tracking logic.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import pytest
 
 from mt5linux.constants import MT5Constants as c
-from mt5linux.utilities import MT5Utilities
+from mt5linux.settings import MT5Settings
+from mt5linux.utilities import MT5Utilities as u
 
 # Alias for convenience
-RequestTracker = MT5Utilities.TransactionHandler.RequestTracker
+RequestTracker = u.TransactionHandler.RequestTracker
 
 
 class TestRequestTracker:
@@ -132,12 +138,12 @@ class TestVerifyRequiredClassification:
 
     def test_timeout_classified_as_verify_required(self) -> None:
         """classify_mt5_retcode returns VERIFY_REQUIRED for TIMEOUT."""
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10012)
+        classification = u.ErrorClassifier.classify_mt5_retcode(10012)
         assert classification == c.Resilience.ErrorClassification.VERIFY_REQUIRED
 
     def test_connection_classified_as_verify_required(self) -> None:
         """classify_mt5_retcode returns VERIFY_REQUIRED for CONNECTION."""
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10031)
+        classification = u.ErrorClassifier.classify_mt5_retcode(10031)
         assert classification == c.Resilience.ErrorClassification.VERIFY_REQUIRED
 
 
@@ -146,22 +152,22 @@ class TestSafeRetryableCodes:
 
     def test_requote_is_retryable(self) -> None:
         """REQUOTE (10004) should be RETRYABLE - order was NOT executed."""
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10004)
+        classification = u.ErrorClassifier.classify_mt5_retcode(10004)
         assert classification == c.Resilience.ErrorClassification.RETRYABLE
 
     def test_price_changed_is_retryable(self) -> None:
         """PRICE_CHANGED (10020) should be RETRYABLE - order was NOT executed."""
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10020)
+        classification = u.ErrorClassifier.classify_mt5_retcode(10020)
         assert classification == c.Resilience.ErrorClassification.RETRYABLE
 
     def test_price_off_is_retryable(self) -> None:
         """PRICE_OFF (10021) should be RETRYABLE - order was NOT executed."""
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10021)
+        classification = u.ErrorClassifier.classify_mt5_retcode(10021)
         assert classification == c.Resilience.ErrorClassification.RETRYABLE
 
     def test_too_many_requests_is_retryable(self) -> None:
         """TOO_MANY_REQUESTS (10024) should be RETRYABLE - rate limited."""
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10024)
+        classification = u.ErrorClassifier.classify_mt5_retcode(10024)
         assert classification == c.Resilience.ErrorClassification.RETRYABLE
 
 
@@ -187,7 +193,7 @@ class TestShouldVerifyForVerifyRequired:
 
     def test_should_verify_for_critical_verify_required(self) -> None:
         """should_verify_state returns True for CRITICAL + VERIFY_REQUIRED."""
-        result = MT5Utilities.CircuitBreaker.should_verify_state(
+        result = u.ErrorClassifier.should_verify_state(
             "order_send",
             c.Resilience.ErrorClassification.VERIFY_REQUIRED,
         )
@@ -195,7 +201,7 @@ class TestShouldVerifyForVerifyRequired:
 
     def test_should_verify_for_order_check_verify_required(self) -> None:
         """should_verify_state returns True for order_check + VERIFY_REQUIRED."""
-        result = MT5Utilities.CircuitBreaker.should_verify_state(
+        result = u.ErrorClassifier.should_verify_state(
             "order_check",
             c.Resilience.ErrorClassification.VERIFY_REQUIRED,
         )
@@ -205,7 +211,7 @@ class TestShouldVerifyForVerifyRequired:
         """Non-critical operations don't need verification even for VERIFY_REQUIRED."""
         # Non-critical operations
         for op in ["account_info", "symbol_info", "symbols_total"]:
-            result = MT5Utilities.CircuitBreaker.should_verify_state(
+            result = u.ErrorClassifier.should_verify_state(
                 op,
                 c.Resilience.ErrorClassification.VERIFY_REQUIRED,
             )
@@ -222,9 +228,7 @@ class TestCriticalRetryDelay:
 
     def test_critical_delay_is_shorter_than_normal(self) -> None:
         """Critical operations use shorter delay (0.1s vs 0.5s base)."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(retry_jitter=False)
+        config = MT5Settings(retry_jitter=False)
 
         normal_delay = config.calculate_retry_delay(0)
         critical_delay = config.calculate_critical_retry_delay(0)
@@ -235,9 +239,7 @@ class TestCriticalRetryDelay:
 
     def test_critical_delay_uses_critical_initial(self) -> None:
         """Critical delay starts from critical_retry_initial_delay (0.1s)."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+        config = MT5Settings(
             critical_retry_initial_delay=0.1,
             retry_jitter=False,
         )
@@ -246,9 +248,7 @@ class TestCriticalRetryDelay:
 
     def test_critical_delay_caps_at_half_max(self) -> None:
         """Critical delay caps at half of retry_max_delay."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+        config = MT5Settings(
             critical_retry_initial_delay=0.1,
             retry_max_delay=10.0,
             retry_exponential_base=2.0,
@@ -260,9 +260,7 @@ class TestCriticalRetryDelay:
 
     def test_critical_delay_exponential_backoff(self) -> None:
         """Critical delay increases exponentially."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+        config = MT5Settings(
             critical_retry_initial_delay=0.1,
             retry_exponential_base=2.0,
             retry_jitter=False,
@@ -282,9 +280,7 @@ class TestTransactionHandlerIntegration:
     def test_prepare_request_adds_request_id(self) -> None:
         """prepare_request adds request_id to comment field."""
         request: dict[str, object] = {"action": 1, "symbol": "EURUSD"}
-        prepared, req_id = MT5Utilities.TransactionHandler.prepare_request(
-            request, "order_send"
-        )
+        prepared, req_id = u.TransactionHandler.prepare_request(request, "order_send")
 
         assert req_id.startswith("RQ"), "request_id must start with RQ"
         comment = prepared.get("comment", "")
@@ -298,9 +294,7 @@ class TestTransactionHandlerIntegration:
             "symbol": "EURUSD",
             "comment": "my_strategy",
         }
-        prepared, _req_id = MT5Utilities.TransactionHandler.prepare_request(
-            request, "order_send"
-        )
+        prepared, _req_id = u.TransactionHandler.prepare_request(request, "order_send")
 
         comment = prepared.get("comment", "")
         assert isinstance(comment, str)
@@ -309,42 +303,42 @@ class TestTransactionHandlerIntegration:
     def test_classify_result_for_common_retcodes(self) -> None:
         """classify_result maps retcodes to correct outcomes."""
         # SUCCESS codes
-        success_outcome = MT5Utilities.TransactionHandler.classify_result(10009)
+        success_outcome = u.TransactionHandler.classify_result(10009)
         assert success_outcome == c.Resilience.TransactionOutcome.SUCCESS
 
         # PARTIAL
-        partial_outcome = MT5Utilities.TransactionHandler.classify_result(10010)
+        partial_outcome = u.TransactionHandler.classify_result(10010)
         assert partial_outcome == c.Resilience.TransactionOutcome.PARTIAL
 
         # RETRYABLE
-        retry_outcome = MT5Utilities.TransactionHandler.classify_result(10004)
+        retry_outcome = u.TransactionHandler.classify_result(10004)
         assert retry_outcome == c.Resilience.TransactionOutcome.RETRY
 
         # VERIFY_REQUIRED
-        verify_outcome = MT5Utilities.TransactionHandler.classify_result(10012)
+        verify_outcome = u.TransactionHandler.classify_result(10012)
         assert verify_outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED
 
         # PERMANENT
-        perm_outcome = MT5Utilities.TransactionHandler.classify_result(10006)
+        perm_outcome = u.TransactionHandler.classify_result(10006)
         assert perm_outcome == c.Resilience.TransactionOutcome.PERMANENT_FAILURE
 
-    def test_get_retry_config_critical_vs_normal(self) -> None:
-        """get_retry_config returns more attempts for CRITICAL ops."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+    def test_get_retry_settings_critical_vs_normal(self) -> None:
+        """get_retry_settings returns more attempts for CRITICAL ops."""
+        config = MT5Settings(
             retry_max_attempts=3,
             critical_retry_max_attempts=5,
         )
 
         # CRITICAL operation
-        th = MT5Utilities.TransactionHandler
-        critical_attempts, is_critical = th.get_retry_config(config, "order_send")
+        th = u.TransactionHandler
+        critical_attempts, is_critical = th.get_retry_settings(config, "order_send")
         assert critical_attempts == 5, "CRITICAL should use critical_retry_max_attempts"
         assert is_critical is True
 
         # NON-CRITICAL operation
-        normal_attempts, is_normal_critical = th.get_retry_config(config, "symbol_info")
+        normal_attempts, is_normal_critical = th.get_retry_settings(
+            config, "symbol_info"
+        )
         assert normal_attempts == 3, "NORMAL should use retry_max_attempts"
         assert is_normal_critical is False
 
@@ -352,7 +346,7 @@ class TestTransactionHandlerIntegration:
         """should_retry returns True only for RETRY outcome with attempts left."""
         # RETRY with attempts left
         assert (
-            MT5Utilities.TransactionHandler.should_retry(
+            u.TransactionHandler.should_retry(
                 c.Resilience.TransactionOutcome.RETRY, 0, 3
             )
             is True
@@ -360,7 +354,7 @@ class TestTransactionHandlerIntegration:
 
         # RETRY but no attempts left
         assert (
-            MT5Utilities.TransactionHandler.should_retry(
+            u.TransactionHandler.should_retry(
                 c.Resilience.TransactionOutcome.RETRY, 2, 3
             )
             is False
@@ -368,32 +362,32 @@ class TestTransactionHandlerIntegration:
 
         # Non-retry outcome
         assert (
-            MT5Utilities.TransactionHandler.should_retry(
+            u.TransactionHandler.should_retry(
                 c.Resilience.TransactionOutcome.SUCCESS, 0, 3
             )
             is False
         )
 
         assert (
-            MT5Utilities.TransactionHandler.should_retry(
+            u.TransactionHandler.should_retry(
                 c.Resilience.TransactionOutcome.VERIFY_REQUIRED, 0, 3
             )
             is False
         )
 
 
-class TestCircuitBreakerRetryMethods:
-    """Test async_retry_with_backoff in CircuitBreaker."""
+class TestRetryStrategyMethods:
+    """Test async_retry_with_backoff in RetryStrategy."""
 
-    def test_method_exists_in_circuit_breaker(self) -> None:
-        """async_retry_with_backoff should be in CircuitBreaker class."""
-        assert hasattr(MT5Utilities.CircuitBreaker, "async_retry_with_backoff")
-        assert callable(MT5Utilities.CircuitBreaker.async_retry_with_backoff)
+    def test_method_exists_in_retry_strategy(self) -> None:
+        """async_retry_with_backoff should be in RetryStrategy class."""
+        assert hasattr(u.RetryStrategy, "async_retry_with_backoff")
+        assert callable(u.RetryStrategy.async_retry_with_backoff)
 
-    def test_reconnect_method_exists_in_circuit_breaker(self) -> None:
-        """async_reconnect_with_backoff should be in CircuitBreaker class."""
-        assert hasattr(MT5Utilities.CircuitBreaker, "async_reconnect_with_backoff")
-        assert callable(MT5Utilities.CircuitBreaker.async_reconnect_with_backoff)
+    def test_reconnect_method_exists_in_retry_strategy(self) -> None:
+        """async_reconnect_with_backoff should be in RetryStrategy class."""
+        assert hasattr(u.RetryStrategy, "async_reconnect_with_backoff")
+        assert callable(u.RetryStrategy.async_reconnect_with_backoff)
 
 
 class TestRequestTrackerInTransactionHandler:
@@ -401,23 +395,22 @@ class TestRequestTrackerInTransactionHandler:
 
     def test_request_tracker_is_nested(self) -> None:
         """RequestTracker should be a nested class of TransactionHandler."""
-        assert hasattr(MT5Utilities.TransactionHandler, "RequestTracker")
-        tracker = MT5Utilities.TransactionHandler.RequestTracker
+        assert hasattr(u.TransactionHandler, "RequestTracker")
+        tracker = u.TransactionHandler.RequestTracker
         assert hasattr(tracker, "generate_request_id")
         assert hasattr(tracker, "mark_comment")
         assert hasattr(tracker, "extract_request_id")
 
     def test_no_standalone_request_tracker(self) -> None:
-        """There should be no standalone RequestTracker in MT5Utilities."""
+        """There should be no standalone RequestTracker in u."""
         # RequestTracker should ONLY be accessible via TransactionHandler
-        # If someone tries MT5Utilities.RequestTracker, it should fail
-        # OR be the same as MT5Utilities.TransactionHandler.RequestTracker
-        if hasattr(MT5Utilities, "RequestTracker"):
+        # If someone tries u.RequestTracker, it should fail
+        # OR be the same as u.TransactionHandler.RequestTracker
+        if hasattr(u, "RequestTracker"):
             # If it exists, it should be the same object
-            assert (
-                MT5Utilities.RequestTracker
-                is MT5Utilities.TransactionHandler.RequestTracker
-            ), "RequestTracker should be nested, not standalone"
+            assert u.RequestTracker is u.TransactionHandler.RequestTracker, (
+                "RequestTracker should be nested, not standalone"
+            )
 
 
 # ============================================================================
@@ -441,7 +434,7 @@ class TestRetcodeEdgeCases:
         Zero indicates empty/synthetic response (e.g., timeout created synthetic
         result with retcode=0). Must trigger state verification, not blind retry.
         """
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(0)
+        classification = u.ErrorClassifier.classify_mt5_retcode(0)
         assert classification == c.Resilience.ErrorClassification.VERIFY_REQUIRED
 
     def test_retcode_negative_treated_as_unknown(self) -> None:
@@ -449,11 +442,11 @@ class TestRetcodeEdgeCases:
 
         Negative values are not valid MT5 retcodes.
         """
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(-1)
+        classification = u.ErrorClassifier.classify_mt5_retcode(-1)
         assert classification == c.Resilience.ErrorClassification.UNKNOWN
 
         # Also test more negative values
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(-999)
+        classification = u.ErrorClassifier.classify_mt5_retcode(-999)
         assert classification == c.Resilience.ErrorClassification.UNKNOWN
 
     def test_retcode_very_large_treated_as_unknown(self) -> None:
@@ -461,7 +454,7 @@ class TestRetcodeEdgeCases:
 
         Values outside known MT5 retcode range should not crash.
         """
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(99999)
+        classification = u.ErrorClassifier.classify_mt5_retcode(99999)
         assert classification == c.Resilience.ErrorClassification.UNKNOWN
 
     def test_all_conditional_retcodes_classified_correctly(self) -> None:
@@ -476,7 +469,7 @@ class TestRetcodeEdgeCases:
         """
         conditional_codes = [10007, 10018, 10023, 10025]
         for code in conditional_codes:
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            classification = u.ErrorClassifier.classify_mt5_retcode(code)
             # CRITICAL: Must be exactly CONDITIONAL, not UNKNOWN
             assert classification == c.Resilience.ErrorClassification.CONDITIONAL, (
                 f"Code {code} should be CONDITIONAL, got {classification.name}"
@@ -484,19 +477,19 @@ class TestRetcodeEdgeCases:
 
     def test_timeout_outcome_is_verify_required(self) -> None:
         """TIMEOUT retcode (10012) outcome should be VERIFY_REQUIRED."""
-        outcome = MT5Utilities.TransactionHandler.classify_result(10012)
+        outcome = u.TransactionHandler.classify_result(10012)
         assert outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED
 
     def test_connection_outcome_is_verify_required(self) -> None:
         """CONNECTION retcode (10031) outcome should be VERIFY_REQUIRED."""
-        outcome = MT5Utilities.TransactionHandler.classify_result(10031)
+        outcome = u.TransactionHandler.classify_result(10031)
         assert outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED
 
     def test_all_success_retcodes(self) -> None:
         """All success-indicating retcodes should classify as SUCCESS."""
         success_codes = [10008, 10009]  # PLACED, DONE
         for code in success_codes:
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            classification = u.ErrorClassifier.classify_mt5_retcode(code)
             assert classification == c.Resilience.ErrorClassification.SUCCESS
 
     def test_all_permanent_failure_codes(self) -> None:
@@ -509,7 +502,7 @@ class TestRetcodeEdgeCases:
             10015,  # INVALID_PRICE
         ]
         for code in permanent_codes:
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            classification = u.ErrorClassifier.classify_mt5_retcode(code)
             assert classification == c.Resilience.ErrorClassification.PERMANENT, (
                 f"Code {code} should be PERMANENT"
             )
@@ -520,7 +513,7 @@ class TestRetcodeEdgeCases:
         retcode=0 indicates empty/synthetic response. Must verify state
         before deciding on retry to prevent double execution.
         """
-        outcome = MT5Utilities.TransactionHandler.classify_result(0)
+        outcome = u.TransactionHandler.classify_result(0)
         # Zero is in VERIFY_REQUIRED_CODES, so outcome must be VERIFY_REQUIRED
         assert outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED, (
             f"retcode=0 outcome should be VERIFY_REQUIRED, got {outcome.name}"
@@ -562,14 +555,14 @@ class TestBoundaryValues:
         max_attempts = 3
 
         # should_retry with RETRY outcome
-        assert MT5Utilities.TransactionHandler.should_retry(
+        assert u.TransactionHandler.should_retry(
             c.Resilience.TransactionOutcome.RETRY, 0, max_attempts
         )
-        assert MT5Utilities.TransactionHandler.should_retry(
+        assert u.TransactionHandler.should_retry(
             c.Resilience.TransactionOutcome.RETRY, 1, max_attempts
         )
         # At max-1, should NOT retry (already used all attempts)
-        assert not MT5Utilities.TransactionHandler.should_retry(
+        assert not u.TransactionHandler.should_retry(
             c.Resilience.TransactionOutcome.RETRY, 2, max_attempts
         )
 
@@ -578,9 +571,7 @@ class TestBoundaryValues:
 
         Prevents overflow/infinite delay on extreme retry counts.
         """
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+        config = MT5Settings(
             retry_initial_delay=0.5,
             retry_max_delay=10.0,
             retry_exponential_base=2.0,
@@ -595,9 +586,7 @@ class TestBoundaryValues:
 
     def test_critical_delay_with_large_attempt(self) -> None:
         """Critical delay should cap at half of max_delay."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+        config = MT5Settings(
             critical_retry_initial_delay=0.1,
             retry_max_delay=10.0,
             retry_exponential_base=2.0,
@@ -637,38 +626,38 @@ class TestClassificationConsistency:
     def test_success_classification_maps_to_success_outcome(self) -> None:
         """SUCCESS ErrorClassification should map to SUCCESS TransactionOutcome."""
         # 10009 = DONE = SUCCESS
-        err_class = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10009)
+        err_class = u.ErrorClassifier.classify_mt5_retcode(10009)
         assert err_class == c.Resilience.ErrorClassification.SUCCESS
 
-        outcome = MT5Utilities.TransactionHandler.classify_result(10009)
+        outcome = u.TransactionHandler.classify_result(10009)
         assert outcome == c.Resilience.TransactionOutcome.SUCCESS
 
     def test_retryable_classification_maps_to_retry_outcome(self) -> None:
         """RETRYABLE ErrorClassification should map to RETRY TransactionOutcome."""
         # 10004 = REQUOTE = RETRYABLE
-        err_class = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10004)
+        err_class = u.ErrorClassifier.classify_mt5_retcode(10004)
         assert err_class == c.Resilience.ErrorClassification.RETRYABLE
 
-        outcome = MT5Utilities.TransactionHandler.classify_result(10004)
+        outcome = u.TransactionHandler.classify_result(10004)
         assert outcome == c.Resilience.TransactionOutcome.RETRY
 
     def test_permanent_classification_maps_to_permanent_failure_outcome(self) -> None:
         """PERMANENT ErrorClassification should map to PERMANENT_FAILURE."""
         # 10006 = REJECT = PERMANENT
-        err_class = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10006)
+        err_class = u.ErrorClassifier.classify_mt5_retcode(10006)
         assert err_class == c.Resilience.ErrorClassification.PERMANENT
 
-        outcome = MT5Utilities.TransactionHandler.classify_result(10006)
+        outcome = u.TransactionHandler.classify_result(10006)
         assert outcome == c.Resilience.TransactionOutcome.PERMANENT_FAILURE
 
     def test_verify_required_classification_consistency(self) -> None:
         """VERIFY_REQUIRED classification should map to VERIFY_REQUIRED outcome."""
         # 10012 = TIMEOUT, 10031 = CONNECTION
         for code in [10012, 10031]:
-            err_class = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            err_class = u.ErrorClassifier.classify_mt5_retcode(code)
             assert err_class == c.Resilience.ErrorClassification.VERIFY_REQUIRED
 
-            outcome = MT5Utilities.TransactionHandler.classify_result(code)
+            outcome = u.TransactionHandler.classify_result(code)
             assert outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED
 
 
@@ -677,12 +666,8 @@ class TestCircuitBreakerThreadSafety:
 
     def test_concurrent_failure_recording(self) -> None:
         """Multiple threads recording failures should not corrupt state."""
-        import threading
-
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(cb_threshold=100, cb_recovery=30.0)
-        cb = MT5Utilities.CircuitBreaker(config=config, name="test")
+        config = MT5Settings(cb_threshold=100, cb_recovery=30.0)
+        cb = u.CircuitBreaker(config=config, name="test")
 
         threads = []
         for _ in range(10):
@@ -699,12 +684,8 @@ class TestCircuitBreakerThreadSafety:
 
     def test_concurrent_success_recording(self) -> None:
         """Multiple threads recording success should not corrupt state."""
-        import threading
-
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(cb_threshold=100, cb_recovery=30.0)
-        cb = MT5Utilities.CircuitBreaker(config=config, name="test")
+        config = MT5Settings(cb_threshold=100, cb_recovery=30.0)
+        cb = u.CircuitBreaker(config=config, name="test")
 
         # First record some failures
         for _ in range(10):
@@ -726,13 +707,8 @@ class TestCircuitBreakerThreadSafety:
 
     def test_concurrent_state_transitions(self) -> None:
         """State transitions should be atomic under concurrent access."""
-        import threading
-        import time
-
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(cb_threshold=3, cb_recovery=0.01)
-        cb = MT5Utilities.CircuitBreaker(config=config, name="test")
+        config = MT5Settings(cb_threshold=3, cb_recovery=0.01)
+        cb = u.CircuitBreaker(config=config, name="test")
 
         results: list[str] = []
         lock = threading.Lock()
@@ -762,9 +738,7 @@ class TestRetryWithBackoffHooks:
     @pytest.mark.asyncio
     async def test_should_retry_hook_prevents_retry(self) -> None:
         """When should_retry returns False, no retry should occur."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(retry_max_attempts=5, retry_jitter=False)
+        config = MT5Settings(retry_max_attempts=5, retry_jitter=False)
         call_count = 0
 
         async def failing_op() -> str:
@@ -777,7 +751,7 @@ class TestRetryWithBackoffHooks:
             return False
 
         with pytest.raises(ValueError):
-            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+            await u.RetryStrategy.async_retry_with_backoff(
                 failing_op,
                 config,
                 "test_op",
@@ -790,9 +764,7 @@ class TestRetryWithBackoffHooks:
     @pytest.mark.asyncio
     async def test_on_success_hook_called(self) -> None:
         """on_success hook should be called on successful operation."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(retry_max_attempts=3)
+        config = MT5Settings(retry_max_attempts=3)
         success_called = False
 
         async def success_op() -> str:
@@ -802,7 +774,7 @@ class TestRetryWithBackoffHooks:
             nonlocal success_called
             success_called = True
 
-        await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+        await u.RetryStrategy.async_retry_with_backoff(
             success_op,
             config,
             "test_op",
@@ -814,9 +786,7 @@ class TestRetryWithBackoffHooks:
     @pytest.mark.asyncio
     async def test_on_failure_hook_called_on_exhaustion(self) -> None:
         """on_failure hook should be called when retries exhausted."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+        config = MT5Settings(
             retry_max_attempts=2,
             retry_initial_delay=0.01,
             retry_jitter=False,
@@ -833,8 +803,8 @@ class TestRetryWithBackoffHooks:
             failure_called = True
             failure_exception = e
 
-        with pytest.raises(MT5Utilities.Exceptions.MaxRetriesError):
-            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+        with pytest.raises(u.Exceptions.MaxRetriesError):
+            await u.RetryStrategy.async_retry_with_backoff(
                 always_fail,
                 config,
                 "test_op",
@@ -847,9 +817,7 @@ class TestRetryWithBackoffHooks:
     @pytest.mark.asyncio
     async def test_before_retry_hook_called(self) -> None:
         """before_retry hook should be called before each retry."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+        config = MT5Settings(
             retry_max_attempts=3,
             retry_initial_delay=0.01,
             retry_jitter=False,
@@ -869,7 +837,7 @@ class TestRetryWithBackoffHooks:
             nonlocal before_retry_count
             before_retry_count += 1
 
-        result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+        result = await u.RetryStrategy.async_retry_with_backoff(
             fail_twice,
             config,
             "test_op",
@@ -883,9 +851,7 @@ class TestRetryWithBackoffHooks:
     @pytest.mark.asyncio
     async def test_max_attempts_override(self) -> None:
         """max_attempts_override should override config value."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+        config = MT5Settings(
             retry_max_attempts=10,  # High default
             retry_initial_delay=0.01,
             retry_jitter=False,
@@ -898,8 +864,8 @@ class TestRetryWithBackoffHooks:
             msg = "error"
             raise ValueError(msg)
 
-        with pytest.raises(MT5Utilities.Exceptions.MaxRetriesError):
-            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+        with pytest.raises(u.Exceptions.MaxRetriesError):
+            await u.RetryStrategy.async_retry_with_backoff(
                 always_fail,
                 config,
                 "test_op",
@@ -914,17 +880,17 @@ class TestPartialExecutionScenarios:
 
     def test_partial_fill_outcome(self) -> None:
         """PARTIAL (10010) should classify as PARTIAL outcome."""
-        outcome = MT5Utilities.TransactionHandler.classify_result(10010)
+        outcome = u.TransactionHandler.classify_result(10010)
         assert outcome == c.Resilience.TransactionOutcome.PARTIAL
 
     def test_placed_outcome_is_success(self) -> None:
         """PLACED (10008) should classify as SUCCESS outcome."""
-        outcome = MT5Utilities.TransactionHandler.classify_result(10008)
+        outcome = u.TransactionHandler.classify_result(10008)
         assert outcome == c.Resilience.TransactionOutcome.SUCCESS
 
     def test_done_outcome_is_success(self) -> None:
         """DONE (10009) should classify as SUCCESS outcome."""
-        outcome = MT5Utilities.TransactionHandler.classify_result(10009)
+        outcome = u.TransactionHandler.classify_result(10009)
         assert outcome == c.Resilience.TransactionOutcome.SUCCESS
 
 
@@ -948,9 +914,6 @@ class TestAdversarialRequestIdUniqueness:
         CRITICAL: Even with concurrent generation, all IDs must be unique.
         Duplicate IDs could cause one order to be mistaken for another.
         """
-        import threading
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
         all_ids: list[str] = []
         lock = threading.Lock()
 
@@ -1092,10 +1055,8 @@ class TestAdversarialCircuitBreakerBehavior:
 
         Not before, not after.
         """
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(cb_threshold=5, cb_recovery=60.0)
-        cb = MT5Utilities.CircuitBreaker(config=config, name="test")
+        config = MT5Settings(cb_threshold=5, cb_recovery=60.0)
+        cb = u.CircuitBreaker(config=config, name="test")
 
         # Record failures up to threshold - 1
         for i in range(4):
@@ -1116,10 +1077,8 @@ class TestAdversarialCircuitBreakerBehavior:
         Simulates 5 orders each with 3 verify timeouts = 15 failures.
         CB with threshold 5 should be OPEN.
         """
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(cb_threshold=5, cb_recovery=60.0)
-        cb = MT5Utilities.CircuitBreaker(config=config, name="test")
+        config = MT5Settings(cb_threshold=5, cb_recovery=60.0)
+        cb = u.CircuitBreaker(config=config, name="test")
 
         # Simulate 5 orders with 3 verify timeouts each
         failures_recorded = 0
@@ -1139,12 +1098,8 @@ class TestAdversarialCircuitBreakerBehavior:
 
         Ensures no race condition where operation is allowed when CB is OPEN.
         """
-        import threading
-
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(cb_threshold=5, cb_recovery=0.1)  # Fast recovery
-        cb = MT5Utilities.CircuitBreaker(config=config, name="test")
+        config = MT5Settings(cb_threshold=5, cb_recovery=0.1)  # Fast recovery
+        cb = u.CircuitBreaker(config=config, name="test")
 
         # Open the CB
         for _ in range(5):
@@ -1186,9 +1141,7 @@ class TestAdversarialRetryBehavior:
 
         Tests that reconnection failure doesn't cause infinite loop.
         """
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(
+        config = MT5Settings(
             retry_max_attempts=3,
             retry_initial_delay=0.01,
             retry_jitter=False,
@@ -1208,8 +1161,8 @@ class TestAdversarialRetryBehavior:
             msg = "reconnection failed"
             raise ConnectionError(msg)
 
-        with pytest.raises(MT5Utilities.Exceptions.MaxRetriesError):
-            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+        with pytest.raises(u.Exceptions.MaxRetriesError):
+            await u.RetryStrategy.async_retry_with_backoff(
                 failing_op,
                 config,
                 "test_op",
@@ -1229,18 +1182,18 @@ class TestAdversarialExceptionHandling:
 
     def test_is_retryable_exception_rejects_permanent_errors(self) -> None:
         """PermanentError should never be classified as retryable."""
-        perm_error = MT5Utilities.Exceptions.PermanentError(10006, "rejected")
-        assert not MT5Utilities.CircuitBreaker.is_retryable_exception(perm_error)
+        perm_error = u.Exceptions.PermanentError(10006, "rejected")
+        assert not u.ErrorClassifier.is_retryable_exception(perm_error)
 
     def test_is_retryable_exception_accepts_connection_errors(self) -> None:
         """ConnectionError should be classified as retryable for reconnection."""
         conn_error = ConnectionError("connection lost")
-        assert MT5Utilities.CircuitBreaker.is_retryable_exception(conn_error)
+        assert u.ErrorClassifier.is_retryable_exception(conn_error)
 
     def test_is_retryable_exception_accepts_timeout_errors(self) -> None:
         """TimeoutError should be classified as retryable."""
         timeout_error = TimeoutError("operation timed out")
-        assert MT5Utilities.CircuitBreaker.is_retryable_exception(timeout_error)
+        assert u.ErrorClassifier.is_retryable_exception(timeout_error)
 
 
 # ============================================================================
@@ -1275,7 +1228,7 @@ class TestAdversarialV4ZeroIds:
         VERIFY_REQUIRED for clarity and correctness.
         """
         # Since 0 is in VERIFY_REQUIRED_CODES, it should classify as VERIFY_REQUIRED
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(0)
+        classification = u.ErrorClassifier.classify_mt5_retcode(0)
         assert classification == c.Resilience.ErrorClassification.VERIFY_REQUIRED, (
             f"retcode=0 should be VERIFY_REQUIRED, got {classification.name}"
         )
@@ -1297,18 +1250,18 @@ class TestAdversarialV4RetryBoundary:
         max_attempts = 3
 
         # Attempt 0: first try -> can retry
-        assert MT5Utilities.TransactionHandler.should_retry(
+        assert u.TransactionHandler.should_retry(
             c.Resilience.TransactionOutcome.RETRY, 0, max_attempts
         )
 
         # Attempt 1: second try -> can retry
-        assert MT5Utilities.TransactionHandler.should_retry(
+        assert u.TransactionHandler.should_retry(
             c.Resilience.TransactionOutcome.RETRY, 1, max_attempts
         )
 
         # Attempt 2: third try -> NO MORE RETRIES
         # This is the critical boundary
-        assert not MT5Utilities.TransactionHandler.should_retry(
+        assert not u.TransactionHandler.should_retry(
             c.Resilience.TransactionOutcome.RETRY, 2, max_attempts
         ), "MUTATION BUG: attempt >= max-1 should NOT retry!"
 
@@ -1317,7 +1270,7 @@ class TestAdversarialV4RetryBoundary:
         max_attempts = 3
 
         # Attempt 3: beyond max -> definitely no retry
-        assert not MT5Utilities.TransactionHandler.should_retry(
+        assert not u.TransactionHandler.should_retry(
             c.Resilience.TransactionOutcome.RETRY, 3, max_attempts
         ), "attempt >= max should never retry"
 
@@ -1326,7 +1279,7 @@ class TestAdversarialV4RetryBoundary:
         max_attempts = 1
 
         # Even on first failure, should not retry with max=1
-        assert not MT5Utilities.TransactionHandler.should_retry(
+        assert not u.TransactionHandler.should_retry(
             c.Resilience.TransactionOutcome.RETRY, 0, max_attempts
         ), "max_attempts=1 means no retries ever"
 
@@ -1338,24 +1291,22 @@ class TestAdversarialV4CircuitBreakerDisabled:
     must handle this gracefully without crashing.
     """
 
-    def test_cb_disabled_config(self) -> None:
+    def test_cb_disabled_settings(self) -> None:
         """Verify CB can be disabled via config."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(enable_circuit_breaker=False)
+        config = MT5Settings(enable_circuit_breaker=False)
         assert config.enable_circuit_breaker is False
 
     def test_classify_retcode_works_without_cb_instance(self) -> None:
         """classify_mt5_retcode is a classmethod, works without CB instance."""
         # This should work even without any CB instance
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(10009)
+        classification = u.ErrorClassifier.classify_mt5_retcode(10009)
         assert classification == c.Resilience.ErrorClassification.SUCCESS
 
     def test_is_retryable_exception_works_without_cb_instance(self) -> None:
         """is_retryable_exception is a classmethod, works without CB instance."""
         # Should work as static/class method
-        assert MT5Utilities.CircuitBreaker.is_retryable_exception(TimeoutError())
-        assert not MT5Utilities.CircuitBreaker.is_retryable_exception(ValueError())
+        assert u.ErrorClassifier.is_retryable_exception(TimeoutError())
+        assert not u.ErrorClassifier.is_retryable_exception(ValueError())
 
 
 class TestAdversarialV4UUID64Bit:
@@ -1424,8 +1375,6 @@ class TestAdversarialV4TimeoutResultRecovery:
 
         This tests the underlying Python behavior we rely on.
         """
-        import asyncio
-
         result_value = "ORDER_EXECUTED"
 
         async def slow_task() -> str:
@@ -1494,15 +1443,13 @@ class TestAdversarialV4MaxAttemptsValidation:
     @pytest.mark.asyncio
     async def test_max_attempts_zero_raises_error(self) -> None:
         """max_attempts=0 should raise ValueError."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(retry_max_attempts=3)
+        config = MT5Settings(retry_max_attempts=3)
 
         async def dummy_op() -> str:
             return "ok"
 
         with pytest.raises(ValueError, match="max_attempts must be >= 1"):
-            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+            await u.RetryStrategy.async_retry_with_backoff(
                 dummy_op,
                 config,
                 "test_op",
@@ -1512,15 +1459,13 @@ class TestAdversarialV4MaxAttemptsValidation:
     @pytest.mark.asyncio
     async def test_max_attempts_negative_raises_error(self) -> None:
         """max_attempts=-1 should raise ValueError."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(retry_max_attempts=3)
+        config = MT5Settings(retry_max_attempts=3)
 
         async def dummy_op() -> str:
             return "ok"
 
         with pytest.raises(ValueError, match="max_attempts must be >= 1"):
-            await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+            await u.RetryStrategy.async_retry_with_backoff(
                 dummy_op,
                 config,
                 "test_op",
@@ -1530,9 +1475,7 @@ class TestAdversarialV4MaxAttemptsValidation:
     @pytest.mark.asyncio
     async def test_max_attempts_one_is_valid(self) -> None:
         """max_attempts=1 should be valid (single attempt, no retries)."""
-        from mt5linux.config import MT5Config
-
-        config = MT5Config(retry_max_attempts=3)
+        config = MT5Settings(retry_max_attempts=3)
         call_count = 0
 
         async def counting_op() -> str:
@@ -1540,7 +1483,7 @@ class TestAdversarialV4MaxAttemptsValidation:
             call_count += 1
             return "ok"
 
-        result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+        result = await u.RetryStrategy.async_retry_with_backoff(
             counting_op,
             config,
             "test_op",

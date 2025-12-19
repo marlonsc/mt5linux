@@ -24,14 +24,14 @@ Usage:
     wine python.exe -m mt5linux.bridge --host 0.0.0.0 --port 50051
     wine python.exe bridge.py --host 0.0.0.0 --port 50051 --debug
 """
-
+# pylint: disable=no-member  # Protobuf generated code has dynamic members
 from __future__ import annotations
 
-# pylint: disable=no-member  # Protobuf generated code has dynamic members
 import argparse
 import inspect
 import logging
 import operator
+import re
 import signal
 import sys
 import threading
@@ -644,7 +644,6 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         first_line = docstring.strip().split("\n")[0]
 
         # Extract parameters from parentheses
-        import re
 
         match = re.search(r"\(([^)]*)\)", first_line)
         if not match:
@@ -963,7 +962,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             return mt5_pb2.SymbolsResponse(total=0, chunks=[])
 
         # MT5 API returns tuple of SymbolInfo namedtuples
-        items = list(result)  # type: ignore[call-overload]
+        items = list(result)
         total = len(items)
         log.debug("SymbolsGet: total=%s symbols", total)
 
@@ -1098,9 +1097,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyRatesFrom: returned %s bars",
-            len(result) if result is not None else 0,  # type: ignore[arg-type]
+            len(result) if result is not None else 0,
         )
-        return self._numpy_to_proto(result)  # type: ignore[arg-type]
+        return self._numpy_to_proto(result)
 
     def CopyRatesFromPos(
         self,
@@ -1137,9 +1136,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyRatesFromPos: returned %s bars",
-            len(result) if result is not None else 0,  # type: ignore[arg-type]
+            len(result) if result is not None else 0,
         )
-        return self._numpy_to_proto(result)  # type: ignore[arg-type]
+        return self._numpy_to_proto(result)
 
     def CopyRatesRange(
         self,
@@ -1180,9 +1179,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyRatesRange: returned %s bars",
-            len(result) if result is not None else 0,  # type: ignore[arg-type]
+            len(result) if result is not None else 0,
         )
-        return self._numpy_to_proto(result)  # type: ignore[arg-type]
+        return self._numpy_to_proto(result)
 
     # =========================================================================
     # MARKET DATA - TICKS
@@ -1223,9 +1222,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyTicksFrom: returned %s ticks",
-            len(result) if result is not None else 0,  # type: ignore[arg-type]
+            len(result) if result is not None else 0,
         )
-        return self._numpy_to_proto(result)  # type: ignore[arg-type]
+        return self._numpy_to_proto(result)
 
     def CopyTicksRange(
         self,
@@ -1266,9 +1265,9 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         log.debug(
             "CopyTicksRange: returned %s ticks",
-            len(result) if result is not None else 0,  # type: ignore[arg-type]
+            len(result) if result is not None else 0,
         )
-        return self._numpy_to_proto(result)  # type: ignore[arg-type]
+        return self._numpy_to_proto(result)
 
     # =========================================================================
     # TRADING OPERATIONS

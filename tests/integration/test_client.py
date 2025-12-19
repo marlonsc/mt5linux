@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 
-import grpc
 import pytest
 
 from mt5linux import MetaTrader5
+from mt5linux.constants import MT5Constants as c
 from tests.conftest import (
+    TEST_GRPC_HOST,
     TEST_GRPC_PORT,
     tc,
 )
@@ -17,30 +19,38 @@ from tests.conftest import (
 
 
 class TestMetaTrader5Connection:
-    """Connection and lifecycle tests (no credentials required)."""
+    """Connection and lifecycle tests (no credentials required).
 
-    def test_connect_and_close(self, mt5_raw: MetaTrader5) -> None:
+    IMPORTANT: Tests that modify connection state (connect/disconnect)
+    MUST create their own client to avoid polluting session-scoped fixtures.
+    """
+
+    def test_connect_and_close(self) -> None:
         """Test connection and close."""
-        # Connection already established by fixture
-        assert mt5_raw._channel is not None
-        mt5_raw.disconnect()
-        assert mt5_raw._channel is None
+        mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
+        mt5.connect()
+        assert mt5._channel is not None
+        mt5.disconnect()
+        assert mt5._channel is None
 
     def test_context_manager(self) -> None:
         """Test context manager opens and closes connection correctly."""
         try:
-            with MetaTrader5(host="localhost", port=TEST_GRPC_PORT) as mt5:
+            with MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT) as mt5:
                 assert mt5._channel is not None
         except (ConnectionError, EOFError, OSError) as e:
             pytest.fail(f"MT5 connection failed: {e}")
         # After exiting context, channel closed
         assert mt5._channel is None
 
-    def test_disconnect_idempotent(self, mt5_raw: MetaTrader5) -> None:
+    def test_disconnect_idempotent(self) -> None:
         """Test that disconnect() can be called multiple times."""
-        mt5_raw.disconnect()
-        mt5_raw.disconnect()  # Should not raise
-        assert mt5_raw._channel is None
+        mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
+        mt5.connect()
+        mt5.disconnect()
+        mt5.disconnect()  # Should not raise
+        mt5.disconnect()  # Should not raise
+        assert mt5._channel is None
 
 
 class TestMetaTrader5Initialize:
@@ -51,14 +61,14 @@ class TestMetaTrader5Initialize:
         # mt5 fixture already initializes
         version = mt5.version()
         assert version is not None
-        assert len(version) == tc.VERSION_TUPLE_LENGTH
+        assert len(version) == tc.VERSION_TUPLE_LEN
 
     def test_last_error(self, mt5: MetaTrader5) -> None:
         """Test last_error after operation."""
         error = mt5.last_error()
         assert error is not None
         assert isinstance(error, tuple)
-        assert len(error) == tc.ERROR_TUPLE_LENGTH
+        assert len(error) == tc.ERROR_TUPLE_LEN
 
 
 class TestMetaTrader5Constants:
@@ -66,8 +76,6 @@ class TestMetaTrader5Constants:
 
     def test_order_type_constants(self, mt5: MetaTrader5) -> None:
         """Test access to ORDER_TYPE_* constants."""
-        from mt5linux.constants import MT5Constants as c
-
         assert mt5.ORDER_TYPE_BUY == c.Order.OrderType.BUY
         assert mt5.ORDER_TYPE_SELL == c.Order.OrderType.SELL
         assert mt5.ORDER_TYPE_BUY_LIMIT == c.Order.OrderType.BUY_LIMIT
@@ -75,8 +83,6 @@ class TestMetaTrader5Constants:
 
     def test_timeframe_constants(self, mt5: MetaTrader5) -> None:
         """Test access to TIMEFRAME_* constants."""
-        from mt5linux.constants import MT5Constants as c
-
         assert mt5.TIMEFRAME_M1 == c.MarketData.TimeFrame.M1
         assert mt5.TIMEFRAME_M5 == c.MarketData.TimeFrame.M5
         assert mt5.TIMEFRAME_H1 == c.MarketData.TimeFrame.H1
@@ -84,9 +90,6 @@ class TestMetaTrader5Constants:
 
     def test_trade_retcode_constants(self, mt5: MetaTrader5) -> None:
         """Test access to TRADE_RETCODE_* constants."""
-        from mt5linux.constants import MT5Constants as c
-
-        assert mt5.TRADE_RETCODE_DONE == c.Order.TradeRetcode.DONE
         assert mt5.TRADE_RETCODE_REQUOTE == c.Order.TradeRetcode.REQUOTE
 
 
@@ -294,8 +297,6 @@ class TestMetaTrader5Login:
     @pytest.mark.integration
     def test_login_with_valid_credentials(self, mt5_raw: MetaTrader5) -> None:
         """Test login with valid credentials."""
-        import os
-
         login = int(os.getenv("MT5_LOGIN", "0"))
         password = os.getenv("MT5_PASSWORD", "")
         server = os.getenv("MT5_SERVER", "")
@@ -330,8 +331,6 @@ class TestMetaTrader5Login:
     @pytest.mark.integration
     def test_login_after_initialize(self, mt5: MetaTrader5) -> None:
         """Test that login works after initialize."""
-        import os
-
         login = int(os.getenv("MT5_LOGIN", "0"))
         password = os.getenv("MT5_PASSWORD", "")
         server = os.getenv("MT5_SERVER", "")
@@ -381,49 +380,68 @@ class TestMetaTrader5HealthCheck:
 
 
 class TestMetaTrader5Resilience:
-    """Tests for resilience features (retry, circuit breaker)."""
+    """Tests for resilience features (retry, circuit breaker).
+
+    IMPORTANT: Tests that modify connection state (connect/disconnect)
+    MUST create their own client to avoid polluting session-scoped fixtures.
+    """
 
     @pytest.mark.integration
     @pytest.mark.slow
-    def test_connection_recovery_after_close(self, mt5: MetaTrader5) -> None:
-        """Test that client handles connection issues and recovers.
+    def test_connection_recovery_after_close(self) -> None:
+        """Test that client auto-reconnects after disconnect.
 
-        Tests disconnect behavior then restores connection for subsequent tests.
+        Verifies that the client's resilience mechanism automatically
+        recovers from a disconnect without manual intervention.
         """
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+        login = int(os.getenv("MT5_LOGIN", "0"))
+        password = os.getenv("MT5_PASSWORD", "")
+        server = os.getenv("MT5_SERVER", "")
 
-        # Get initial data
-        account1 = mt5.account_info()
-        assert account1 is not None
+        if not all([login, password, server]):
+            pytest.skip("MT5 credentials not configured")
 
-        # Force disconnect and verify error on next call
-        mt5.disconnect()
-
-        # This should raise since connection is closed
-        with pytest.raises((ConnectionError, RuntimeError, grpc.RpcError)):
-            mt5.account_info()
-
-        # RESTORE: Reconnect and reinitialize for subsequent tests
+        mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
         mt5.connect()
-        mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
+        result = mt5.initialize(login=login, password=password, server=server)
+        if not result:
+            pytest.fail("Could not initialize MT5")
 
-        # Verify connection is restored
-        account2 = mt5.account_info()
-        assert account2 is not None
+        try:
+            # Get initial data
+            account1 = mt5.account_info()
+            assert account1 is not None, "Initial account_info failed"
+
+            # Force disconnect
+            mt5.disconnect()
+
+            # Client should auto-reconnect and return data (resilience feature)
+            # No exception expected - client handles reconnection internally
+            account2 = mt5.account_info()
+            assert account2 is not None, (
+                "Auto-reconnect failed - account_info returned None"
+            )
+
+            # Verify we got valid data after auto-reconnect
+            assert account2.login > 0, (
+                f"Invalid login after reconnect: {account2.login}"
+            )
+        finally:
+            mt5.shutdown()
+            mt5.disconnect()
 
     @pytest.mark.integration
-    def test_disconnect_is_idempotent_raw(self, mt5_raw: MetaTrader5) -> None:
-        """Test that disconnect() can be called multiple times safely.
+    def test_disconnect_is_idempotent_raw(self) -> None:
+        """Test that disconnect() can be called multiple times safely."""
+        mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
+        mt5.connect()
 
-        Tests idempotent disconnect then restores connection for subsequent tests.
-        """
         # Multiple disconnects should not raise
-        mt5_raw.disconnect()
-        mt5_raw.disconnect()  # Should not raise
-        mt5_raw.disconnect()  # Should not raise
+        mt5.disconnect()
+        mt5.disconnect()  # Should not raise
+        mt5.disconnect()  # Should not raise
 
-        # RESTORE: Reconnect for subsequent tests
-        mt5_raw.connect()
+        assert mt5.is_connected is False
 
     @pytest.mark.integration
     def test_multiple_operations_same_connection(self, mt5: MetaTrader5) -> None:

@@ -17,12 +17,15 @@ Usage:
 
 """
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, TypedDict
+from __future__ import annotations
 
-if TYPE_CHECKING:
-    import numpy as np
-    from numpy.typing import NDArray
+from collections.abc import Callable
+from typing import TypedDict, TypeVar
+
+import numpy as np
+from numpy.typing import NDArray
+
+T = TypeVar("T")
 
 
 class MT5Types:

@@ -18,14 +18,13 @@ from collections import namedtuple
 from typing import TYPE_CHECKING, ClassVar
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from mt5linux.constants import MT5Constants as c
 from mt5linux.models import MT5Models
 
 if TYPE_CHECKING:
-    from mt5linux import MetaTrader5
-
+    from mt5linux.client import MetaTrader5
 
 # =============================================================================
 # MODEL FIELD DEFINITIONS - Source of truth for validation
@@ -282,43 +281,43 @@ class TestFrozenModels:
         """AccountInfo should be immutable."""
         info = MT5Models.AccountInfo(login=12345)
         with pytest.raises(ValidationError):
-            info.balance = 999999.0  # type: ignore[misc]
+            info.balance = 999999.0
 
     def test_symbol_info_is_frozen(self) -> None:
         """SymbolInfo should be immutable."""
         info = MT5Models.SymbolInfo(name="EURUSD")
         with pytest.raises(ValidationError):
-            info.name = "CHANGED"  # type: ignore[misc]
+            info.name = "CHANGED"
 
     def test_position_is_frozen(self) -> None:
         """Position should be immutable."""
         pos = MT5Models.Position(ticket=12345)
         with pytest.raises(ValidationError):
-            pos.ticket = 99999  # type: ignore[misc]
+            pos.ticket = 99999
 
     def test_tick_is_frozen(self) -> None:
         """Tick should be immutable."""
         tick = MT5Models.Tick(time=1234567890)
         with pytest.raises(ValidationError):
-            tick.bid = 999.0  # type: ignore[misc]
+            tick.bid = 999.0
 
     def test_order_is_frozen(self) -> None:
         """Order should be immutable."""
         order = MT5Models.Order(ticket=12345)
         with pytest.raises(ValidationError):
-            order.ticket = 99999  # type: ignore[misc]
+            order.ticket = 99999
 
     def test_deal_is_frozen(self) -> None:
         """Deal should be immutable."""
         deal = MT5Models.Deal(ticket=12345)
         with pytest.raises(ValidationError):
-            deal.ticket = 99999  # type: ignore[misc]
+            deal.ticket = 99999
 
     def test_order_result_is_frozen(self) -> None:
         """OrderResult should be immutable."""
         result = MT5Models.OrderResult(retcode=c.Order.TradeRetcode.DONE)
         with pytest.raises(ValidationError):
-            result.retcode = 0  # type: ignore[misc]
+            result.retcode = 0
 
 
 # =============================================================================
@@ -574,8 +573,6 @@ class TestModelCatalog:
     @pytest.mark.parametrize("model_name", EXPECTED_MODELS[1:])  # Skip Base
     def test_model_inherits_from_base_or_basemodel(self, model_name: str) -> None:
         """All models should inherit from Base or BaseModel."""
-        from pydantic import BaseModel
-
         model_cls = getattr(MT5Models, model_name)
         assert issubclass(model_cls, BaseModel), (
             f"{model_name} should inherit from BaseModel"

@@ -1,7 +1,7 @@
 """Tests for MT5 error classification and operation criticality.
 
 Tests the ErrorClassification enum, OperationCriticality enum,
-and the CircuitBreaker classification methods.
+and the ErrorClassifier classification methods.
 
 NO MOCKING - tests use real classification logic.
 """
@@ -9,7 +9,7 @@ NO MOCKING - tests use real classification logic.
 from __future__ import annotations
 
 from mt5linux.constants import MT5Constants as c
-from mt5linux.utilities import MT5Utilities
+from mt5linux.utilities import MT5Utilities as u
 
 
 class TestErrorClassification:
@@ -19,7 +19,7 @@ class TestErrorClassification:
         """Success codes should be classified as SUCCESS."""
         success_codes = [10008, 10009]  # PLACED, DONE
         for code in success_codes:
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            classification = u.ErrorClassifier.classify_mt5_retcode(code)
             assert classification == c.Resilience.ErrorClassification.SUCCESS, (
                 f"Code {code} should be SUCCESS, got {classification}"
             )
@@ -27,7 +27,7 @@ class TestErrorClassification:
     def test_partial_code_classified_correctly(self) -> None:
         """DONE_PARTIAL should be classified as PARTIAL."""
         code = 10010  # DONE_PARTIAL
-        classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+        classification = u.ErrorClassifier.classify_mt5_retcode(code)
         assert classification == c.Resilience.ErrorClassification.PARTIAL
 
     def test_retryable_codes_classified_correctly(self) -> None:
@@ -37,7 +37,7 @@ class TestErrorClassification:
         retryable = [10004, 10020, 10021, 10024]
         # REQUOTE, PRICE_CHANGED, PRICE_OFF, TOO_MANY_REQUESTS
         for code in retryable:
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            classification = u.ErrorClassifier.classify_mt5_retcode(code)
             assert classification == c.Resilience.ErrorClassification.RETRYABLE, (
                 f"Code {code} should be RETRYABLE, got {classification}"
             )
@@ -51,7 +51,7 @@ class TestErrorClassification:
         """
         verify_required = [10012, 10031]  # TIMEOUT, CONNECTION
         for code in verify_required:
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            classification = u.ErrorClassifier.classify_mt5_retcode(code)
             assert classification == c.Resilience.ErrorClassification.VERIFY_REQUIRED, (
                 f"Code {code} should be VERIFY_REQUIRED, got {classification}"
             )
@@ -61,7 +61,7 @@ class TestErrorClassification:
         conditional = [10007, 10018, 10023, 10025]
         # CANCEL, MARKET_CLOSED, ORDER_CHANGED, NO_CHANGES
         for code in conditional:
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            classification = u.ErrorClassifier.classify_mt5_retcode(code)
             assert classification == c.Resilience.ErrorClassification.CONDITIONAL, (
                 f"Code {code} should be CONDITIONAL, got {classification}"
             )
@@ -79,50 +79,56 @@ class TestErrorClassification:
             10019,  # NO_MONEY
         ]
         for code in permanent:
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            classification = u.ErrorClassifier.classify_mt5_retcode(code)
             assert classification == c.Resilience.ErrorClassification.PERMANENT, (
                 f"Code {code} should be PERMANENT, got {classification}"
             )
 
     def test_unknown_code_classified_as_unknown(self) -> None:
         """Unknown codes should be classified as UNKNOWN."""
-        unknown_codes = [99999, 0, -1, 10000]
+        unknown_codes = [99999, -1, 10000]
         for code in unknown_codes:
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(code)
+            classification = u.ErrorClassifier.classify_mt5_retcode(code)
             assert classification == c.Resilience.ErrorClassification.UNKNOWN, (
                 f"Code {code} should be UNKNOWN, got {classification}"
             )
 
+        # Code 0 (EMPTY) is now VERIFY_REQUIRED (conservative approach)
+        classification = u.ErrorClassifier.classify_mt5_retcode(0)
+        assert classification == c.Resilience.ErrorClassification.VERIFY_REQUIRED, (
+            "Code 0 (EMPTY) should be VERIFY_REQUIRED, got {classification}"
+        )
+
     def test_is_retryable_mt5_code(self) -> None:
         """is_retryable_mt5_code should return True only for safe retryable codes."""
         # Safe retryable codes (order NOT executed)
-        assert MT5Utilities.CircuitBreaker.is_retryable_mt5_code(10004)  # REQUOTE
-        assert MT5Utilities.CircuitBreaker.is_retryable_mt5_code(10020)  # PRICE_CHANGED
-        assert MT5Utilities.CircuitBreaker.is_retryable_mt5_code(10021)  # PRICE_OFF
+        assert u.ErrorClassifier.is_retryable_mt5_code(10004)  # REQUOTE
+        assert u.ErrorClassifier.is_retryable_mt5_code(10020)  # PRICE_CHANGED
+        assert u.ErrorClassifier.is_retryable_mt5_code(10021)  # PRICE_OFF
 
         # CRITICAL: TIMEOUT and CONNECTION are NOT retryable - they are VERIFY_REQUIRED
         # because the order MAY have been executed!
-        assert not MT5Utilities.CircuitBreaker.is_retryable_mt5_code(10012)  # TIMEOUT
-        assert not MT5Utilities.CircuitBreaker.is_retryable_mt5_code(10031)  # CONN
+        assert not u.ErrorClassifier.is_retryable_mt5_code(10012)  # TIMEOUT
+        assert not u.ErrorClassifier.is_retryable_mt5_code(10031)  # CONN
 
         # Other non-retryable codes
-        assert not MT5Utilities.CircuitBreaker.is_retryable_mt5_code(10006)  # REJECT
-        assert not MT5Utilities.CircuitBreaker.is_retryable_mt5_code(10009)  # DONE
-        assert not MT5Utilities.CircuitBreaker.is_retryable_mt5_code(10010)  # PARTIAL
-        assert not MT5Utilities.CircuitBreaker.is_retryable_mt5_code(10007)  # CANCEL
+        assert not u.ErrorClassifier.is_retryable_mt5_code(10006)  # REJECT
+        assert not u.ErrorClassifier.is_retryable_mt5_code(10009)  # DONE
+        assert not u.ErrorClassifier.is_retryable_mt5_code(10010)  # PARTIAL
+        assert not u.ErrorClassifier.is_retryable_mt5_code(10007)  # CANCEL
 
     def test_is_permanent_mt5_code(self) -> None:
         """is_permanent_mt5_code should return True only for permanent codes."""
         # Permanent codes
-        assert MT5Utilities.CircuitBreaker.is_permanent_mt5_code(10006)  # REJECT
-        assert MT5Utilities.CircuitBreaker.is_permanent_mt5_code(10019)  # NO_MONEY
-        assert MT5Utilities.CircuitBreaker.is_permanent_mt5_code(10017)  # DISABLED
+        assert u.ErrorClassifier.is_permanent_mt5_code(10006)  # REJECT
+        assert u.ErrorClassifier.is_permanent_mt5_code(10019)  # NO_MONEY
+        assert u.ErrorClassifier.is_permanent_mt5_code(10017)  # DISABLED
 
         # Non-permanent codes
-        assert not MT5Utilities.CircuitBreaker.is_permanent_mt5_code(10004)  # REQUOTE
-        assert not MT5Utilities.CircuitBreaker.is_permanent_mt5_code(10009)  # DONE
-        assert not MT5Utilities.CircuitBreaker.is_permanent_mt5_code(10010)  # PARTIAL
-        assert not MT5Utilities.CircuitBreaker.is_permanent_mt5_code(10007)  # CANCEL
+        assert not u.ErrorClassifier.is_permanent_mt5_code(10004)  # REQUOTE
+        assert not u.ErrorClassifier.is_permanent_mt5_code(10009)  # DONE
+        assert not u.ErrorClassifier.is_permanent_mt5_code(10010)  # PARTIAL
+        assert not u.ErrorClassifier.is_permanent_mt5_code(10007)  # CANCEL
 
 
 class TestOperationCriticality:
@@ -130,51 +136,37 @@ class TestOperationCriticality:
 
     def test_order_send_is_critical(self) -> None:
         """order_send must be CRITICAL."""
-        criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
-            "order_send"
-        )
+        criticality = u.ErrorClassifier.get_operation_criticality("order_send")
         assert criticality == c.Resilience.OperationCriticality.CRITICAL
 
     def test_order_check_is_critical(self) -> None:
         """order_check must be CRITICAL."""
-        criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
-            "order_check"
-        )
+        criticality = u.ErrorClassifier.get_operation_criticality("order_check")
         assert criticality == c.Resilience.OperationCriticality.CRITICAL
 
     def test_positions_get_is_high(self) -> None:
         """positions_get should be HIGH."""
-        criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
-            "positions_get"
-        )
+        criticality = u.ErrorClassifier.get_operation_criticality("positions_get")
         assert criticality == c.Resilience.OperationCriticality.HIGH
 
     def test_account_info_is_high(self) -> None:
         """account_info should be HIGH."""
-        criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
-            "account_info"
-        )
+        criticality = u.ErrorClassifier.get_operation_criticality("account_info")
         assert criticality == c.Resilience.OperationCriticality.HIGH
 
     def test_symbol_info_is_normal(self) -> None:
         """symbol_info should be NORMAL."""
-        criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
-            "symbol_info"
-        )
+        criticality = u.ErrorClassifier.get_operation_criticality("symbol_info")
         assert criticality == c.Resilience.OperationCriticality.NORMAL
 
     def test_symbols_total_is_low(self) -> None:
         """symbols_total should be LOW."""
-        criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
-            "symbols_total"
-        )
+        criticality = u.ErrorClassifier.get_operation_criticality("symbols_total")
         assert criticality == c.Resilience.OperationCriticality.LOW
 
     def test_unknown_operation_defaults_to_normal(self) -> None:
         """Unknown operations should default to NORMAL."""
-        criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
-            "unknown_op"
-        )
+        criticality = u.ErrorClassifier.get_operation_criticality("unknown_op")
         assert criticality == c.Resilience.OperationCriticality.NORMAL
 
 
@@ -183,14 +175,14 @@ class TestShouldVerifyState:
 
     def test_should_verify_for_critical_conditional(self) -> None:
         """Should verify state for CRITICAL ops with CONDITIONAL errors."""
-        assert MT5Utilities.CircuitBreaker.should_verify_state(
+        assert u.ErrorClassifier.should_verify_state(
             "order_send",
             c.Resilience.ErrorClassification.CONDITIONAL,
         )
 
     def test_should_verify_for_critical_unknown(self) -> None:
         """Should verify state for CRITICAL ops with UNKNOWN errors."""
-        assert MT5Utilities.CircuitBreaker.should_verify_state(
+        assert u.ErrorClassifier.should_verify_state(
             "order_send",
             c.Resilience.ErrorClassification.UNKNOWN,
         )
@@ -201,28 +193,28 @@ class TestShouldVerifyState:
         TIMEOUT and CONNECTION errors require verification before retry
         because the order MAY have been executed.
         """
-        assert MT5Utilities.CircuitBreaker.should_verify_state(
+        assert u.ErrorClassifier.should_verify_state(
             "order_send",
             c.Resilience.ErrorClassification.VERIFY_REQUIRED,
         )
 
     def test_should_not_verify_for_critical_success(self) -> None:
         """Should NOT verify state for SUCCESS (already known)."""
-        assert not MT5Utilities.CircuitBreaker.should_verify_state(
+        assert not u.ErrorClassifier.should_verify_state(
             "order_send",
             c.Resilience.ErrorClassification.SUCCESS,
         )
 
     def test_should_not_verify_for_critical_permanent(self) -> None:
         """Should NOT verify state for PERMANENT (no point)."""
-        assert not MT5Utilities.CircuitBreaker.should_verify_state(
+        assert not u.ErrorClassifier.should_verify_state(
             "order_send",
             c.Resilience.ErrorClassification.PERMANENT,
         )
 
     def test_should_not_verify_for_critical_retryable(self) -> None:
         """Should NOT verify state for RETRYABLE (will retry anyway)."""
-        assert not MT5Utilities.CircuitBreaker.should_verify_state(
+        assert not u.ErrorClassifier.should_verify_state(
             "order_send",
             c.Resilience.ErrorClassification.RETRYABLE,
         )
@@ -230,17 +222,17 @@ class TestShouldVerifyState:
     def test_should_not_verify_for_non_critical_ops(self) -> None:
         """Should NOT verify state for non-CRITICAL operations."""
         # HIGH criticality
-        assert not MT5Utilities.CircuitBreaker.should_verify_state(
+        assert not u.ErrorClassifier.should_verify_state(
             "account_info",
             c.Resilience.ErrorClassification.CONDITIONAL,
         )
         # NORMAL criticality
-        assert not MT5Utilities.CircuitBreaker.should_verify_state(
+        assert not u.ErrorClassifier.should_verify_state(
             "symbol_info",
             c.Resilience.ErrorClassification.CONDITIONAL,
         )
         # LOW criticality
-        assert not MT5Utilities.CircuitBreaker.should_verify_state(
+        assert not u.ErrorClassifier.should_verify_state(
             "symbols_total",
             c.Resilience.ErrorClassification.CONDITIONAL,
         )

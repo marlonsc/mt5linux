@@ -11,11 +11,10 @@ Validates that the gRPC bridge behaves correctly:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
 
 import pytest
 
-from mt5linux import MetaTrader5
+from mt5linux import AsyncMetaTrader5, MetaTrader5
 from tests.conftest import (
     MT5_LOGIN,
     MT5_PASSWORD,
@@ -23,9 +22,6 @@ from tests.conftest import (
     TEST_GRPC_HOST,
     TEST_GRPC_PORT,
 )
-
-if TYPE_CHECKING:
-    from mt5linux import AsyncMetaTrader5
 
 
 class TestConnectionLimits:
@@ -198,7 +194,6 @@ class TestBridgeInitialize:
     def test_initialize_idempotent(self, mt5: MetaTrader5) -> None:
         """Multiple Initialize calls should not block."""
         # Call initialize again - should not block
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         result = mt5.initialize(
             login=MT5_LOGIN,
@@ -214,8 +209,6 @@ class TestBridgeLogin:
 
     def test_login_returns_bool(self, mt5: MetaTrader5) -> None:
         """Login should return a boolean result."""
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
-
         # Login again (already logged in)
         result = mt5.login(
             login=MT5_LOGIN,
@@ -237,7 +230,6 @@ class TestBridgeLogin:
         assert result is False
 
         # Restore valid login
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         mt5.login(
             login=MT5_LOGIN,
@@ -252,8 +244,6 @@ class TestBridgeAsyncLogin:
     @pytest.mark.asyncio
     async def test_async_login_returns_bool(self, async_mt5: AsyncMetaTrader5) -> None:
         """Async Login should return a boolean result."""
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
-
         result = await async_mt5.login(
             login=MT5_LOGIN,
             password=MT5_PASSWORD,
@@ -267,7 +257,6 @@ class TestBridgeAsyncLogin:
         self, async_mt5: AsyncMetaTrader5
     ) -> None:
         """Concurrent login attempts should be serialized (not crash)."""
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         async def do_login() -> bool:
             return await async_mt5.login(

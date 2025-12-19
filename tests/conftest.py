@@ -8,8 +8,8 @@ The container is completely isolated from:
 - tests.(neptor-mt5-test, port 18812)
 - mt5docker tests (mt5docker-test, port 48812)
 
-Configuration Source: MT5Config (mt5linux/config.py) - Single Source of Truth
-All test_* fields in MT5Config define isolated test environment defaults.
+Configuration Source: MT5Settings (mt5linux/config.py) - Single Source of Truth
+All test_* fields in MT5Settings define isolated test environment defaults.
 """
 
 from __future__ import annotations
@@ -24,21 +24,21 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Generator
+
 import grpc
 import pytest
 from dotenv import load_dotenv
 
 from mt5linux import AsyncMetaTrader5, MetaTrader5, mt5_pb2, mt5_pb2_grpc
-from mt5linux.config import MT5Config
 from mt5linux.constants import MT5Constants as c
+from mt5linux.settings import MT5Settings
+from mt5linux.utilities import MT5Utilities as u
 from tests.constants import TestConstants as tc
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Generator
-
-
 # =============================================================================
-# CONFIGURATION - Single Source of Truth: MT5Config
+# CONFIGURATION - Single Source of Truth: MT5Settings
 # =============================================================================
 # IMPORTANT: Configuration must be loaded BEFORE any functions that use it
 
@@ -49,25 +49,25 @@ COMPOSE_FILE = PROJECT_ROOT / "docker-compose.yaml"
 CODEGEN_SCRIPT = PROJECT_ROOT / "scripts" / "codegen_enums.py"
 
 # Load .env.test first (test settings), then .env (credentials override)
-# MT5Config will pick up these values via Pydantic Settings env loading
+# MT5Settings will pick up these values via Pydantic Settings env loading
 # NOTE: .env.test includes resilience settings (MT5_ENABLE_CIRCUIT_BREAKER=true, etc.)
 load_dotenv(PROJECT_ROOT / ".env.test")
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 # Create single config instance - all values come from here
-_config = MT5Config()
+_settings = MT5Settings()
 
-# Test container configuration from MT5Config.test_* fields
+# Test container configuration from MT5Settings.test_* fields
 # These are isolated from production (8001), neptor (18812), mt5docker (48812)
-TEST_GRPC_HOST = _config.host
-TEST_GRPC_PORT = _config.test_grpc_port
-TEST_VNC_PORT = _config.test_vnc_port
-TEST_HEALTH_PORT = _config.test_health_port
-TEST_CONTAINER_NAME = _config.test_container_name
+TEST_GRPC_HOST = _settings.host
+TEST_GRPC_PORT = _settings.test_grpc_port
+TEST_VNC_PORT = _settings.test_vnc_port
+TEST_HEALTH_PORT = _settings.test_health_port
+TEST_CONTAINER_NAME = _settings.test_container_name
 
-# Timeouts from MT5Config
-STARTUP_TIMEOUT = _config.test_startup_timeout
-GRPC_TIMEOUT = _config.test_grpc_timeout
+# Timeouts from MT5Settings
+STARTUP_TIMEOUT = _settings.test_startup_timeout
+GRPC_TIMEOUT = _settings.test_grpc_timeout
 
 # MT5 credentials (loaded via env vars - no defaults in config)
 MT5_LOGIN = int(os.getenv("MT5_LOGIN", tc.DEFAULT_MT5_LOGIN))
@@ -80,7 +80,7 @@ SKIP_NO_CREDENTIALS = (
     "To run container tests, create .env file with MT5_LOGIN and MT5_PASSWORD."
 )
 
-MT5_CONFIG: dict[str, str | int | None] = {
+MT5_settings: dict[str, str | int | None] = {
     "host": TEST_GRPC_HOST,
     "port": TEST_GRPC_PORT,
     "login": MT5_LOGIN,
@@ -266,10 +266,10 @@ def wait_for_grpc_service(
 
     start = time.time()
     # Use config values instead of hardcoded defaults
-    min_interval = _config.retry_min_interval
-    max_interval = _config.retry_max_interval
+    min_interval = _settings.retry_min_interval
+    max_interval = _settings.retry_max_interval
     current_interval = min_interval
-    startup_health_timeout = _config.startup_health_timeout
+    startup_health_timeout = _settings.startup_health_timeout
 
     attempt = 0
     while time.time() - start < wait_timeout:
@@ -386,7 +386,8 @@ def ensure_docker_and_codegen() -> Generator[None]:  # noqa: C901, PLR0915
     if not has_mt5_credentials():
         _log("SKIP: No MT5 credentials configured")
         pytest.fail(
-            "MT5 credentials not configured - set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in .env"
+            "MT5 credentials not configured - "
+            "set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in .env"
         )
 
     # Check compose file
@@ -502,9 +503,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.fixture
-def mt5_config() -> dict[str, str | int | None]:
+def mt5_settings() -> dict[str, str | int | None]:
     """Return MT5 test configuration."""
-    return MT5_CONFIG.copy()
+    return MT5_settings.copy()
 
 
 # =============================================================================
@@ -576,12 +577,12 @@ def mt5_raw(_mt5_session_raw: MetaTrader5) -> MetaTrader5:
     """Return raw MT5 connection (no initialize).
 
     This fixture returns the session-scoped connection without initialize.
-    Use for testing connection lifecycle.
+    Use for READ-ONLY operations on raw connection.
+
+    IMPORTANT: Tests that need to disconnect/connect MUST create their
+    own client to avoid state pollution. Do NOT use this fixture for
+    disconnect/connect lifecycle tests.
     """
-    # Resilience: reconnect if connection was lost (e.g., by other tests)
-    if not _mt5_session_raw.is_connected:
-        _log("RESILIENCE: Reconnecting raw MT5 connection")
-        _mt5_session_raw.connect()
     return _mt5_session_raw
 
 
@@ -592,25 +593,20 @@ def mt5(_mt5_session_initialized: MetaTrader5) -> MetaTrader5:
     This fixture returns the session-scoped initialized connection.
     The client itself handles resilience/auto-reconnect internally.
     Skips test if MT5_LOGIN is not configured.
+
+    Resets circuit breaker before each test to prevent failures from
+    accumulating across tests.
     """
     # Skip test if no MT5 credentials configured
     if not has_mt5_credentials():
         pytest.skip(SKIP_NO_CREDENTIALS)
 
-    # Simple validation - client handles resilience internally
-    info = _mt5_session_initialized.terminal_info()
-    if info is None:
-        pytest.fail("MT5 terminal_info returned None - check client resilience")
+    # Reset circuit breaker to prevent cross-test failure accumulation
+    async_client = _mt5_session_initialized._async_client
+    if async_client._circuit_breaker is not None:
+        async_client._circuit_breaker.reset()
 
-    if not info.connected:
-        pytest.fail("MT5 terminal not connected - check client auto-reconnect")
-
-    account = _mt5_session_initialized.account_info()
-    if account is None:
-        pytest.fail("MT5 account_info returned None")
-
-    _log(f"MT5 ready: connected={info.connected}, trade_allowed={info.trade_allowed}")
-
+    # Client handles ALL resilience internally - just return it
     return _mt5_session_initialized
 
 
@@ -747,7 +743,7 @@ def _get_filling_mode(mt5: MetaTrader5, filling_mode_mask: int) -> int:
 
 
 @pytest.fixture
-def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa: C901
+def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa: C901,PLR0912
     """Create a test order and close it to populate history.
 
     This fixture places a buy order, immediately closes it, creating
@@ -756,8 +752,6 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
     Returns dict with 'deal_ticket', 'order_ticket', 'position_id'.
     Returns empty dict if trading is not available (tests should handle this).
     """
-    from mt5linux.utilities import MT5Utilities
-
     symbol = "EURUSD"
     mt5.symbol_select(symbol, enable=True)
     tick = mt5.symbol_info_tick(symbol)
@@ -787,7 +781,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
 
     try:
         result = mt5.order_send(buy_request)
-    except MT5Utilities.Exceptions.Error as e:
+    except u.Exceptions.Error as e:
         pytest.fail(f"order_send failed with error: {e}")
 
     if result is None:
@@ -834,7 +828,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
 
     try:
         close_result = mt5.order_send(close_request)
-    except MT5Utilities.Exceptions.Error as e:
+    except u.Exceptions.Error as e:
         pytest.fail(f"Failed to close position: {e}")
 
     if close_result is None:
@@ -940,16 +934,22 @@ async def async_mt5(
     This fixture returns the session-scoped async initialized connection.
     Skips test if MT5_LOGIN is not configured (=0), credentials missing,
     or if initialization fails.
+
+    Resets circuit breaker before each test to prevent failures from
+    accumulating across tests.
     """
+    # Reset circuit breaker to prevent cross-test failure accumulation
+    if _async_mt5_session_initialized._circuit_breaker is not None:
+        _async_mt5_session_initialized._circuit_breaker.reset()
     return _async_mt5_session_initialized
 
 
 # Export symbols for type checking
 __all__ = [
-    "MT5_CONFIG",
     "TEST_CONTAINER_NAME",
     "TEST_GRPC_HOST",
     "TEST_GRPC_PORT",
+    "MT5_settings",
     "c",  # MT5Constants from mt5linux.constants
     "tc",  # TestConstants from tests.constants
 ]

@@ -17,7 +17,7 @@ from mt5linux.constants import MT5Constants as c
 from tests.conftest import tc
 
 if TYPE_CHECKING:
-    from mt5linux import MetaTrader5
+    from mt5linux.client import MetaTrader5
 
 
 class TestInvalidInputs:
@@ -81,7 +81,6 @@ class TestInvalidInputs:
     def test_invalid_date_future(self, mt5: MetaTrader5) -> None:
         """Test with future dates."""
         # Use tomorrow to test future date handling
-        from datetime import timedelta
 
         tomorrow = datetime.now(UTC) + timedelta(days=tc.SMALL_COUNT)
         day_after = tomorrow + timedelta(days=1)

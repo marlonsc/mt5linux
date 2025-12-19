@@ -1,17 +1,16 @@
 """Centralized utilities for mt5linux.
 
 Minimal structure with maximum integration:
-- Uses MT5Config for all configuration (no separate config classes)
+- Uses MT5Settings for all configuration (no separate config classes)
 - Uses MT5Constants for enums (CircuitBreakerState)
 - All data utilities consolidated in Data class
 - All exceptions consolidated in Exceptions class
 
 Hierarchy Level: 2
-- Imports: MT5Config, MT5Constants
+- Imports: MT5Settings, MT5Constants
 - Used by: client.py, async_client.py, server.py
 
 Usage:
-    from mt5linux.utilities import MT5Utilities
 
     # Exceptions
     raise MT5Utilities.Exceptions.RetryableError(code, description)
@@ -22,8 +21,8 @@ Usage:
     MT5Utilities.Data.wrap(d)
     MT5Utilities.Data.to_timestamp(dt)
 
-    # Circuit Breaker (uses MT5Config directly)
-    cb = MT5Utilities.CircuitBreaker(config=mt5_config, name="mt5")
+    # Circuit Breaker (uses MT5Settings directly)
+    cb = MT5Utilities.CircuitBreaker(config=mt5_settings, name="mt5")
     if cb.can_execute():
         try:
             result = do_operation()
@@ -35,34 +34,33 @@ Usage:
 from __future__ import annotations
 
 # pylint: disable=no-member  # Protobuf generated code has dynamic members
+import ast
 import asyncio
 import logging
+import operator
 import random
 import threading
+import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, NoReturn, Protocol, runtime_checkable
 
+import aiosqlite
 import numpy as np
 import orjson
+
+from mt5linux.constants import MT5Constants as c
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
-    import aiosqlite
     from numpy.typing import NDArray
 
-    from mt5linux.config import MT5Config
-
-
-import operator
-
-from mt5linux.constants import MT5Constants as c
-
-T = TypeVar("T")
+    from mt5linux.settings import MT5Settings
+    from mt5linux.types import T
 
 
 # Protocols for gRPC protobuf types
@@ -93,11 +91,10 @@ class MT5Utilities:
     - Exceptions: All exception classes
     - Data: All data utilities (validation, wrapping, datetime)
     - CircuitBreaker: Fault tolerance pattern
-    """
 
-    # Constants
-    VERSION_TUPLE_LEN = 3  # (version, build, version_string)
-    ERROR_TUPLE_LEN = 2  # (error_code, error_description)
+    Note: All constants moved to MT5Constants.Validation:
+    VERSION_TUPLE_LEN, ERROR_TUPLE_LEN, REQUEST_ID_*
+    """
 
     # =========================================================================
     # EXCEPTIONS
@@ -289,7 +286,7 @@ class MT5Utilities:
             """Validate and convert Any to version tuple."""
             if value is None:
                 return None
-            expected_len = MT5Utilities.VERSION_TUPLE_LEN
+            expected_len = c.Validation.VERSION_TUPLE_LEN
             if not isinstance(value, tuple) or len(value) != expected_len:
                 msg = f"Expected version tuple | None, got {type(value).__name__}"
                 raise TypeError(msg)
@@ -302,7 +299,7 @@ class MT5Utilities:
         @staticmethod
         def validate_last_error(value: object) -> tuple[int, str]:
             """Validate and convert Any to last_error tuple."""
-            expected_len = MT5Utilities.ERROR_TUPLE_LEN
+            expected_len = c.Validation.ERROR_TUPLE_LEN
             if not isinstance(value, tuple) or len(value) != expected_len:
                 msg = f"Expected tuple[int, str], got {type(value).__name__}"
                 raise TypeError(msg)
@@ -509,8 +506,6 @@ class MT5Utilities:
                 NumPy structured array or None if empty.
 
             """
-            import ast
-
             if proto is None or not proto.data or not proto.dtype:
                 return None
 
@@ -819,379 +814,41 @@ class MT5Utilities:
             }
 
     # =========================================================================
-    # CIRCUIT BREAKER
+    # RETRY STRATEGY
     # =========================================================================
 
-    class CircuitBreaker:
-        """Circuit breaker for fault tolerance.
+    class RetryStrategy:
+        """Retry strategies for async operations.
 
-        Implements the circuit breaker pattern to prevent cascading failures.
-        Uses MT5Config directly for configuration (no separate config class).
+        Centralized retry logic extracted from CircuitBreaker.
+        All methods are static - no state stored.
 
-        States (from c.Resilience.CircuitBreakerState):
-            CLOSED: Normal operation, requests pass through
-            OPEN: Too many failures, requests blocked
-            HALF_OPEN: Testing recovery, limited requests allowed
+        Used by:
+        - AsyncMetaTrader5._resilient_call(): generic retry for all gRPC calls
+        - AsyncMetaTrader5._reconnect_with_backoff(): reconnection attempts
+        - CircuitBreaker: via aliases for backward compatibility
+
+        Features:
+        - Exponential backoff with configurable parameters
+        - Jitter support to prevent thundering herd
+        - Callbacks for circuit breaker integration
+        - Before-retry hooks for reconnection
 
         Usage:
-            cb = MT5Utilities.CircuitBreaker(config=mt5_config, name="mt5-client")
-            if cb.can_execute():
-                try:
-                    result = risky_operation()
-                    cb.record_success()
-                except Exception:
-                    cb.record_failure()
-                    raise
-            else:
-                raise MT5Utilities.Exceptions.CircuitBreakerOpenError()
+            result = await RetryStrategy.async_retry_with_backoff(
+                lambda: client.send_order(),
+                config,
+                "order_send",
+                should_retry=ErrorClassifier.is_retryable_exception,
+                on_success=cb.record_success,
+                on_failure=cb.record_failure,
+            )
         """
 
-        def __init__(
-            self,
-            config: MT5Config,
-            name: str = "default",
-        ) -> None:
-            """Initialize circuit breaker.
-
-            Args:
-                config: MT5Config with cb_threshold, cb_recovery, cb_half_open_max.
-                name: Name for logging purposes.
-
-            """
-            self._config = config
-            self.name = name
-            self._state = c.Resilience.CircuitBreakerState.CLOSED
-            self._failure_count = 0
-            self._success_count = 0
-            self._last_failure_time: datetime | None = None
-            self._half_open_calls = 0
-            self._lock = threading.RLock()
-
-        @property
-        def config(self) -> MT5Config:
-            """Get configuration."""
-            return self._config
-
-        @property
-        def state(self) -> c.Resilience.CircuitBreakerState:
-            """Get current circuit state, transitioning if needed."""
-            with self._lock:
-                if (
-                    self._state == c.Resilience.CircuitBreakerState.OPEN
-                    and self._should_attempt_reset()
-                ):
-                    log.info(
-                        "Circuit breaker '%s' transitioning OPEN -> HALF_OPEN",
-                        self.name,
-                    )
-                    self._state = c.Resilience.CircuitBreakerState.HALF_OPEN
-                    self._half_open_calls = 0
-                return self._state
-
-        @property
-        def failure_count(self) -> int:
-            """Get current failure count."""
-            with self._lock:
-                return self._failure_count
-
-        @property
-        def is_closed(self) -> bool:
-            """Check if circuit is closed (normal operation)."""
-            return self.state == c.Resilience.CircuitBreakerState.CLOSED
-
-        @property
-        def is_open(self) -> bool:
-            """Check if circuit is open (blocking requests)."""
-            return self.state == c.Resilience.CircuitBreakerState.OPEN
-
-        def _should_attempt_reset(self) -> bool:
-            """Check if enough time passed to attempt recovery."""
-            if self._last_failure_time is None:
-                return False
-            elapsed = datetime.now(UTC) - self._last_failure_time
-            return elapsed >= timedelta(seconds=self._config.cb_recovery)
-
-        def record_success(self) -> None:
-            """Record a successful operation."""
-            with self._lock:
-                self._failure_count = 0
-                self._success_count += 1
-                if self._state == c.Resilience.CircuitBreakerState.HALF_OPEN:
-                    log.info(
-                        "Circuit breaker '%s' recovered: HALF_OPEN -> CLOSED",
-                        self.name,
-                    )
-                    self._state = c.Resilience.CircuitBreakerState.CLOSED
-
-        def record_failure(self) -> None:
-            """Record a failed operation."""
-            with self._lock:
-                self._failure_count += 1
-                self._last_failure_time = datetime.now(UTC)
-
-                if self._state == c.Resilience.CircuitBreakerState.HALF_OPEN:
-                    log.warning(
-                        "Circuit breaker '%s' failed during recovery",
-                        self.name,
-                    )
-                    self._state = c.Resilience.CircuitBreakerState.OPEN
-                elif self._failure_count >= self._config.cb_threshold:
-                    log.warning(
-                        "Circuit breaker '%s' opened after %d failures",
-                        self.name,
-                        self._failure_count,
-                    )
-                    self._state = c.Resilience.CircuitBreakerState.OPEN
-
-        def can_execute(self) -> bool:
-            """Check if a request is allowed through the circuit.
-
-            CRITICAL FIX: Entire operation is now under lock to prevent race
-            conditions where state could change between read and decision.
-            Previously, reset() could be called between state read and action.
-            """
-            with self._lock:
-                # Inline state check (don't call property which also locks)
-                if (
-                    self._state == c.Resilience.CircuitBreakerState.OPEN
-                    and self._should_attempt_reset()
-                ):
-                    log.info(
-                        "Circuit breaker '%s' transitioning OPEN -> HALF_OPEN",
-                        self.name,
-                    )
-                    self._state = c.Resilience.CircuitBreakerState.HALF_OPEN
-                    self._half_open_calls = 0
-
-                current_state = self._state
-
-                if current_state == c.Resilience.CircuitBreakerState.CLOSED:
-                    return True
-
-                if current_state == c.Resilience.CircuitBreakerState.HALF_OPEN:
-                    if self._half_open_calls < self._config.cb_half_open_max:
-                        self._half_open_calls += 1
-                        return True
-                    return False
-
-                return False  # OPEN state
-
-        def reset(self) -> None:
-            """Manually reset the circuit breaker to closed state."""
-            with self._lock:
-                log.info("Circuit breaker '%s' manually reset", self.name)
-                self._state = c.Resilience.CircuitBreakerState.CLOSED
-                self._failure_count = 0
-                self._success_count = 0
-                self._last_failure_time = None
-                self._half_open_calls = 0
-
-        def get_status(self) -> dict[str, str | int]:
-            """Get circuit breaker status for monitoring.
-
-            Returns:
-                Dictionary with circuit breaker state information.
-
-            """
-            with self._lock:
-                status: dict[str, str | int] = {
-                    "name": self.name,
-                    "state": self._state.name,
-                    "failure_count": self._failure_count,
-                    "success_count": self._success_count,
-                    "failure_threshold": self._config.cb_threshold,
-                }
-
-                if self._last_failure_time:
-                    status["last_failure"] = self._last_failure_time.isoformat()
-                    if self._state == c.Resilience.CircuitBreakerState.OPEN:
-                        recovery_at = self._last_failure_time + timedelta(
-                            seconds=self._config.cb_recovery
-                        )
-                        status["recovery_at"] = recovery_at.isoformat()
-
-                return status
-
-        # -----------------------------------------------------------------
-        # Retry helpers (part of CircuitBreaker resilience pattern)
-        # -----------------------------------------------------------------
-
         @staticmethod
-        def is_retryable_grpc_code(code: int) -> bool:
-            """Check if gRPC status code is retryable.
-
-            Args:
-                code: gRPC status code (integer value).
-
-            Returns:
-                True if the code indicates a transient error.
-
-            """
-            retryable_codes = {
-                c.Resilience.GrpcRetryableCode.UNAVAILABLE,
-                c.Resilience.GrpcRetryableCode.DEADLINE_EXCEEDED,
-                c.Resilience.GrpcRetryableCode.ABORTED,
-                c.Resilience.GrpcRetryableCode.RESOURCE_EXHAUSTED,
-            }
-            return code in retryable_codes
-
-        @staticmethod
-        def is_retryable_exception(error: Exception) -> bool:
-            """Check if exception should trigger retry.
-
-            Args:
-                error: Exception to check.
-
-            Returns:
-                True if exception is retryable.
-
-            """
-            # Check for gRPC errors (duck typing to avoid import)
-            if hasattr(error, "code") and callable(error.code):
-                code = error.code()
-                # grpc.StatusCode is an enum, get its value
-                code_value = code.value[0] if hasattr(code, "value") else int(code)
-                return MT5Utilities.CircuitBreaker.is_retryable_grpc_code(code_value)
-
-            # MT5 retryable errors (includes EmptyResponseError)
-            if isinstance(error, MT5Utilities.Exceptions.RetryableError):
-                return True
-
-            # Connection/timeout errors are retryable, EXCEPT "not established"
-            # which means client was never connected (programming error, not transient)
-            if isinstance(error, ConnectionError):
-                msg = str(error).lower()
-                # Client never connected is not retryable; connection lost is retryable
-                return "not established" not in msg and "call connect" not in msg
-
-            return isinstance(error, (TimeoutError, OSError))
-
-        # -----------------------------------------------------------------
-        # MT5 Retcode Classification (transaction error handling)
-        # -----------------------------------------------------------------
-
-        @staticmethod
-        def classify_mt5_retcode(  # noqa: PLR0911
-            retcode: int,
-        ) -> c.Resilience.ErrorClassification:
-            """Classify MT5 retcode into error category.
-
-            Used to determine how each error should be handled:
-            - SUCCESS: Operation completed successfully
-            - PARTIAL: Partially completed (may need follow-up)
-            - RETRYABLE: Transient error, safe to retry (order NOT executed)
-            - VERIFY_REQUIRED: MUST verify state before retry (order MAY executed)
-            - CONDITIONAL: May be retryable depending on context
-            - PERMANENT: Permanent error, do not retry
-            - UNKNOWN: Unknown error code
-
-            Args:
-                retcode: MT5 TradeRetcode value.
-
-            Returns:
-                ErrorClassification indicating how to handle this code.
-
-            """
-            if retcode in c.Resilience.MT5_SUCCESS_CODES:
-                return c.Resilience.ErrorClassification.SUCCESS
-            if retcode in c.Resilience.MT5_PARTIAL_CODES:
-                return c.Resilience.ErrorClassification.PARTIAL
-            if retcode in c.Resilience.MT5_VERIFY_REQUIRED_CODES:
-                return c.Resilience.ErrorClassification.VERIFY_REQUIRED
-            if retcode in c.Resilience.MT5_RETRYABLE_CODES:
-                return c.Resilience.ErrorClassification.RETRYABLE
-            if retcode in c.Resilience.MT5_CONDITIONAL_CODES:
-                return c.Resilience.ErrorClassification.CONDITIONAL
-            if retcode in c.Resilience.MT5_PERMANENT_CODES:
-                return c.Resilience.ErrorClassification.PERMANENT
-            return c.Resilience.ErrorClassification.UNKNOWN
-
-        @staticmethod
-        def is_retryable_mt5_code(retcode: int) -> bool:
-            """Check if MT5 TradeRetcode is retryable.
-
-            Args:
-                retcode: MT5 TradeRetcode value.
-
-            Returns:
-                True if the code indicates a transient error.
-
-            """
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(retcode)
-            return classification == c.Resilience.ErrorClassification.RETRYABLE
-
-        @staticmethod
-        def is_permanent_mt5_code(retcode: int) -> bool:
-            """Check if MT5 TradeRetcode is permanent.
-
-            Args:
-                retcode: MT5 TradeRetcode value.
-
-            Returns:
-                True if the code indicates a permanent error.
-
-            """
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(retcode)
-            return classification == c.Resilience.ErrorClassification.PERMANENT
-
-        @staticmethod
-        def get_operation_criticality(
-            operation: str,
-        ) -> c.Resilience.OperationCriticality:
-            """Get criticality level for an operation.
-
-            Used to determine retry strategy and state verification:
-            - CRITICAL: More retries, state verification on ambiguous errors
-            - HIGH/NORMAL/LOW: Standard retry behavior
-
-            Args:
-                operation: Operation name (e.g., "order_send").
-
-            Returns:
-                OperationCriticality level (defaults to NORMAL if unknown).
-
-            """
-            criticality_value = c.Resilience.OPERATION_CRITICALITY.get(
-                operation,
-                c.Resilience.OperationCriticality.NORMAL,
-            )
-            return c.Resilience.OperationCriticality(criticality_value)
-
-        @staticmethod
-        def should_verify_state(
-            operation: str,
-            classification: c.Resilience.ErrorClassification,
-        ) -> bool:
-            """Determine if state verification is needed after error.
-
-            For CRITICAL operations with ambiguous errors (CONDITIONAL, UNKNOWN),
-            we need to verify the actual state before reporting to caller.
-
-            Args:
-                operation: Operation name.
-                classification: Error classification from classify_mt5_retcode().
-
-            Returns:
-                True if state verification is recommended.
-
-            """
-            criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
-                operation
-            )
-            if criticality != c.Resilience.OperationCriticality.CRITICAL:
-                return False
-
-            # For critical ops, verify state on ambiguous errors
-            return classification in {
-                c.Resilience.ErrorClassification.CONDITIONAL,
-                c.Resilience.ErrorClassification.UNKNOWN,
-                c.Resilience.ErrorClassification.VERIFY_REQUIRED,
-            }
-
-        @staticmethod
-        async def async_retry_with_backoff(
+        async def async_retry_with_backoff(  # noqa: C901,PLR0913,PLR0912
             coro_factory: Callable[[], Awaitable[T]],
-            config: MT5Config,
+            config: MT5Settings,
             operation_name: str = "operation",
             *,
             should_retry: Callable[[Exception], bool] | None = None,
@@ -1202,15 +859,12 @@ class MT5Utilities:
         ) -> T:
             """Execute async operation with exponential backoff retry.
 
-            Part of CircuitBreaker since retry is a resilience pattern.
-            Uses MT5Config values for retry parameters.
-
             This is the SINGLE implementation of retry logic used by both
             generic operations and MT5-specific operations (via hooks).
 
             Args:
                 coro_factory: Callable that returns an awaitable (not a coroutine).
-                config: MT5Config with retry_* settings.
+                config: MT5Settings with retry_* settings.
                 operation_name: Name for logging purposes.
                 should_retry: Optional predicate to decide if exception is retryable.
                     If None, all exceptions are retryable. If returns False,
@@ -1235,14 +889,14 @@ class MT5Utilities:
                 >>> # Simple retry (all exceptions retryable)
                 >>> async def fetch():
                 ...     return await client.get_data()
-                >>> result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+                >>> result = await MT5Utilities.RetryStrategy.async_retry_with_backoff(
                 ...     fetch, config, "get_data"
                 ... )
 
                 >>> # With circuit breaker hooks
-                >>> result = await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+                >>> result = await MT5Utilities.RetryStrategy.async_retry_with_backoff(
                 ...     fetch, config, "get_data",
-                ...     should_retry=is_retryable_exception,
+                ...     should_retry=ErrorClassifier.is_retryable_exception,
                 ...     on_success=cb.record_success,
                 ...     on_failure=cb.record_failure,
                 ... )
@@ -1282,7 +936,7 @@ class MT5Utilities:
                         delay = config.calculate_retry_delay(attempt)
 
                         log.warning(
-                            "Operation '%s' attempt %d/%d failed: %s. Retrying in %.2fs",
+                            "'%s' attempt %d/%d failed: %s. Retry in %.2fs",
                             operation_name,
                             attempt + 1,
                             max_attempts,
@@ -1327,7 +981,7 @@ class MT5Utilities:
                             on_success()
                         except Exception:
                             log.exception(
-                                "on_success callback failed for '%s' (result preserved)",
+                                "on_success callback failed for '%s'",
                                 operation_name,
                             )
                     return result
@@ -1345,17 +999,16 @@ class MT5Utilities:
         @staticmethod
         async def async_reconnect_with_backoff(
             connect_factory: Callable[[], Awaitable[bool]],
-            config: MT5Config,
+            config: MT5Settings,
             name: str = "reconnect",
         ) -> bool:
             """Attempt reconnection with exponential backoff and jitter.
 
-            Part of CircuitBreaker since reconnection is a resilience pattern.
-            Uses MT5Config values for retry parameters.
+            Uses MT5Settings values for retry parameters.
 
             Args:
                 connect_factory: Callable that returns awaitable bool (True=success).
-                config: MT5Config with retry_* settings.
+                config: MT5Settings with retry_* settings.
                 name: Name for logging purposes.
 
             Returns:
@@ -1411,6 +1064,264 @@ class MT5Utilities:
                 config.retry_max_attempts,
             )
             return False
+
+        @staticmethod
+        async def execute_with_timeout_and_cancel(
+            coro: Awaitable[T],
+            timeout: float,  # noqa: ASYNC109
+            operation_name: str,
+        ) -> tuple[T | None, bool]:
+            """Execute coroutine with timeout and proper task cancellation.
+
+            CRITICAL: asyncio.wait_for() doesn't guarantee cleanup of child tasks.
+            This helper ensures:
+            1. Task is explicitly created for tracking
+            2. On timeout, task is explicitly cancelled
+            3. We wait for cancellation to complete (no orphan tasks)
+
+            Args:
+                coro: Coroutine to execute.
+                timeout: Timeout in seconds.
+                operation_name: Name for logging.
+
+            Returns:
+                Tuple of (result, timed_out) where:
+                - result: Result of coroutine, or None on timeout/cancel
+                - timed_out: True if operation timed out, False otherwise
+
+            Raises:
+                ValueError: If timeout <= 0.
+                Exception: Any non-timeout exception from the coroutine.
+
+            """
+            if timeout <= 0:
+                msg = f"timeout must be > 0, got {timeout}"
+                raise ValueError(msg)
+
+            task: asyncio.Task[T] = asyncio.create_task(coro)
+            try:
+                result = await asyncio.wait_for(task, timeout=timeout)
+            except TimeoutError:
+                # Check if result arrived just before timeout (race condition)
+                if task.done() and not task.cancelled():
+                    try:
+                        result = task.result()
+                        log.debug(
+                            "%s completed at timeout boundary (%.1fs)",
+                            operation_name,
+                            timeout,
+                        )
+                    except Exception:  # noqa: BLE001, S110
+                        pass
+                    else:
+                        return result, False
+
+                # Task didn't complete - cancel it
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+            else:
+                return result, False
+                log.debug(
+                    "%s cancelled after %.1fs timeout",
+                    operation_name,
+                    timeout,
+                )
+                return None, True
+
+    # =========================================================================
+    # CIRCUIT BREAKER
+    # =========================================================================
+
+    class CircuitBreaker:
+        """Circuit breaker for fault tolerance.
+
+        Implements the circuit breaker pattern to prevent cascading failures.
+        Uses MT5Settings directly for configuration (no separate config class).
+
+        States (from c.Resilience.CircuitBreakerState):
+            CLOSED: Normal operation, requests pass through
+            OPEN: Too many failures, requests blocked
+            HALF_OPEN: Testing recovery, limited requests allowed
+
+        Usage:
+            cb = MT5Utilities.CircuitBreaker(config=mt5_settings, name="mt5-client")
+            if cb.can_execute():
+                try:
+                    result = risky_operation()
+                    cb.record_success()
+                except Exception:
+                    cb.record_failure()
+                    raise
+            else:
+                raise MT5Utilities.Exceptions.CircuitBreakerOpenError()
+        """
+
+        def __init__(
+            self,
+            config: MT5Settings,
+            name: str = "default",
+        ) -> None:
+            """Initialize circuit breaker.
+
+            Args:
+                config: MT5Settings with cb_threshold, cb_recovery, cb_half_open_max.
+                name: Name for logging purposes.
+
+            """
+            self._settings = config
+            self.name = name
+            self._state = c.Resilience.CircuitBreakerState.CLOSED
+            self._failure_count = 0
+            self._success_count = 0
+            self._last_failure_time: datetime | None = None
+            self._half_open_calls = 0
+            self._lock = threading.RLock()
+
+        @property
+        def config(self) -> MT5Settings:
+            """Get configuration."""
+            return self._settings
+
+        @property
+        def state(self) -> c.Resilience.CircuitBreakerState:
+            """Get current circuit state, transitioning if needed."""
+            with self._lock:
+                if (
+                    self._state == c.Resilience.CircuitBreakerState.OPEN
+                    and self._should_attempt_reset()
+                ):
+                    log.info(
+                        "Circuit breaker '%s' transitioning OPEN -> HALF_OPEN",
+                        self.name,
+                    )
+                    self._state = c.Resilience.CircuitBreakerState.HALF_OPEN
+                    self._half_open_calls = 0
+                return self._state
+
+        @property
+        def failure_count(self) -> int:
+            """Get current failure count."""
+            with self._lock:
+                return self._failure_count
+
+        @property
+        def is_closed(self) -> bool:
+            """Check if circuit is closed (normal operation)."""
+            return self.state == c.Resilience.CircuitBreakerState.CLOSED
+
+        @property
+        def is_open(self) -> bool:
+            """Check if circuit is open (blocking requests)."""
+            return self.state == c.Resilience.CircuitBreakerState.OPEN
+
+        def _should_attempt_reset(self) -> bool:
+            """Check if enough time passed to attempt recovery."""
+            if self._last_failure_time is None:
+                return False
+            elapsed = datetime.now(UTC) - self._last_failure_time
+            return elapsed >= timedelta(seconds=self._settings.cb_recovery)
+
+        def record_success(self) -> None:
+            """Record a successful operation."""
+            with self._lock:
+                self._failure_count = 0
+                self._success_count += 1
+                if self._state == c.Resilience.CircuitBreakerState.HALF_OPEN:
+                    log.info(
+                        "Circuit breaker '%s' recovered: HALF_OPEN -> CLOSED",
+                        self.name,
+                    )
+                    self._state = c.Resilience.CircuitBreakerState.CLOSED
+
+        def record_failure(self) -> None:
+            """Record a failed operation."""
+            with self._lock:
+                self._failure_count += 1
+                self._last_failure_time = datetime.now(UTC)
+
+                if self._state == c.Resilience.CircuitBreakerState.HALF_OPEN:
+                    log.warning(
+                        "Circuit breaker '%s' failed during recovery",
+                        self.name,
+                    )
+                    self._state = c.Resilience.CircuitBreakerState.OPEN
+                elif self._failure_count >= self._settings.cb_threshold:
+                    log.warning(
+                        "Circuit breaker '%s' opened after %d failures",
+                        self.name,
+                        self._failure_count,
+                    )
+                    self._state = c.Resilience.CircuitBreakerState.OPEN
+
+        def can_execute(self) -> bool:
+            """Check if a request is allowed through the circuit.
+
+            CRITICAL FIX: Entire operation is now under lock to prevent race
+            conditions where state could change between read and decision.
+            Previously, reset() could be called between state read and action.
+            """
+            with self._lock:
+                # Inline state check (don't call property which also locks)
+                if (
+                    self._state == c.Resilience.CircuitBreakerState.OPEN
+                    and self._should_attempt_reset()
+                ):
+                    log.info(
+                        "Circuit breaker '%s' transitioning OPEN -> HALF_OPEN",
+                        self.name,
+                    )
+                    self._state = c.Resilience.CircuitBreakerState.HALF_OPEN
+                    self._half_open_calls = 0
+
+                current_state = self._state
+
+                if current_state == c.Resilience.CircuitBreakerState.CLOSED:
+                    return True
+
+                if current_state == c.Resilience.CircuitBreakerState.HALF_OPEN:
+                    if self._half_open_calls < self._settings.cb_half_open_max:
+                        self._half_open_calls += 1
+                        return True
+                    return False
+
+                return False  # OPEN state
+
+        def reset(self) -> None:
+            """Manually reset the circuit breaker to closed state."""
+            with self._lock:
+                log.info("Circuit breaker '%s' manually reset", self.name)
+                self._state = c.Resilience.CircuitBreakerState.CLOSED
+                self._failure_count = 0
+                self._success_count = 0
+                self._last_failure_time = None
+                self._half_open_calls = 0
+
+        def get_status(self) -> dict[str, str | int]:
+            """Get circuit breaker status for monitoring.
+
+            Returns:
+                Dictionary with circuit breaker state information.
+
+            """
+            with self._lock:
+                status: dict[str, str | int] = {
+                    "name": self.name,
+                    "state": self._state.name,
+                    "failure_count": self._failure_count,
+                    "success_count": self._success_count,
+                    "failure_threshold": self._settings.cb_threshold,
+                }
+
+                if self._last_failure_time:
+                    status["last_failure"] = self._last_failure_time.isoformat()
+                    if self._state == c.Resilience.CircuitBreakerState.OPEN:
+                        recovery_at = self._last_failure_time + timedelta(
+                            seconds=self._settings.cb_recovery
+                        )
+                        status["recovery_at"] = recovery_at.isoformat()
+
+                return status
 
     # =========================================================================
     # TRANSACTION HANDLER (order_send orchestration)
@@ -1471,9 +1382,9 @@ class MT5Utilities:
                     18-character request ID starting with 'RQ'.
 
                 """
-                import uuid
-
-                return f"RQ{uuid.uuid4().hex[:16]}"
+                prefix = c.Validation.REQUEST_ID_PREFIX
+                hex_len = c.Validation.REQUEST_ID_HEX_LENGTH
+                return f"{prefix}{uuid.uuid4().hex[:hex_len]}"
 
             @staticmethod
             def mark_comment(comment: str | None, request_id: str) -> str:
@@ -1496,11 +1407,6 @@ class MT5Utilities:
                     return f"{request_id}|{comment[:max_original]}"
                 return request_id
 
-            # Expected request_id length: RQ + 16 hex chars = 18 chars
-            REQUEST_ID_LENGTH = 18
-            REQUEST_ID_PREFIX = "RQ"
-            REQUEST_ID_HEX_LENGTH = 16
-
             @staticmethod
             def extract_request_id(comment: str | None) -> str | None:
                 """Extract request_id from marked comment field.
@@ -1518,24 +1424,24 @@ class MT5Utilities:
                     Request ID if found and valid, None otherwise.
 
                 """
-                tracker = MT5Utilities.TransactionHandler.RequestTracker
-                if not comment or not comment.startswith(tracker.REQUEST_ID_PREFIX):
+                prefix = c.Validation.REQUEST_ID_PREFIX
+                if not comment or not comment.startswith(prefix):
                     return None
 
                 # Extract candidate (before separator if present)
                 candidate = comment.split("|")[0]
 
                 # Validate length
-                if len(candidate) != tracker.REQUEST_ID_LENGTH:
+                if len(candidate) != c.Validation.REQUEST_ID_LENGTH:
                     log.debug(
                         "Invalid request_id length: %d (expected %d)",
                         len(candidate),
-                        tracker.REQUEST_ID_LENGTH,
+                        c.Validation.REQUEST_ID_LENGTH,
                     )
                     return None
 
                 # Validate hex portion (chars 2-18 should be hex)
-                hex_part = candidate[len(tracker.REQUEST_ID_PREFIX) :]
+                hex_part = candidate[len(c.Validation.REQUEST_ID_PREFIX) :]
                 try:
                     int(hex_part, 16)  # Validate hex
                 except ValueError:
@@ -1612,7 +1518,7 @@ class MT5Utilities:
                 True
 
             """
-            classification = MT5Utilities.CircuitBreaker.classify_mt5_retcode(retcode)
+            classification = MT5Utilities.ErrorClassifier.classify_mt5_retcode(retcode)
 
             if classification == c.Resilience.ErrorClassification.SUCCESS:
                 return c.Resilience.TransactionOutcome.SUCCESS
@@ -1649,21 +1555,21 @@ class MT5Utilities:
             return outcome == c.Resilience.TransactionOutcome.RETRY
 
         @staticmethod
-        def get_retry_config(
-            config: MT5Config,
+        def get_retry_settings(
+            config: MT5Settings,
             operation: str,
         ) -> tuple[int, bool]:
             """Get retry configuration for operation.
 
             Args:
-                config: MT5Config instance.
+                config: MT5Settings instance.
                 operation: Operation name.
 
             Returns:
                 Tuple of (max_attempts, is_critical).
 
             """
-            criticality = MT5Utilities.CircuitBreaker.get_operation_criticality(
+            criticality = MT5Utilities.ErrorClassifier.get_operation_criticality(
                 operation
             )
             is_critical = criticality == c.Resilience.OperationCriticality.CRITICAL
@@ -1738,6 +1644,334 @@ class MT5Utilities:
             )
 
     # =========================================================================
+    # TRANSACTION ORCHESTRATOR
+    # =========================================================================
+
+    class TransactionOrchestrator:
+        """Orchestrates order_send with full transaction safety.
+
+        Manages the complete lifecycle of critical transactions:
+        1. Request preparation (idempotency marker via TransactionHandler)
+        2. Circuit breaker check (via injected callback)
+        3. WAL logging (intent/sent/verified/failed via injected callbacks)
+        4. gRPC execution (via injected callback)
+        5. Result classification and outcome handling
+        6. State verification for ambiguous responses (via injected callback)
+        7. Retry with delay for transient errors
+
+        All I/O operations are injected via Dependencies, making this
+        class fully testable in isolation without MT5/gRPC infrastructure.
+
+        Usage:
+            deps = TransactionOrchestrator.Dependencies(
+                execute_grpc=client._execute_order_grpc,
+                verify_state=client._verify_order_state,
+                health_check=client._quick_health_check,
+                ...
+            )
+            orchestrator = TransactionOrchestrator(config, deps)
+            result = await orchestrator.execute(request)
+        """
+
+        @dataclass
+        class Dependencies:
+            """Injected dependencies for transaction orchestration.
+
+            All callbacks are async except circuit breaker operations.
+            Optional callbacks (CB, WAL) can be None if feature is disabled.
+            """
+
+            # Required callbacks
+            execute_grpc: Callable[[dict[str, object], int], Awaitable[object | None]]
+            verify_state: Callable[[object, str | None], Awaitable[object | None]]
+            health_check: Callable[[], Awaitable[bool]]
+
+            # Circuit breaker (optional - can be None if disabled)
+            check_circuit_breaker: Callable[[str], None] | None = None
+            record_success: Callable[[], None] | None = None
+            record_failure: Callable[[], None] | None = None
+
+            # WAL (optional - can be None if disabled)
+            wal_log_intent: (
+                Callable[[str, dict[str, object]], Awaitable[None]] | None
+            ) = None
+            wal_mark_sent: Callable[[str], Awaitable[None]] | None = None
+            wal_mark_verified: (
+                Callable[[str, dict[str, object]], Awaitable[None]] | None
+            ) = None
+            wal_mark_failed: Callable[[str, str], Awaitable[None]] | None = None
+
+        def __init__(
+            self,
+            config: MT5Settings,
+            deps: Dependencies,
+        ) -> None:
+            """Initialize orchestrator with config and dependencies.
+
+            Args:
+                config: MT5Settings with retry parameters.
+                deps: Injected dependencies for I/O operations.
+
+            """
+            self._settings = config
+            self._deps = deps
+
+        async def execute(  # noqa: C901,PLR0912,PLR0915
+            self,
+            request: dict[str, object],
+        ) -> object | None:
+            """Execute order with full transaction safety.
+
+            Args:
+                request: Order request dictionary.
+
+            Returns:
+                OrderResult on success/partial fill.
+
+            Raises:
+                PermanentError: Non-retryable error.
+                MaxRetriesError: Retries exhausted.
+
+            """
+            th = MT5Utilities.TransactionHandler
+            operation = "order_send"
+
+            max_attempts, _ = th.get_retry_settings(self._settings, operation)
+            request, request_id = th.prepare_request(dict(request), operation)
+
+            # WAL: Log intent BEFORE sending (crash recovery)
+            if self._deps.wal_log_intent:
+                await self._deps.wal_log_intent(request_id, dict(request))
+
+            last_result: object | None = None
+            last_error: Exception | None = None
+
+            for attempt in range(max_attempts):
+                try:
+                    # PRE-EXECUTION: Check circuit breaker
+                    if self._deps.check_circuit_breaker:
+                        self._deps.check_circuit_breaker(operation)
+
+                    # WAL: Mark as sent (gRPC call initiated)
+                    if self._deps.wal_mark_sent:
+                        await self._deps.wal_mark_sent(request_id)
+
+                    # EXECUTION: Send order via gRPC
+                    result = await self._deps.execute_grpc(request, attempt)
+
+                    # Handle empty response
+                    if result is None:
+                        verified = await self._handle_empty_response(request_id)
+                        if verified:
+                            return verified
+                        # Continue to retry if healthy
+                        delay = self._settings.calculate_critical_retry_delay(attempt)
+                        await asyncio.sleep(delay)
+                        continue
+
+                    last_result = result
+
+                    # CLASSIFY and HANDLE
+                    retcode = getattr(result, "retcode", 0)
+                    outcome = th.classify_result(retcode)
+
+                    if outcome in {
+                        c.Resilience.TransactionOutcome.SUCCESS,
+                        c.Resilience.TransactionOutcome.PARTIAL,
+                    }:
+                        if self._deps.record_success:
+                            self._deps.record_success()
+                        if outcome == c.Resilience.TransactionOutcome.PARTIAL:
+                            log.warning("Order partially filled: %s", result)
+                        # WAL: Mark as verified
+                        if self._deps.wal_mark_verified:
+                            wal_data = {
+                                "retcode": retcode,
+                                "order": getattr(result, "order", 0),
+                                "deal": getattr(result, "deal", 0),
+                            }
+                            await self._deps.wal_mark_verified(request_id, wal_data)
+                        return result
+
+                    if outcome == c.Resilience.TransactionOutcome.PERMANENT_FAILURE:
+                        if self._deps.record_failure:
+                            self._deps.record_failure()
+                        if self._deps.wal_mark_failed:
+                            await self._deps.wal_mark_failed(
+                                request_id, f"Permanent: {retcode}"
+                            )
+                        comment = getattr(result, "comment", "")
+                        th.raise_permanent(retcode, comment)
+
+                    if outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED:
+                        log.warning(
+                            "TX_VERIFY_REQUIRED: retcode=%d, request_id=%s",
+                            retcode,
+                            request_id,
+                        )
+                        verified = await self._deps.verify_state(result, request_id)
+                        if verified:
+                            if self._deps.record_success:
+                                self._deps.record_success()
+                            if self._deps.wal_mark_verified:
+                                wal_data = {
+                                    "retcode": getattr(verified, "retcode", 0),
+                                    "order": getattr(verified, "order", 0),
+                                    "deal": getattr(verified, "deal", 0),
+                                }
+                                await self._deps.wal_mark_verified(request_id, wal_data)
+                            return verified
+                        if self._deps.record_failure:
+                            self._deps.record_failure()
+                        if self._deps.wal_mark_failed:
+                            await self._deps.wal_mark_failed(
+                                request_id, f"Verification failed: retcode={retcode}"
+                            )
+                        th.raise_permanent(retcode, f"Verify failed: {request_id}")
+
+                    # RETRY outcome: Record failure and delay
+                    if self._deps.record_failure:
+                        self._deps.record_failure()
+                    delay = self._settings.calculate_critical_retry_delay(attempt)
+                    log.warning(
+                        "Retryable error %d, attempt %d/%d, retrying in %.2fs",
+                        retcode,
+                        attempt + 1,
+                        max_attempts,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+
+                except MT5Utilities.Exceptions.PermanentError:
+                    raise
+                except Exception as e:
+                    last_error = e
+                    if not MT5Utilities.ErrorClassifier.is_retryable_exception(e):
+                        if self._deps.record_failure:
+                            self._deps.record_failure()
+                        raise
+                    if self._deps.record_failure:
+                        self._deps.record_failure()
+
+                    # Check health before retry
+                    if not await self._deps.health_check():
+                        log.exception(
+                            "order_send exception with MT5 unreachable - "
+                            "UNSAFE to retry (request_id=%s)",
+                            request_id,
+                        )
+                        # Try verification one more time
+                        verified = await self._try_verify_synthetic(request_id)
+                        if verified:
+                            log.info(
+                                "order_send exception but order found: %s",
+                                request_id,
+                            )
+                            return verified
+                        th.raise_permanent(
+                            0,
+                            f"MT5 unreachable after exception: {e} ({request_id})",
+                        )
+
+                    delay = self._settings.calculate_critical_retry_delay(attempt)
+                    log.warning(
+                        "Exception in order_send: %s, attempt %d/%d, MT5 healthy - "
+                        "retrying in %.2fs",
+                        e,
+                        attempt + 1,
+                        max_attempts,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+
+            th.raise_exhausted(operation, max_attempts, last_result, last_error)
+            return None  # Unreachable
+
+        async def _handle_empty_response(self, request_id: str) -> object | None:
+            """Handle empty (None) gRPC response.
+
+            Args:
+                request_id: Request ID for verification.
+
+            Returns:
+                Verified result if found, None otherwise.
+
+            Raises:
+                PermanentError: If MT5 unreachable after verification.
+
+            """
+            log.warning(
+                "TX_EMPTY_RESPONSE: Empty result for order_send, "
+                "verifying state before retry (request_id=%s)",
+                request_id,
+            )
+
+            verified = await self._try_verify_synthetic(request_id)
+            if verified:
+                log.info(
+                    "TX_EMPTY_RESPONSE: Order found via verification, "
+                    "avoiding duplicate (request_id=%s)",
+                    request_id,
+                )
+                if self._deps.record_success:
+                    self._deps.record_success()
+                return verified
+
+            # Not found - check MT5 health before retry
+            if not await self._deps.health_check():
+                log.error(
+                    "TX_EMPTY_RESPONSE: MT5 unreachable after verification, "
+                    "UNSAFE to retry (request_id=%s)",
+                    request_id,
+                )
+                MT5Utilities.TransactionHandler.raise_permanent(
+                    0,
+                    f"MT5 unreachable after empty response: {request_id}",
+                )
+
+            log.warning(
+                "TX_EMPTY_RESPONSE: Order not found via verification, "
+                "MT5 healthy - safe to retry (request_id=%s)",
+                request_id,
+            )
+            if self._deps.record_failure:
+                self._deps.record_failure()
+            return None
+
+        async def _try_verify_synthetic(self, request_id: str) -> object | None:
+            """Try to verify order state using synthetic result.
+
+            Creates a synthetic result with zero IDs for verification
+            when we don't have actual order/deal IDs.
+
+            Args:
+                request_id: Request ID for verification.
+
+            Returns:
+                Verified result if found, None otherwise.
+
+            """
+            # Create synthetic result - the verify_state callback should
+            # handle the case where order/deal are 0 by using request_id
+            # to search in comment field
+            synthetic_result = type(
+                "SyntheticResult",
+                (),
+                {
+                    "retcode": 0,
+                    "deal": 0,
+                    "order": 0,
+                    "volume": 0.0,
+                    "price": 0.0,
+                    "bid": 0.0,
+                    "ask": 0.0,
+                    "comment": "",
+                    "request_id": 0,
+                },
+            )()
+            return await self._deps.verify_state(synthetic_result, request_id)
+
+    # =========================================================================
     # REQUEST QUEUE - PARALLEL EXECUTION
     # =========================================================================
 
@@ -1788,26 +2022,26 @@ class MT5Utilities:
             priority: int  # Lower = higher priority (0=CRITICAL, 3=LOW)
             timestamp: float = field(compare=False)
             key: str = field(compare=False)  # For coalescing
-            coro_factory: Callable[[], Awaitable[T]] = field(compare=False)
-            future: asyncio.Future = field(compare=False)
+            coro_factory: Callable[[], Awaitable[object]] = field(compare=False)
+            future: asyncio.Future[object] = field(compare=False)
 
-        def __init__(self, config: MT5Config) -> None:
+        def __init__(self, config: MT5Settings) -> None:
             """Initialize request queue.
 
             Args:
-                config: MT5Config with queue_max_concurrent and queue_max_depth.
+                config: MT5Settings with queue_max_concurrent and queue_max_depth.
 
             """
-            self._config = config
+            self._settings = config
             self._queue: asyncio.PriorityQueue[MT5Utilities.RequestQueue._Request] = (
                 asyncio.PriorityQueue(maxsize=config.queue_max_depth)
             )
             # Semaphore controls HOW MANY can execute in parallel
             self._semaphore = asyncio.Semaphore(config.queue_max_concurrent)
-            self._coalesce: dict[str, asyncio.Future] = {}
+            self._coalesce: dict[str, asyncio.Future[object]] = {}
             self._running = False
-            self._dispatcher_task: asyncio.Task | None = None
-            self._active_tasks: set[asyncio.Task] = set()
+            self._dispatcher_task: asyncio.Task[None] | None = None
+            self._active_tasks: set[asyncio.Task[None]] = set()
 
         async def start(self) -> None:
             """Start dispatcher. Called by connect()."""
@@ -1870,7 +2104,7 @@ class MT5Utilities:
                 return await existing_future
 
             loop = asyncio.get_running_loop()
-            future: asyncio.Future[T] = loop.create_future()
+            future: asyncio.Future[object] = loop.create_future()
             request = self._Request(
                 priority=priority,
                 timestamp=loop.time(),
@@ -1888,7 +2122,7 @@ class MT5Utilities:
             except asyncio.QueueFull:
                 if coalesce_key:
                     self._coalesce.pop(coalesce_key, None)
-                msg = f"Request queue full ({self._config.queue_max_depth})"
+                msg = f"Request queue full ({self._settings.queue_max_depth})"
                 raise MT5Utilities.Exceptions.QueueFullError(msg) from None
 
             try:
@@ -1924,7 +2158,7 @@ class MT5Utilities:
         async def _execute_and_release(self, request: _Request) -> None:
             """Execute request and release semaphore when done."""
             try:
-                result = await request.coro_factory()
+                result: object = await request.coro_factory()
                 if not request.future.done():
                     request.future.set_result(result)
             except Exception as e:  # noqa: BLE001 - propagate to future
@@ -2010,14 +2244,14 @@ class MT5Utilities:
             result_json: str | None = None
             error: str | None = None
 
-        def __init__(self, config: MT5Config) -> None:
+        def __init__(self, config: MT5Settings) -> None:
             """Initialize WAL.
 
             Args:
-                config: MT5Config with wal_path and wal_retention_days.
+                config: MT5Settings with wal_path and wal_retention_days.
 
             """
-            self._config = config
+            self._settings = config
             self._db_path = Path(config.wal_path).expanduser()
             self._conn: aiosqlite.Connection | None = None
             self._lock = asyncio.Lock()
@@ -2027,8 +2261,6 @@ class MT5Utilities:
             """Initialize WAL database. Called by connect()."""
             if self._initialized:
                 return
-
-            import aiosqlite
 
             # Ensure directory exists
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2280,7 +2512,7 @@ class MT5Utilities:
             if not self._conn:
                 return 0
 
-            retention = days if days is not None else self._config.wal_retention_days
+            retention = days if days is not None else self._settings.wal_retention_days
             cutoff = datetime.now(UTC) - timedelta(days=retention)
 
             async with self._lock:
@@ -2309,3 +2541,8 @@ class MT5Utilities:
         def db_path(self) -> Path:
             """Get database file path."""
             return self._db_path
+
+
+# Module-level alias for convenient imports
+# Usage: from mt5linux.utilities import u
+u = MT5Utilities

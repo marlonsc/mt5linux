@@ -135,7 +135,7 @@ Run the gRPC bridge server directly on Windows with MetaTrader5 installed:
 # Install mt5linux on Windows
 pip install mt5linux
 
-# Start server (default port 8001, aligned with MT5Config)
+# Start server (default port 8001, aligned with MT5Settings)
 python -m mt5linux.bridge
 
 # With custom options
@@ -151,7 +151,7 @@ Server options:
 
 ## Configuration
 
-All configuration is centralized in `mt5linux/config.py` (MT5Config).
+All configuration is centralized in `mt5linux/config.py` (MT5Settings).
 Use environment variables with `MT5_` prefix to override defaults.
 
 See `.env.example` for available options.
@@ -276,7 +276,7 @@ make coverage
 
 ### Test Container Isolation
 
-Tests use isolated ports (from MT5Config.test_*) to avoid conflicts:
+Tests use isolated ports (from MT5Settings.test_*) to avoid conflicts:
 
 | Resource | Container Internal | Test (Host) | Production (Host) |
 |----------|-------------------|-------------|-------------------|
@@ -285,7 +285,7 @@ Tests use isolated ports (from MT5Config.test_*) to avoid conflicts:
 | VNC Port | 3000 | 23000 | 33000 |
 | Health Port | 8002 | 28002 | 38002 |
 
-Port configuration is centralized in `mt5linux/config.py` (MT5Config).
+Port configuration is centralized in `mt5linux/config.py` (MT5Settings).
 
 ## Version History
 

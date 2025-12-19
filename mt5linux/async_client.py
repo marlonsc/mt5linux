@@ -23,26 +23,35 @@ Compatible with grpcio 1.60+ and Python 3.13+.
 
 """
 
+# RESILIENCE LAYER ARCHITECTURE
+# =============================
+# To avoid circular dependencies, operations are split into 3 layers.
+# Layer 3 has resilience, Layer 2 is used BY resilience (no retry),
+# Layer 1 is direct gRPC connection. Rule: Layer N calls N-1 or lower only.
+
 from __future__ import annotations
 
-# pylint: disable=no-member  # Protobuf generated code has dynamic members
 import asyncio
 import logging
+
+# pylint: disable=no-member  # Protobuf generated code has dynamic members
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Self, TypeVar
+from typing import TYPE_CHECKING, Self
 
 import grpc
 import grpc.aio
 import orjson
 
-from mt5linux import mt5_pb2, mt5_pb2_grpc
-from mt5linux.config import MT5Config
 from mt5linux.constants import MT5Constants as c
 from mt5linux.models import MT5Models
 from mt5linux.protocols import AsyncMT5Protocol
-from mt5linux.types import MT5Types
-from mt5linux.utilities import MT5Utilities
+from mt5linux.settings import MT5Settings
+from mt5linux.types import MT5Types as t
+from mt5linux.types import T
+from mt5linux.utilities import MT5Utilities as u
+
+from . import mt5_pb2, mt5_pb2_grpc
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -51,13 +60,9 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 # TypeVar for generic return type in _resilient_call
-T = TypeVar("T")
 
 log = logging.getLogger(__name__)
-
-
-# Default config instance - Single Source of Truth
-_config = MT5Config()
+_settings = MT5Settings()
 
 # Error message constant
 _NOT_CONNECTED_MSG = "MT5 connection not established - call connect() first"
@@ -66,10 +71,10 @@ _NOT_CONNECTED_MSG = "MT5 connection not established - call connect() first"
 _HEALTH_CHECK_FAILURE_THRESHOLD = 3
 
 # gRPC channel options from config (no more hardcoded values)
-_CHANNEL_OPTIONS = _config.get_grpc_channel_options()
+_CHANNEL_OPTIONS = _settings.get_grpc_channel_options()
 
 # Type alias for convenience (single source of truth)
-JSONValue = MT5Types.JSONValue
+JSONValue = t.JSONValue
 
 
 class AsyncMetaTrader5(AsyncMT5Protocol):
@@ -92,12 +97,12 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
     def __init__(
         self,
-        host: str = _config.host,
-        port: int = _config.bridge_port,
-        timeout: int = _config.timeout_connection,
+        host: str = _settings.host,
+        port: int = _settings.bridge_port,
+        timeout: int = _settings.timeout_connection,
         *,
-        health_check_interval: int = _config.timeout_health_check,
-        max_reconnect_attempts: int = _config.retry_max_attempts,
+        health_check_interval: int = _settings.timeout_health_check,
+        max_reconnect_attempts: int = _settings.retry_max_attempts,
     ) -> None:
         """Initialize async MT5 client.
 
@@ -122,11 +127,11 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         self._lock = asyncio.Lock()
 
         # Resilience components (opt-in via config)
-        self._config = _config
-        self._circuit_breaker: MT5Utilities.CircuitBreaker | None = None
-        if self._config.enable_circuit_breaker:
-            self._circuit_breaker = MT5Utilities.CircuitBreaker(
-                config=self._config,
+        self._settings = _settings
+        self._circuit_breaker: u.CircuitBreaker | None = None
+        if self._settings.enable_circuit_breaker:
+            self._circuit_breaker = u.CircuitBreaker(
+                config=self._settings,
                 name="async-mt5-client",
             )
 
@@ -136,10 +141,10 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         self._consecutive_failures = 0
 
         # Request queue for parallel execution (100% transparent)
-        self._queue: MT5Utilities.RequestQueue | None = None
+        self._queue: u.RequestQueue | None = None
 
         # Write-Ahead Log for order persistence (100% transparent)
-        self._wal: MT5Utilities.WAL | None = None
+        self._wal: u.WAL | None = None
 
         # Background tasks for fire-and-forget operations (prevent GC)
         self._background_tasks: set[asyncio.Task[object]] = set()
@@ -215,14 +220,14 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             await self._load_constants()
 
             # Initialize WAL (100% transparent)
-            self._wal = MT5Utilities.WAL(self._config)
+            self._wal = u.WAL(self._settings)
             await self._wal.initialize()
 
             # Recover incomplete orders from WAL
             await self._recover_incomplete_orders()
 
             # Start request queue (100% transparent - parallel execution)
-            self._queue = MT5Utilities.RequestQueue(self._config)
+            self._queue = u.RequestQueue(self._settings)
             await self._queue.start()
 
             log.info("Connected to MT5 gRPC server at %s", target)
@@ -390,8 +395,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
     async def _reconnect_with_backoff(self) -> bool:
         """Attempt reconnection with exponential backoff and jitter.
 
-        Uses MT5Utilities.CircuitBreaker.async_reconnect_with_backoff
-        with MT5Config values.
+        Uses u.RetryStrategy.async_reconnect_with_backoff
+        with MT5Settings values.
 
         Returns:
             True if reconnection successful, False otherwise.
@@ -417,9 +422,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             self._consecutive_failures = 0
             return True
 
-        return await MT5Utilities.CircuitBreaker.async_reconnect_with_backoff(
+        return await u.RetryStrategy.async_reconnect_with_backoff(
             attempt_connect,
-            self._config,
+            self._settings,
             name=f"mt5-{self._host}:{self._port}",
         )
 
@@ -436,7 +441,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         if self._stub is not None:
             return self._stub
 
-        if self._config.enable_auto_reconnect:
+        if self._settings.enable_auto_reconnect:
             success = await self._reconnect_with_backoff()
             if success and self._stub is not None:
                 return self._stub
@@ -459,7 +464,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             log.debug("No stored credentials for re-initialization")
             return False
 
-        if not self._config.enable_auto_reconnect:
+        if not self._settings.enable_auto_reconnect:
             log.debug("Auto-reconnect disabled, skipping re-initialization")
             return False
 
@@ -472,18 +477,19 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             if creds.get("path") is not None:
                 request.path = str(creds["path"])
             if creds.get("login") is not None:
-                request.login = int(creds["login"])  # type: ignore[arg-type]
+                request.login = int(creds["login"])
             if creds.get("password") is not None:
                 request.password = str(creds["password"])
             if creds.get("server") is not None:
                 request.server = str(creds["server"])
             if creds.get("timeout") is not None:
-                request.timeout = int(creds["timeout"])  # type: ignore[arg-type]
+                request.timeout = int(creds["timeout"])
             response = await stub.Initialize(request, timeout=self._timeout)
-            return response.result
         except (grpc.aio.AioRpcError, ConnectionError) as e:
             log.warning("Re-initialization failed: %s", e)
             return False
+        else:
+            return response.result
 
     async def _ensure_terminal_connected(self) -> bool:
         """Ensure MT5 terminal is connected, re-initialize if needed.
@@ -499,7 +505,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             response = await self._stub.TerminalInfo(
                 mt5_pb2.Empty(), timeout=self._timeout
             )
-            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
+            result_dict = u.Data.json_to_dict(response.json_data)
             if result_dict and result_dict.get("connected"):
                 return True
 
@@ -566,7 +572,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         Only starts if enable_health_monitor is True in config.
 
         """
-        if not self._config.enable_health_monitor:
+        if not self._settings.enable_health_monitor:
             log.debug("Health monitor disabled in config")
             return
 
@@ -638,16 +644,16 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         """
         try:
             stub = self._ensure_connected()
-            grpc_request = mt5_pb2.GenericRequest()
             await asyncio.wait_for(
-                stub.GetTerminalInfo(grpc_request),
+                stub.TerminalInfo(mt5_pb2.Empty()),
                 timeout=timeout,
             )
-            return True
         except (TimeoutError, grpc.RpcError, ConnectionError):
             return False
         except Exception:  # noqa: BLE001
             return False
+        else:
+            return True
 
     async def _resilient_call(
         self,
@@ -656,7 +662,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
     ) -> T:
         """Execute gRPC call with circuit breaker AND retry protection.
 
-        Delegates to MT5Utilities.CircuitBreaker.async_retry_with_backoff()
+        Delegates to u.RetryStrategy.async_retry_with_backoff()
         with circuit breaker hooks for unified retry logic.
 
         Args:
@@ -668,28 +674,41 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         Raises:
             ConnectionError: If circuit breaker is OPEN.
-            MT5Utilities.Exceptions.MaxRetriesError: If all retries fail.
+            u.Exceptions.MaxRetriesError: If all retries fail.
             Exception: Non-retryable exceptions propagate immediately.
 
         """
         # 1. Check if circuit allows execution BEFORE retry loop
         self._check_circuit_breaker(operation)
 
-        # 2. Define before_retry callback for gRPC reconnection only
-        # IMPORTANT: Keep this simple - no nested retry loops or recursive calls
+        # 2. Define before_retry callback for gRPC reconnection + terminal reinit
+        # Ensures terminal_info().connected == True before operations that need login
         async def _before_retry() -> None:
-            if not self.is_connected:
+            # First: always try to reconnect gRPC
+            try:
+                await self._reconnect_with_backoff()
+            except Exception as reconnect_error:  # noqa: BLE001
+                log.warning("gRPC reconnection failed: %s", reconnect_error)
+                # Don't return - try terminal_info anyway
+
+            # Second: check terminal connection and reinitialize if needed
+            # terminal_info() uses partial resilience (no CB, no reinit)
+            if self._init_credentials and self._settings.enable_auto_reconnect:
                 try:
-                    await self._reconnect_with_backoff()
-                except Exception as reconnect_error:  # noqa: BLE001
-                    log.warning("gRPC reconnection failed: %s", reconnect_error)
+                    info = await self.terminal_info()
+                    # If None or not connected, reinitialize
+                    if info is None or not info.connected:
+                        log.info("Terminal not connected, reinitializing...")
+                        await self._reinitialize_terminal()
+                except Exception as reinit_error:  # noqa: BLE001
+                    log.warning("Terminal reinitialize failed: %s", reinit_error)
 
         # 3. Delegate to unified retry implementation with CB hooks
-        return await MT5Utilities.CircuitBreaker.async_retry_with_backoff(
+        return await u.RetryStrategy.async_retry_with_backoff(
             call_factory,
-            _config,
+            _settings,
             operation,
-            should_retry=MT5Utilities.CircuitBreaker.is_retryable_exception,
+            should_retry=u.ErrorClassifier.is_retryable_exception,
             on_success=self._record_circuit_success,
             on_failure=self._record_circuit_failure,
             before_retry=_before_retry,
@@ -871,24 +890,45 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         return await self._resilient_call("last_error", _call)
 
     async def terminal_info(self) -> MT5Models.TerminalInfo | None:
-        """Get terminal information.
+        """Get terminal information with gRPC retry (NO circuit breaker).
+
+        Uses the resilience system PARTIALLY:
+        - YES: retry with backoff (waits for gRPC to come back)
+        - YES: gRPC reconnection on failure
+        - NO: circuit breaker (this method is used BY circuit breaker)
+        - NO: terminal reinitialize (avoids circular dependency)
+
+        Returns terminal state even if terminal.connected=False.
+        Matches MetaTrader5 PyPI behavior.
 
         Returns:
-            TerminalInfo object or None.
-
-        Note:
-            Auto-reinitialize is handled by _before_retry in _resilient_call,
-            not here (avoids recursive loops).
+            TerminalInfo with current terminal state, or None if all retries fail.
 
         """
 
         async def _call() -> MT5Models.TerminalInfo | None:
             stub = self._ensure_connected()
             response = await stub.TerminalInfo(mt5_pb2.Empty(), timeout=self._timeout)
-            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
+            result_dict = u.Data.json_to_dict(response.json_data)
             return MT5Models.TerminalInfo.from_mt5(result_dict)
 
-        return await self._resilient_call("terminal_info", _call)
+        async def _reconnect_grpc_only() -> None:
+            """Reconnect gRPC with backoff - NO terminal reinitialize."""
+            if not self.is_connected:
+                with suppress(Exception):
+                    await self._reconnect_with_backoff()
+
+        try:
+            return await u.RetryStrategy.async_retry_with_backoff(
+                _call,
+                self._settings,
+                "terminal_info",
+                should_retry=u.ErrorClassifier.is_retryable_exception,
+                before_retry=_reconnect_grpc_only,
+                # NO on_success/on_failure = NO circuit breaker
+            )
+        except u.Exceptions.MaxRetriesError:
+            return None
 
     async def account_info(self) -> MT5Models.AccountInfo | None:
         """Get account information.
@@ -901,7 +941,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         async def _call() -> MT5Models.AccountInfo | None:
             stub = self._ensure_connected()
             response = await stub.AccountInfo(mt5_pb2.Empty(), timeout=self._timeout)
-            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
+            result_dict = u.Data.json_to_dict(response.json_data)
             return MT5Models.AccountInfo.from_mt5(result_dict)
 
         return await self._resilient_call("account_info", _call)
@@ -944,7 +984,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             if group is not None:
                 request.group = group
             response = await stub.SymbolsGet(request, timeout=self._timeout)
-            dicts = MT5Utilities.Data.unwrap_symbols_chunks(response)
+            dicts = u.Data.unwrap_symbols_chunks(response)
             if dicts is None:
                 return None
             result = [
@@ -969,7 +1009,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.SymbolRequest(symbol=symbol)
             response = await stub.SymbolInfo(request, timeout=self._timeout)
-            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
+            result_dict = u.Data.json_to_dict(response.json_data)
             return MT5Models.SymbolInfo.from_mt5(result_dict)
 
         return await self._resilient_call("symbol_info", _call)
@@ -989,7 +1029,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.SymbolRequest(symbol=symbol)
             response = await stub.SymbolInfoTick(request, timeout=self._timeout)
-            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
+            result_dict = u.Data.json_to_dict(response.json_data)
             return MT5Models.Tick.from_mt5(result_dict)
 
         return await self._resilient_call("symbol_info_tick", _call)
@@ -1043,11 +1083,11 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             request = mt5_pb2.CopyRatesRequest(
                 symbol=symbol,
                 timeframe=timeframe,
-                date_from=MT5Utilities.Data.to_timestamp(date_from),
+                date_from=u.Data.to_timestamp(date_from),
                 count=count,
             )
             response = await stub.CopyRatesFrom(request, timeout=self._timeout)
-            return MT5Utilities.Data.numpy_from_proto(response)
+            return u.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_rates_from", _call)
 
@@ -1080,7 +1120,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 count=count,
             )
             response = await stub.CopyRatesFromPos(request, timeout=self._timeout)
-            return MT5Utilities.Data.numpy_from_proto(response)
+            return u.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_rates_from_pos", _call)
 
@@ -1109,11 +1149,11 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             request = mt5_pb2.CopyRatesRangeRequest(
                 symbol=symbol,
                 timeframe=timeframe,
-                date_from=MT5Utilities.Data.to_timestamp(date_from),
-                date_to=MT5Utilities.Data.to_timestamp(date_to),
+                date_from=u.Data.to_timestamp(date_from),
+                date_to=u.Data.to_timestamp(date_to),
             )
             response = await stub.CopyRatesRange(request, timeout=self._timeout)
-            return MT5Utilities.Data.numpy_from_proto(response)
+            return u.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_rates_range", _call)
 
@@ -1141,12 +1181,12 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.CopyTicksRequest(
                 symbol=symbol,
-                date_from=MT5Utilities.Data.to_timestamp(date_from),
+                date_from=u.Data.to_timestamp(date_from),
                 count=count,
                 flags=flags,
             )
             response = await stub.CopyTicksFrom(request, timeout=self._timeout)
-            return MT5Utilities.Data.numpy_from_proto(response)
+            return u.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_ticks_from", _call)
 
@@ -1174,12 +1214,12 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.CopyTicksRangeRequest(
                 symbol=symbol,
-                date_from=MT5Utilities.Data.to_timestamp(date_from),
-                date_to=MT5Utilities.Data.to_timestamp(date_to),
+                date_from=u.Data.to_timestamp(date_from),
+                date_to=u.Data.to_timestamp(date_to),
                 flags=flags,
             )
             response = await stub.CopyTicksRange(request, timeout=self._timeout)
-            return MT5Utilities.Data.numpy_from_proto(response)
+            return u.Data.numpy_from_proto(response)
 
         return await self._resilient_call("copy_ticks_range", _call)
 
@@ -1275,7 +1315,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 json_request=orjson.dumps(request).decode()
             )
             response = await stub.OrderCheck(grpc_request, timeout=self._timeout)
-            result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
+            result_dict = u.Data.json_to_dict(response.json_data)
             return MT5Models.OrderCheckResult.from_mt5(result_dict)
 
         return await self._resilient_call("order_check", _call)
@@ -1340,7 +1380,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             # Returns immediately, callbacks called later
 
         """
-        th = MT5Utilities.TransactionHandler
+        th = u.TransactionHandler
 
         # Generate request_id BEFORE enqueuing
         prepared_request, request_id = th.prepare_request(dict(request), "order_send")
@@ -1353,7 +1393,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                         on_complete(result)
                     except Exception:
                         log.exception("order_send_async on_complete callback failed")
-                return result
+                return result  # noqa: TRY300 - callback has its own try-except
             except Exception as e:
                 if on_error:
                     try:
@@ -1381,7 +1421,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         return request_id
 
-    async def order_send_batch(
+    async def order_send_batch(  # noqa: C901, PLR0915 - batch logic is inherently complex
         self,
         requests: list[dict[str, JSONValue]],
         on_each_complete: Callable[[str, MT5Models.OrderResult], None] | None = None,
@@ -1418,12 +1458,12 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             )
 
         """
-        th = MT5Utilities.TransactionHandler
+        th = u.TransactionHandler
         request_ids: list[str] = []
         pending: dict[str, asyncio.Future[MT5Models.OrderResult | Exception]] = {}
 
         # Prepare all requests with unique IDs
-        prepared_requests: list[tuple[dict[str, JSONValue], str]] = []
+        prepared_requests: list[tuple[dict[str, object], str]] = []
         for req in requests:
             prepared_req, request_id = th.prepare_request(dict(req), "order_send")
             request_ids.append(request_id)
@@ -1432,7 +1472,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             loop = asyncio.get_running_loop()
             pending[request_id] = loop.create_future()
 
-        async def _execute_one(req: dict[str, JSONValue], rid: str) -> None:
+        async def _execute_one(req: dict[str, object], rid: str) -> None:
             try:
                 result = await self._safe_order_send(req)
                 if result is not None:
@@ -1451,7 +1491,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                             on_each_error(rid, exc)
                         except Exception:
                             log.exception("order_send_batch on_each_error failed")
-            except Exception as e:  # noqa: BLE001 - propagate to future
+            except Exception as e:  # noqa: BLE001 - propagate to caller
                 pending[rid].set_exception(e)
                 if on_each_error:
                     try:
@@ -1486,7 +1526,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 for rid, future in pending.items():
                     try:
                         all_results[rid] = await future
-                    except Exception as e:  # noqa: BLE001 - catch all for callbacks
+                    except Exception as e:  # noqa: BLE001 - store result
                         all_results[rid] = e
                 try:
                     on_all_complete(all_results)
@@ -1503,13 +1543,16 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         self,
         request: dict[str, JSONValue],
     ) -> MT5Models.OrderResult | None:
-        """Send order with full transaction handling.
+        """Send order with full transaction handling via TransactionOrchestrator.
 
-        Uses TransactionHandler for orchestration:
-        1. Prepare request with idempotency marker
-        2. Execute with circuit breaker protection
-        3. Classify result and handle by outcome
-        4. Verify state when required (TIMEOUT/CONNECTION)
+        Delegates to TransactionOrchestrator for:
+        1. Request preparation with idempotency marker
+        2. Circuit breaker protection
+        3. WAL logging (intent/sent/verified/failed)
+        4. gRPC execution
+        5. Result classification and outcome handling
+        6. State verification for ambiguous responses
+        7. Retry with delay for transient errors
 
         Args:
             request: Order request dictionary.
@@ -1522,226 +1565,34 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             MaxRetriesError: After exhausting retries.
 
         """
-        th = MT5Utilities.TransactionHandler
-        operation = "order_send"
+        # Create dependencies for the orchestrator
+        deps = u.TransactionOrchestrator.Dependencies(
+            execute_grpc=self._execute_order_grpc,
+            verify_state=self._verify_order_state,
+            health_check=self._quick_health_check,
+            check_circuit_breaker=(
+                self._check_circuit_breaker if self._circuit_breaker else None
+            ),
+            record_success=(
+                self._record_circuit_success if self._circuit_breaker else None
+            ),
+            record_failure=(
+                self._record_circuit_failure if self._circuit_breaker else None
+            ),
+            wal_log_intent=self._wal.log_intent if self._wal else None,
+            wal_mark_sent=self._wal.mark_sent if self._wal else None,
+            wal_mark_verified=self._wal.mark_verified if self._wal else None,
+            wal_mark_failed=self._wal.mark_failed if self._wal else None,
+        )
 
-        max_attempts, _ = th.get_retry_config(self._config, operation)
-        request, request_id = th.prepare_request(request, operation)  # type: ignore[arg-type]
+        # Execute via orchestrator
+        orchestrator = u.TransactionOrchestrator(self._settings, deps)
+        result = await orchestrator.execute(dict(request))
 
-        # WAL: Log intent BEFORE sending (crash recovery)
-        if self._wal:
-            await self._wal.log_intent(request_id, dict(request))
-
-        last_result: MT5Models.OrderResult | None = None
-        last_error: Exception | None = None
-
-        for attempt in range(max_attempts):
-            try:
-                # PRE-EXECUTION: Check circuit breaker
-                self._check_circuit_breaker(operation)
-
-                # WAL: Mark as sent (gRPC call initiated)
-                if self._wal:
-                    await self._wal.mark_sent(request_id)
-
-                # EXECUTION: Send order via gRPC
-                result = await self._execute_order_grpc(request, attempt)
-
-                # CRITICAL FIX: EmptyResponse means order MAY have executed but
-                # response was lost. MUST verify state instead of blindly retrying
-                # (which could create duplicate orders).
-                if result is None:
-                    log.warning(
-                        "TX_EMPTY_RESPONSE: Empty result for order_send, "
-                        "verifying state before retry (request_id=%s)",
-                        request_id,
-                    )
-                    # Create synthetic result for verification
-                    # (we don't have order/deal IDs, so verification will
-                    # rely on request_id in comment field)
-                    synthetic_result = MT5Models.OrderResult(
-                        retcode=0,  # Unknown
-                        deal=0,
-                        order=0,
-                        volume=0.0,
-                        price=0.0,
-                        bid=0.0,
-                        ask=0.0,
-                        comment="",
-                        request_id=0,
-                    )
-                    verified = await self._verify_order_state(
-                        synthetic_result, request_id
-                    )
-                    if verified:
-                        log.info(
-                            "TX_EMPTY_RESPONSE: Order found via verification, "
-                            "avoiding duplicate (request_id=%s)",
-                            request_id,
-                        )
-                        self._record_circuit_success()
-                        return verified
-                    # Not found - check MT5 health before retry
-                    # CRITICAL FIX v4: If MT5 is offline, order might have executed
-                    # before crash - retrying would duplicate
-                    if not await self._quick_health_check():
-                        log.error(
-                            "TX_EMPTY_RESPONSE: MT5 unreachable after verification, "
-                            "UNSAFE to retry (request_id=%s)",
-                            request_id,
-                        )
-                        th.raise_permanent(
-                            0,
-                            f"MT5 unreachable after empty response: {request_id}",
-                        )
-
-                    log.warning(
-                        "TX_EMPTY_RESPONSE: Order not found via verification, "
-                        "MT5 healthy - safe to retry (request_id=%s)",
-                        request_id,
-                    )
-                    self._record_circuit_failure()
-                    delay = self._config.calculate_critical_retry_delay(attempt)
-                    await asyncio.sleep(delay)
-                    continue  # Retry
-
-                last_result = result
-
-                # CLASSIFY and HANDLE
-                outcome = th.classify_result(result.retcode)
-
-                if outcome in {
-                    c.Resilience.TransactionOutcome.SUCCESS,
-                    c.Resilience.TransactionOutcome.PARTIAL,
-                }:
-                    # FIX: Use safe wrapper instead of direct CB call
-                    self._record_circuit_success()
-                    if outcome == c.Resilience.TransactionOutcome.PARTIAL:
-                        log.warning("Order partially filled: %s", result)
-                    # WAL: Mark as verified (order confirmed)
-                    if self._wal:
-                        wal_data = {
-                            "retcode": result.retcode,
-                            "order": result.order,
-                            "deal": result.deal,
-                        }
-                        await self._wal.mark_verified(request_id, wal_data)
-                    return result
-
-                if outcome == c.Resilience.TransactionOutcome.PERMANENT_FAILURE:
-                    # FIX: Use safe wrapper instead of direct CB call
-                    self._record_circuit_failure()
-                    # WAL: Mark as failed (permanent error)
-                    if self._wal:
-                        error_msg = f"Permanent: {result.retcode}"
-                        await self._wal.mark_failed(request_id, error_msg)
-                    th.raise_permanent(result.retcode, result.comment)
-
-                if outcome == c.Resilience.TransactionOutcome.VERIFY_REQUIRED:
-                    log.warning(
-                        "TX_VERIFY_REQUIRED: retcode=%d, request_id=%s",
-                        result.retcode,
-                        request_id,
-                    )
-                    verified = await self._verify_order_state(result, request_id)
-                    if verified:
-                        # FIX: Use safe wrapper instead of direct CB call
-                        self._record_circuit_success()
-                        # WAL: Mark as verified (order confirmed via verification)
-                        if self._wal:
-                            wal_data = {
-                                "retcode": verified.retcode,
-                                "order": verified.order,
-                                "deal": verified.deal,
-                            }
-                            await self._wal.mark_verified(request_id, wal_data)
-                        return verified
-                    # FIX: Use safe wrapper instead of direct CB call
-                    self._record_circuit_failure()
-                    # WAL: Mark as failed (verification failed)
-                    if self._wal:
-                        await self._wal.mark_failed(
-                            request_id, f"Verification failed: retcode={result.retcode}"
-                        )
-                    th.raise_permanent(
-                        result.retcode,
-                        f"Verification failed: {request_id}",
-                    )
-
-                # RETRY: Record failure and delay
-                # FIX: Use safe wrapper instead of direct CB call
-                self._record_circuit_failure()
-                delay = self._config.calculate_critical_retry_delay(attempt)
-                log.warning(
-                    "Retryable error %d, attempt %d/%d, retrying in %.2fs",
-                    result.retcode,
-                    attempt + 1,
-                    max_attempts,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-
-            except MT5Utilities.Exceptions.PermanentError:
-                raise
-            except Exception as e:
-                last_error = e
-                if not MT5Utilities.CircuitBreaker.is_retryable_exception(e):
-                    # FIX: Use safe wrapper instead of direct CB call
-                    self._record_circuit_failure()
-                    raise
-                # FIX: Use safe wrapper instead of direct CB call
-                self._record_circuit_failure()
-
-                # CRITICAL FIX v4: If MT5 went offline (ConnectionError, Timeout),
-                # order MAY have been sent before the connection dropped.
-                # Verify health before retrying to avoid duplicate orders.
-                if not await self._quick_health_check():
-                    log.error(  # noqa: TRY400 - intentional, no traceback needed
-                        "order_send exception with MT5 unreachable: %s - "
-                        "UNSAFE to retry (request_id=%s)",
-                        e,
-                        request_id,
-                    )
-                    # Try to verify state one more time
-                    if request_id:
-                        synthetic_result = MT5Models.OrderResult(
-                            retcode=0,
-                            deal=0,
-                            order=0,
-                            volume=0.0,
-                            price=0.0,
-                            bid=0.0,
-                            ask=0.0,
-                            comment="",
-                            request_id=0,
-                        )
-                        verified = await self._verify_order_state(
-                            synthetic_result, request_id
-                        )
-                        if verified:
-                            log.info(
-                                "order_send exception but order found: %s",
-                                request_id,
-                            )
-                            return verified
-                    th.raise_permanent(
-                        0,
-                        f"MT5 unreachable after exception: {e} ({request_id})",
-                    )
-
-                delay = self._config.calculate_critical_retry_delay(attempt)
-                log.warning(
-                    "Exception in order_send: %s, attempt %d/%d, MT5 healthy - "
-                    "retrying in %.2fs",
-                    e,
-                    attempt + 1,
-                    max_attempts,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-
-        th.raise_exhausted(operation, max_attempts, last_result, last_error)
-        return None  # Unreachable - raise_exhausted always raises
+        # Cast result to expected type (orchestrator returns generic object)
+        if result is not None:
+            return result
+        return None
 
     async def _execute_order_grpc(
         self,
@@ -1758,7 +1609,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             Parsed OrderResult or None.
 
         """
-        if self._config.tx_log_critical:
+        if self._settings.tx_log_critical:
             log.info(
                 "TX_INTENT: order_send attempt=%d request=%s", attempt + 1, request
             )
@@ -1766,10 +1617,10 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         stub = self._ensure_connected()
         grpc_request = mt5_pb2.OrderRequest(json_request=orjson.dumps(request).decode())
         response = await stub.OrderSend(grpc_request, timeout=self._timeout)
-        result_dict = MT5Utilities.Data.json_to_dict(response.json_data)
+        result_dict = u.Data.json_to_dict(response.json_data)
         result = MT5Models.OrderResult.from_mt5(result_dict)
 
-        if result and self._config.tx_log_critical:
+        if result and self._settings.tx_log_critical:
             log.info(
                 "TX_RESULT: order_send retcode=%d deal=%d order=%d",
                 result.retcode,
@@ -1777,73 +1628,6 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 result.order,
             )
         return result
-
-    async def _execute_with_timeout_and_cancel(
-        self,
-        coro: object,
-        timeout: float,
-        operation_name: str,
-    ) -> tuple[object | None, bool]:
-        """Execute coroutine with timeout and proper task cancellation.
-
-        CRITICAL FIX: asyncio.wait_for() doesn't guarantee cleanup of child tasks.
-        This helper ensures:
-        1. Task is explicitly created for tracking
-        2. On timeout, task is explicitly cancelled
-        3. We wait for cancellation to complete (no orphan tasks)
-
-        Args:
-            coro: Coroutine to execute.
-            timeout: Timeout in seconds.
-            operation_name: Name for logging.
-
-        Returns:
-            Tuple of (result, timed_out) where:
-            - result: Result of coroutine, or None on timeout/cancel
-            - timed_out: True if operation timed out, False otherwise
-
-        Raises:
-            ValueError: If timeout <= 0.
-            Exception: Any non-timeout exception from the coroutine.
-
-        """
-        # CRITICAL FIX v4: Validate timeout > 0
-        # timeout=0 causes immediate TimeoutError without giving task a chance
-        if timeout <= 0:
-            msg = f"timeout must be > 0, got {timeout}"
-            raise ValueError(msg)
-
-        task: asyncio.Task[T] = asyncio.create_task(coro)  # type: ignore[arg-type]
-        try:
-            result = await asyncio.wait_for(task, timeout=timeout)
-            return result, False
-        except TimeoutError:
-            # CRITICAL FIX v4: Check if result arrived just before timeout
-            # This handles the race condition where result arrives exactly at
-            # the timeout boundary - we shouldn't discard a valid result!
-            if task.done() and not task.cancelled():
-                try:
-                    result = task.result()
-                    log.debug(
-                        "TX_VERIFY: %s completed at timeout boundary (%.1fs)",
-                        operation_name,
-                        timeout,
-                    )
-                    return result, False  # Result arrived! Not a timeout.
-                except Exception:  # noqa: BLE001, S110 - treat as timeout
-                    pass
-
-            # Task didn't complete - cancel it
-            task.cancel()
-            # Wait for cancellation to complete (suppress CancelledError)
-            with suppress(asyncio.CancelledError):
-                await task
-            log.debug(
-                "TX_VERIFY: %s cancelled after %.1fs timeout",
-                operation_name,
-                timeout,
-            )
-            return None, True
 
     async def _verify_order_state(
         self,
@@ -1871,7 +1655,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             Verified OrderResult if state determined, None otherwise.
 
         """
-        if not self._config.tx_verify_on_ambiguous:
+        if not self._settings.tx_verify_on_ambiguous:
             return None
 
         # CRITICAL: Acquire operation lock to prevent _disconnect() during verify
@@ -1880,7 +1664,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         async with self._operation_lock:
             return await self._verify_order_state_impl(result, request_id)
 
-    async def _verify_order_state_impl(
+    async def _verify_order_state_impl(  # noqa: C901,PLR0912,PLR0915
         self,
         result: MT5Models.OrderResult,
         request_id: str | None = None,
@@ -1891,9 +1675,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         This method assumes _operation_lock is already held.
         """
         # Get verification settings from config
-        verify_timeout = self._config.tx_verify_timeout
-        max_attempts = self._config.tx_verify_max_attempts
-        propagation_delay = self._config.tx_verify_propagation_delay
+        verify_timeout = self._settings.tx_verify_timeout
+        max_attempts = self._settings.tx_verify_max_attempts
+        propagation_delay = self._settings.tx_verify_propagation_delay
 
         # Retry verification up to max_attempts times with delay
         for attempt in range(max_attempts):
@@ -1916,7 +1700,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                         continue
 
                     # Only option is verify_by_comment
-                    verified, timed_out = await self._execute_with_timeout_and_cancel(
+                    _exec = u.RetryStrategy.execute_with_timeout_and_cancel
+                    verified, timed_out = await _exec(
                         self._verify_by_comment(request_id, result),
                         verify_timeout,
                         f"verify_by_comment_only({request_id})",
@@ -1940,8 +1725,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
                 # Check 1: Pending orders (if we have order ticket)
                 if result.order:
-                    orders, timed_out = await self._execute_with_timeout_and_cancel(
-                        self.orders_get(ticket=result.order),
+                    _exec = u.RetryStrategy.execute_with_timeout_and_cancel
+                    orders, timed_out = await _exec(
+                        self._orders_get_raw(ticket=result.order),
                         verify_timeout,
                         f"orders_get({result.order})",
                     )
@@ -1973,8 +1759,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                         )
 
                     # Check 2: History orders
-                    history, timed_out = await self._execute_with_timeout_and_cancel(
-                        self.history_orders_get(ticket=result.order),
+                    _exec = u.RetryStrategy.execute_with_timeout_and_cancel
+                    history, timed_out = await _exec(
+                        self._history_orders_get_raw(ticket=result.order),
                         verify_timeout,
                         f"history_orders_get({result.order})",
                     )
@@ -2006,8 +1793,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
                 # Check 3: Deals (definitive execution proof)
                 if result.deal:
-                    deals, timed_out = await self._execute_with_timeout_and_cancel(
-                        self.history_deals_get(ticket=result.deal),
+                    _exec = u.RetryStrategy.execute_with_timeout_and_cancel
+                    deals, timed_out = await _exec(
+                        self._history_deals_get_raw(ticket=result.deal),
                         verify_timeout,
                         f"history_deals_get({result.deal})",
                     )
@@ -2039,7 +1827,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
                 # Check 4: Verify by comment field (if we have request_id)
                 if request_id:
-                    verified, timed_out = await self._execute_with_timeout_and_cancel(
+                    _exec = u.RetryStrategy.execute_with_timeout_and_cancel
+                    verified, timed_out = await _exec(
                         self._verify_by_comment(request_id, result),
                         verify_timeout,
                         f"verify_by_comment({request_id})",
@@ -2102,12 +1891,12 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         """
         now = datetime.now(UTC)
         # Use configurable window to handle clock skew and propagation delays
-        search_window = self._config.tx_verify_search_window_minutes
+        search_window = self._settings.tx_verify_search_window_minutes
         from_time = now - timedelta(minutes=search_window)
 
-        # Search recent deals by comment
-        deals = await self.history_deals_get(date_from=from_time, date_to=now)
-        tracker = MT5Utilities.TransactionHandler.RequestTracker
+        # Search recent deals by comment (uses raw method - no resilience)
+        deals = await self._history_deals_get_raw(date_from=from_time, date_to=now)
+        tracker = u.TransactionHandler.RequestTracker
 
         # CRITICAL FIX v4: Explicitly handle None vs empty list
         # - None: Could be gRPC error (logged elsewhere)
@@ -2142,6 +1931,136 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 )
 
         return None
+
+    # =========================================================================
+    # INFRASTRUCTURE-LAYER RAW METHODS (NO RESILIENCE)
+    # =========================================================================
+    # CRITICAL: These methods are used BY the resilience infrastructure
+    # (e.g., _verify_order_state_impl). They CANNOT use _resilient_call
+    # to avoid circular dependencies.
+    #
+    # Rule: Layer N can only call Layer N-1 or lower (no circular deps)
+    # - Layer 3: Public API (WITH _resilient_call)
+    # - Layer 2: Infrastructure (NO resilience) - these methods
+    # - Layer 1: gRPC Direct (connect/disconnect)
+
+    async def _orders_get_raw(
+        self,
+        ticket: int | None = None,
+    ) -> tuple[MT5Models.Order, ...] | None:
+        """Get orders WITHOUT retry - used by verification infrastructure.
+
+        CRITICAL: This method is called BY the resilience infrastructure
+        during order state verification. It CANNOT use _resilient_call
+        to avoid circular dependencies.
+
+        Args:
+            ticket: Specific order ticket to fetch.
+
+        Returns:
+            Tuple of Order objects or None if gRPC fails.
+
+        """
+        try:
+            stub = self._ensure_connected()
+            request = mt5_pb2.OrdersRequest()
+            if ticket is not None:
+                request.ticket = ticket
+            response = await stub.OrdersGet(request, timeout=self._timeout)
+            json_items = list(response.json_items)
+            dicts = u.Data.unwrap_proto_list_to_dicts(json_items)
+            if dicts is None:
+                return None
+            return tuple(MT5Models.Order.model_validate(d) for d in dicts)
+        except (grpc.RpcError, ConnectionError) as e:
+            log.debug("_orders_get_raw gRPC failed: %s", e)
+            return None
+
+    async def _history_orders_get_raw(
+        self,
+        ticket: int | None = None,
+    ) -> tuple[MT5Models.Order, ...] | None:
+        """Get history orders WITHOUT retry - used by verification.
+
+        CRITICAL: This method is called BY the resilience infrastructure
+        during order state verification. It CANNOT use _resilient_call
+        to avoid circular dependencies.
+
+        Args:
+            ticket: Specific order ticket to fetch.
+
+        Returns:
+            Tuple of Order objects or None if gRPC fails.
+
+        """
+        try:
+            stub = self._ensure_connected()
+            request = mt5_pb2.HistoryRequest()
+            if ticket is not None:
+                request.ticket = ticket
+            # Date range: last 24h (sufficient for verification)
+            now = datetime.now(UTC)
+            request.date_to = u.Data.to_timestamp(now)
+            request.date_from = u.Data.to_timestamp(now - timedelta(hours=24))
+            response = await stub.HistoryOrdersGet(request, timeout=self._timeout)
+            json_items = list(response.json_items)
+            dicts = u.Data.unwrap_proto_list_to_dicts(json_items)
+            if dicts is None:
+                return None
+            return tuple(MT5Models.Order.model_validate(d) for d in dicts)
+        except (grpc.RpcError, ConnectionError) as e:
+            log.debug("_history_orders_get_raw gRPC failed: %s", e)
+            return None
+
+    async def _history_deals_get_raw(
+        self,
+        ticket: int | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> tuple[MT5Models.Deal, ...] | None:
+        """Get history deals WITHOUT retry - used by verification.
+
+        CRITICAL: This method is called BY the resilience infrastructure
+        during order state verification. It CANNOT use _resilient_call
+        to avoid circular dependencies.
+
+        Args:
+            ticket: Specific deal ticket to fetch.
+            date_from: Start date for search.
+            date_to: End date for search.
+
+        Returns:
+            Tuple of Deal objects or None if gRPC fails.
+
+        """
+        try:
+            stub = self._ensure_connected()
+            request = mt5_pb2.HistoryRequest()
+            if ticket is not None:
+                request.ticket = ticket
+
+            # Date range defaults
+            now = datetime.now(UTC)
+            if date_from is not None:
+                request.date_from = u.Data.to_timestamp(date_from)
+            else:
+                # Default: last 24h
+                request.date_from = u.Data.to_timestamp(now - timedelta(hours=24))
+
+            if date_to is not None:
+                request.date_to = u.Data.to_timestamp(date_to)
+            else:
+                request.date_to = u.Data.to_timestamp(now)
+
+            response = await stub.HistoryDealsGet(request, timeout=self._timeout)
+            json_items = list(response.json_items)
+            dicts = u.Data.unwrap_proto_list_to_dicts(json_items)
+            if dicts is None:
+                return None
+            return tuple(MT5Models.Deal.model_validate(d) for d in dicts)
+        except (grpc.RpcError, ConnectionError) as e:
+            log.debug("_history_deals_get_raw gRPC failed: %s", e)
+            return None
 
     # =========================================================================
     # POSITIONS METHODS
@@ -2191,7 +2110,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 request.ticket = ticket
             response = await stub.PositionsGet(request, timeout=self._timeout)
             json_items = list(response.json_items)
-            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
+            dicts = u.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.Position.model_validate(d) for d in dicts)
@@ -2246,7 +2165,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 request.ticket = ticket
             response = await stub.OrdersGet(request, timeout=self._timeout)
             json_items = list(response.json_items)
-            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
+            dicts = u.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.Order.model_validate(d) for d in dicts)
@@ -2276,8 +2195,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         async def _call() -> int:
             stub = self._ensure_connected()
             request = mt5_pb2.HistoryRequest(
-                date_from=MT5Utilities.Data.to_timestamp(date_from),
-                date_to=MT5Utilities.Data.to_timestamp(date_to),
+                date_from=u.Data.to_timestamp(date_from),
+                date_to=u.Data.to_timestamp(date_to),
             )
             response = await stub.HistoryOrdersTotal(request, timeout=self._timeout)
             return response.value
@@ -2310,9 +2229,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.HistoryRequest()
             if date_from is not None:
-                request.date_from = MT5Utilities.Data.to_timestamp(date_from)
+                request.date_from = u.Data.to_timestamp(date_from)
             if date_to is not None:
-                request.date_to = MT5Utilities.Data.to_timestamp(date_to)
+                request.date_to = u.Data.to_timestamp(date_to)
             if group is not None:
                 request.group = group
             if ticket is not None:
@@ -2321,7 +2240,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 request.position = position
             response = await stub.HistoryOrdersGet(request, timeout=self._timeout)
             json_items = list(response.json_items)
-            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
+            dicts = u.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.Order.model_validate(d) for d in dicts)
@@ -2347,8 +2266,8 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         async def _call() -> int:
             stub = self._ensure_connected()
             request = mt5_pb2.HistoryRequest(
-                date_from=MT5Utilities.Data.to_timestamp(date_from),
-                date_to=MT5Utilities.Data.to_timestamp(date_to),
+                date_from=u.Data.to_timestamp(date_from),
+                date_to=u.Data.to_timestamp(date_to),
             )
             response = await stub.HistoryDealsTotal(request, timeout=self._timeout)
             return response.value
@@ -2381,9 +2300,9 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             request = mt5_pb2.HistoryRequest()
             if date_from is not None:
-                request.date_from = MT5Utilities.Data.to_timestamp(date_from)
+                request.date_from = u.Data.to_timestamp(date_from)
             if date_to is not None:
-                request.date_to = MT5Utilities.Data.to_timestamp(date_to)
+                request.date_to = u.Data.to_timestamp(date_to)
             if group is not None:
                 request.group = group
             if ticket is not None:
@@ -2392,7 +2311,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                 request.position = position
             response = await stub.HistoryDealsGet(request, timeout=self._timeout)
             json_items = list(response.json_items)
-            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
+            dicts = u.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.Deal.model_validate(d) for d in dicts)
@@ -2444,7 +2363,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             request = mt5_pb2.SymbolRequest(symbol=symbol)
             response = await stub.MarketBookGet(request, timeout=self._timeout)
             json_items = list(response.json_items)
-            dicts = MT5Utilities.Data.unwrap_proto_list_to_dicts(json_items)
+            dicts = u.Data.unwrap_proto_list_to_dicts(json_items)
             if dicts is None:
                 return None
             return tuple(MT5Models.BookEntry.model_validate(d) for d in dicts)

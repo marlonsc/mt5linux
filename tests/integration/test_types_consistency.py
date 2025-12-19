@@ -12,11 +12,13 @@ Tests:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, get_type_hints
 
 import pytest
 
 from mt5linux.models import MT5Models
+from mt5linux.protocols import MT5Protocol
 from mt5linux.types import MT5Types
 
 if TYPE_CHECKING:
@@ -143,8 +145,6 @@ class TestTicksDataStructure:
 
     def test_ticks_have_required_fields(self, mt5: MetaTrader5) -> None:
         """copy_ticks_* should return arrays with tick fields."""
-        from datetime import UTC, datetime, timedelta
-
         mt5.symbol_select("EURUSD", enable=True)
         date_from = datetime.now(UTC) - timedelta(hours=1)
         ticks = mt5.copy_ticks_from("EURUSD", date_from, 100, mt5.COPY_TICKS_ALL)
@@ -164,8 +164,6 @@ class TestTicksDataStructure:
 
     def test_ticks_field_types(self, mt5: MetaTrader5) -> None:
         """Ticks fields should have appropriate types."""
-        from datetime import UTC, datetime, timedelta
-
         mt5.symbol_select("EURUSD", enable=True)
         date_from = datetime.now(UTC) - timedelta(hours=1)
         ticks = mt5.copy_ticks_from("EURUSD", date_from, 100, mt5.COPY_TICKS_ALL)
@@ -218,38 +216,26 @@ class TestMT5ProtocolConsistency:
 
     def test_mt5_protocol_has_initialize(self) -> None:
         """MT5Protocol should define initialize method."""
-        from mt5linux.protocols import MT5Protocol
-
         assert hasattr(MT5Protocol, "initialize")
 
     def test_mt5_protocol_has_login(self) -> None:
         """MT5Protocol should define login method."""
-        from mt5linux.protocols import MT5Protocol
-
         assert hasattr(MT5Protocol, "login")
 
     def test_mt5_protocol_has_shutdown(self) -> None:
         """MT5Protocol should define shutdown method."""
-        from mt5linux.protocols import MT5Protocol
-
         assert hasattr(MT5Protocol, "shutdown")
 
     def test_mt5_protocol_has_symbol_info(self) -> None:
         """MT5Protocol should define symbol_info method."""
-        from mt5linux.protocols import MT5Protocol
-
         assert hasattr(MT5Protocol, "symbol_info")
 
     def test_mt5_protocol_has_copy_rates_from(self) -> None:
         """MT5Protocol should define copy_rates_from method."""
-        from mt5linux.protocols import MT5Protocol
-
         assert hasattr(MT5Protocol, "copy_rates_from")
 
     def test_mt5_protocol_has_order_send(self) -> None:
         """MT5Protocol should define order_send method."""
-        from mt5linux.protocols import MT5Protocol
-
         assert hasattr(MT5Protocol, "order_send")
 
 

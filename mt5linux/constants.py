@@ -30,10 +30,7 @@ class MT5Constants:
         DOCKER_VNC_PORT: Final = 33000
         DOCKER_HEALTH_PORT: Final = 38002
 
-        # Test isolated ports
-        TEST_GRPC_PORT: Final = 28812
-        TEST_VNC_PORT: Final = 23000
-        TEST_HEALTH_PORT: Final = 28002
+        # Test isolated ports - moved to TestConstants
 
         # Host addresses
         LOCALHOST: Final = "localhost"
@@ -747,9 +744,14 @@ class MT5Constants:
     class Validation:
         """Data validation and utility constants."""
 
-        # Tuple structure sizes
-        VERSION_TUPLE_LENGTH: Final = 3  # (version, build, string)
-        ERROR_TUPLE_LENGTH: Final = 2  # (code, description)
+        # Tuple structure sizes (abbreviated _LEN naming for consistency with utilities)
+        VERSION_TUPLE_LEN: Final = 3  # (version, build, string)
+        ERROR_TUPLE_LEN: Final = 2  # (code, description)
+
+        # Request ID format constants
+        REQUEST_ID_LENGTH: Final = 18  # RQ (2) + 16 hex chars
+        REQUEST_ID_PREFIX: Final = "RQ"  # Request ID prefix marker
+        REQUEST_ID_HEX_LENGTH: Final = 16  # Hex portion length
 
     # ==================== TEST CONSTANTS ====================
     class Test:
@@ -776,7 +778,6 @@ class MT5Constants:
             """Test order constants."""
 
             HISTORY_MAGIC: Final = 888888
-            TEST_MAGIC: Final = 999999
             INVALID_MAGIC: Final = -1
             COMMENT: Final = "test_order"
 
@@ -915,6 +916,42 @@ class MT5Constants:
 
             DAYS_BACK_LONG_MIN: Final = 30
             DAYS_BACK_LONG_MAX: Final = 365
+
+    # ==================== REQUEST QUEUE - PARALLEL EXECUTION ====================
+    class Queue:
+        """Request queue configuration for parallel execution.
+
+        Controls how many concurrent operations can execute and queue capacity.
+        """
+
+        # Max SIMULTANEOUS operations (match server capacity: 10 workers)
+        MAX_CONCURRENT: Final = 10
+
+        # Max pending requests before backpressure (QueueFullError)
+        MAX_DEPTH: Final = 1000
+
+    # ==================== WRITE-AHEAD LOG - PERSISTENCE ====================
+    class WAL:
+        """Write-Ahead Log configuration for order operation persistence.
+
+        Controls WAL database location and retention policy.
+        """
+
+        # WAL database path (expanded user home by settings.py)
+        DEFAULT_PATH: Final = "~/.mt5linux/wal.db"
+
+        # Auto-cleanup entries older than this many days
+        RETENTION_DAYS: Final = 7
+
+        # WAL entry status values (matches MT5Utilities.WAL.Status enum)
+        class Status(IntEnum):
+            """WAL entry status transitions."""
+
+            PENDING = 0  # Logged, not yet sent
+            SENT = 1  # gRPC call initiated
+            VERIFIED = 2  # MT5 confirmed execution
+            FAILED = 3  # Permanent failure
+            RECOVERED = 4  # Recovered after crash
 
 
 # Convenient alias for shorter imports: from mt5linux.constants import c

@@ -12,12 +12,12 @@ These tests validate that:
 
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from mt5linux import MetaTrader5
-from mt5linux.config import MT5Config
+from mt5linux.settings import MT5Settings
 
 
 class TestFixtureResilience:
@@ -67,8 +67,6 @@ class TestFixtureResilience:
 
     def test_fixture_survives_history_operations(self, mt5: MetaTrader5) -> None:
         """Fixture should work after history operations."""
-        from datetime import datetime, timedelta
-
         # Get historical data
         now = datetime.now(tz=UTC)
         yesterday = now - timedelta(days=1)
@@ -91,7 +89,7 @@ class TestConnectionStateTransitions:
 
     def test_new_client_starts_disconnected(self) -> None:
         """New client should start disconnected."""
-        config = MT5Config()
+        config = MT5Settings()
         mt5 = MetaTrader5(
             host=config.host,
             port=config.test_grpc_port,
@@ -100,7 +98,7 @@ class TestConnectionStateTransitions:
 
     def test_connect_changes_state(self) -> None:
         """Connect should change state to connected."""
-        config = MT5Config()
+        config = MT5Settings()
         mt5 = MetaTrader5(
             host=config.host,
             port=config.test_grpc_port,
@@ -112,7 +110,7 @@ class TestConnectionStateTransitions:
 
     def test_disconnect_changes_state(self) -> None:
         """Disconnect should change state to disconnected."""
-        config = MT5Config()
+        config = MT5Settings()
         mt5 = MetaTrader5(
             host=config.host,
             port=config.test_grpc_port,
@@ -196,7 +194,7 @@ class TestAsyncClientExposure:
 
     def test_circuit_breaker_accessible(self, mt5: MetaTrader5) -> None:
         """Circuit breaker should be accessible if enabled."""
-        config = MT5Config()
+        config = MT5Settings()
         if config.enable_circuit_breaker:
             assert mt5._async_client._circuit_breaker is not None
         else:

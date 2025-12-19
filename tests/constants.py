@@ -13,15 +13,13 @@ Advanced patterns used:
 - Class-based namespaces organized by business domain, NOT by data type
 
 Usage (Test Constants - tc):
-    from tests.constants import TestConstants as tc
     port = tc.MT5.GRPC_PORT
     symbol = tc.Financial.DEFAULT_SYMBOL
     timeout = tc.Network.SOCKET_TIMEOUT
     compression_type = tc.Kafka.CompressionType.GZIP
 
 Usage (Source Constants - c):
-    from mt5linux.constants import c
-    port = c.Network.TEST_GRPC_PORT
+    port = tc.Network.TEST_GRPC_HOST  # Test constants from TestConstants
     timeout = c.Network.TIMEOUT_CONNECTION
 """
 
@@ -192,21 +190,31 @@ class TestConstants:
         PORT_CHECK_MAX_ATTEMPTS: Final[int] = 3
         GRPC_MAX_MESSAGE_SIZE: Final[int] = 50 * 1024 * 1024  # 50MB
         TEST_GRPC_HOST: Final[str] = "localhost"
-        TEST_GRPC_PORT: Final[int] = 28812
-        TEST_PROTOCOL_PORT: Final[int] = 28812
         CONCURRENT_CONNECTIONS: Final[int] = 5  # For concurrency tests
 
     class Timing:
-        """Timing and retry constants."""
+        """Timing, retry, and delay constants."""
 
+        # Retry configuration
         MIN_RETRY_INTERVAL: Final[float] = 0.5
         MAX_RETRY_INTERVAL: Final[float] = 5.0
         RETRY_BACKOFF_MULTIPLIER: Final[float] = 1.5
+
+        # Timeouts
         DOCKER_START_TIMEOUT: Final[int] = 300
         SLOW_TIMEOUT: Final[int] = 30  # Timeout for slow operations like Docker
         FAST_TIMEOUT: Final[int] = 2  # Fast timeout for quick checks
         CONTAINER_TIMEOUT: Final[int] = 60  # Timeout for container operations
         MEDIUM_TIMEOUT: Final[float] = 5.0  # Medium timeout for general ops
+
+        # Sleep durations for test synchronization
+        SLEEP_VERY_SHORT: Final[float] = 0.01  # 10ms
+        SLEEP_BRIEF: Final[float] = 0.02  # 20ms
+        SLEEP_SHORT: Final[float] = 0.05  # 50ms
+        SLEEP_MEDIUM: Final[float] = 0.1  # 100ms
+        SLEEP_LONG: Final[float] = 0.2  # 200ms
+
+        # Iteration counts
         FIVE_ITERATIONS: Final[int] = 5  # Common iteration count
 
     # =========================================================================
@@ -493,8 +501,8 @@ class TestConstants:
         TEST_TIMEOUT_SECONDS: Final[int] = 120
         TEST_EXECUTION_TIMEOUT: Final[int] = 120
         STDOUT_TRUNCATE_LENGTH: Final[int] = 1000
-        VERSION_TUPLE_LENGTH: Final[int] = 3  # (version, build, string)
-        ERROR_TUPLE_LENGTH: Final[int] = 2  # (code, description)
+        VERSION_TUPLE_LEN: Final[int] = 3  # (version, build, string)
+        ERROR_TUPLE_LEN: Final[int] = 2  # (code, description)
         SYMBOLS_TEST_COUNT: Final[int] = 5  # Number of symbols for batch tests
         SYMBOLS_RATES_COUNT: Final[int] = 5  # Number of symbols for rates tests
 
@@ -503,6 +511,91 @@ class TestConstants:
 
         MIN_LOGGER_HANDLERS: Final[int] = 1
         MIN_LOGGER_HANDLERS_WITH_FILE: Final[int] = 2
+        LOG_TRUNCATE_LENGTH: Final[int] = 500
+
+    # =========================================================================
+    # QUEUE - Request Queue Configuration
+    # =========================================================================
+
+    class Queue:
+        """Request queue configuration for parallel execution tests."""
+
+        MAX_CONCURRENT_SINGLE: Final[int] = 1
+        MAX_CONCURRENT_DUAL: Final[int] = 2
+        MAX_CONCURRENT_DEFAULT: Final[int] = 3
+        MAX_CONCURRENT_FIVE: Final[int] = 5
+        MAX_DEPTH_DEFAULT: Final[int] = 10
+        MAX_DEPTH_LARGE: Final[int] = 20
+
+    # =========================================================================
+    # TRACKING - Request ID and Transaction Tracking
+    # =========================================================================
+
+    class Tracking:
+        """Request ID format and transaction tracking constants."""
+
+        REQUEST_ID_PREFIX: Final[str] = "RQ"
+        REQUEST_ID_LENGTH: Final[int] = 18
+        REQUEST_ID_HEX_LENGTH: Final[int] = 16
+        COMMENT_SEPARATOR: Final[str] = "|"
+
+        # Sample request IDs for testing
+        SAMPLE_REQUEST_ID: Final[str] = "RQ1234567890abcdef"
+        SAMPLE_REQUEST_ID_1: Final[str] = "RQ001"
+        SAMPLE_REQUEST_ID_2: Final[str] = "RQ002"
+        SAMPLE_REQUEST_ID_3: Final[str] = "RQ003"
+
+    # =========================================================================
+    # TEST SAMPLES - Common Test Data Samples
+    # =========================================================================
+
+    class TestSamples:
+        """Common test data samples used across multiple test files."""
+
+        # Comments and descriptions
+        COMMENT_STRATEGY: Final[str] = "my_strategy_order"
+        COMMENT_ORDER: Final[str] = "my_order"
+        COMMENT_INVALID: Final[str] = "not_a_request"
+        COMMENT_ZERO_VOLUME: Final[str] = "test_zero_volume"
+        COMMENT_INVALID_SYMBOL: Final[str] = "test_invalid"
+        COMMENT_TOO_LONG: Final[str] = "x" * 32
+
+        # Sample data values
+        PRICE_NEGATIVE: Final[float] = -1.0
+        STOP_LOSS_PRICE: Final[float] = 1.0900
+        TAKE_PROFIT_PRICE: Final[float] = 1.1100
+        SAMPLE_ORDER_TICKET: Final[int] = 12345
+        SAMPLE_LOGIN: Final[int] = 12345
+        BALANCE_TEST: Final[float] = 10000.0
+        BALANCE_LOW: Final[float] = 5000.0
+
+        # Invalid values for testing error handling
+        INVALID_VOLUME_EXCEEDS_MAX: Final[float] = 1001.0
+        INVALID_SYMBOL: Final[str] = "INVALID_SYMBOL"
+
+    # =========================================================================
+    # GENERATORS - Property Generation Bounds
+    # =========================================================================
+
+    class Generators:
+        """Bounds for property-based test generators."""
+
+        # Volume generation bounds
+        VOLUME_MIN: Final[float] = 0.01
+        VOLUME_MAX: Final[float] = 10.0
+        VOLUME_DEFAULT: Final[float] = 1.0
+
+        # Deviation generation bounds
+        DEVIATION_MIN: Final[int] = 1
+        DEVIATION_TIGHT: Final[int] = 10
+        DEVIATION_NORMAL: Final[int] = 50
+        DEVIATION_WIDE: Final[int] = 100
+
+        # Bar count generation bounds
+        BAR_COUNT_MIN: Final[int] = 1
+        BAR_COUNT_SMALL: Final[int] = 100
+        BAR_COUNT_MEDIUM: Final[int] = 1000
+        BAR_COUNT_LARGE: Final[int] = 10000
 
     # =========================================================================
     # COLLECTIONS & ENUMERATIONS
@@ -651,20 +744,35 @@ class TestConstants:
     # Network aliases
     GRPC_MAX_MESSAGE_SIZE = Network.GRPC_MAX_MESSAGE_SIZE
     TEST_GRPC_HOST = Network.TEST_GRPC_HOST
-    TEST_GRPC_PORT = Network.TEST_GRPC_PORT
-    TEST_PROTOCOL_PORT = Network.TEST_PROTOCOL_PORT
     CONCURRENT_CONNECTIONS = Network.CONCURRENT_CONNECTIONS
 
     # Timing additional aliases
     MEDIUM_TIMEOUT = Timing.MEDIUM_TIMEOUT
     FIVE_ITERATIONS = Timing.FIVE_ITERATIONS
+    SLEEP_VERY_SHORT = Timing.SLEEP_VERY_SHORT
+    SLEEP_BRIEF = Timing.SLEEP_BRIEF
+    SLEEP_SHORT = Timing.SLEEP_SHORT
+    SLEEP_MEDIUM = Timing.SLEEP_MEDIUM
+    SLEEP_LONG = Timing.SLEEP_LONG
+
+    # Queue aliases
+    Q_MAX_CONCURRENT_SINGLE = Queue.MAX_CONCURRENT_SINGLE
+    Q_MAX_CONCURRENT_DUAL = Queue.MAX_CONCURRENT_DUAL
+    Q_MAX_CONCURRENT_DEFAULT = Queue.MAX_CONCURRENT_DEFAULT
+    Q_MAX_DEPTH_DEFAULT = Queue.MAX_DEPTH_DEFAULT
+    Q_MAX_DEPTH_LARGE = Queue.MAX_DEPTH_LARGE
+
+    # Tracking aliases
+    REQUEST_ID_PREFIX = Tracking.REQUEST_ID_PREFIX
+    REQUEST_ID_LENGTH = Tracking.REQUEST_ID_LENGTH
+    SAMPLE_REQUEST_ID = Tracking.SAMPLE_REQUEST_ID
 
     # Mappings and Sets are available as module-level constants
     # Access via: from tests.constants import VOLUME_TO_UNITS, VALID_LOT_SIZES
 
     # Validation aliases
-    VERSION_TUPLE_LENGTH = Validation.VERSION_TUPLE_LENGTH
-    ERROR_TUPLE_LENGTH = Validation.ERROR_TUPLE_LENGTH
+    VERSION_TUPLE_LEN = Validation.VERSION_TUPLE_LEN
+    ERROR_TUPLE_LEN = Validation.ERROR_TUPLE_LEN
     SYMBOLS_TEST_COUNT = Validation.SYMBOLS_TEST_COUNT
     SYMBOLS_RATES_COUNT = Validation.SYMBOLS_RATES_COUNT
 

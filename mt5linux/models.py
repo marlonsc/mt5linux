@@ -4,11 +4,10 @@ Type-safe models for MetaTrader5 trading data structures.
 Compatible with neptor's MT5Bridge models.
 
 Hierarchy Level: 2
-- Imports: MT5Constants (Level 0), MT5Config (Level 1)
+- Imports: MT5Constants (Level 0), MT5Settings (Level 1)
 - Used by: client.py, server.py (optional)
 
 Usage:
-    from mt5linux.models import MT5Models
 
     # Create order request
     request = MT5Models.OrderRequest(...)
@@ -17,16 +16,18 @@ Usage:
     result = MT5Models.OrderResult.from_mt5(response)
 """
 
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from mt5linux.config import MT5Config
 from mt5linux.constants import MT5Constants as c
+from mt5linux.settings import MT5Settings
 
 # Default config instance for model defaults
-_config = MT5Config()
+_settings = MT5Settings()
 
 
 @runtime_checkable
@@ -106,16 +107,16 @@ class MT5Models:
         price: float = Field(ge=0, default=0.0)
         sl: float = Field(ge=0, default=0.0)
         tp: float = Field(ge=0, default=0.0)
-        deviation: int = Field(ge=0, default=_config.order_deviation)
-        magic: int = Field(ge=0, default=_config.order_magic)
+        deviation: int = Field(ge=0, default=_settings.order_deviation)
+        magic: int = Field(ge=0, default=_settings.order_magic)
         comment: str = Field(max_length=31, default="")
-        type_time: int = Field(default=_config.order_time)
+        type_time: int = Field(default=_settings.order_time)
         expiration: datetime | None = None
-        type_filling: int = Field(default=_config.order_filling)
+        type_filling: int = Field(default=_settings.order_filling)
         position: int = Field(ge=0, default=0)
         position_by: int = Field(ge=0, default=0)
 
-        @computed_field  # type: ignore[prop-decorator]
+        @computed_field
         @property
         def is_market_order(self) -> bool:
             """Check if this is a market order."""
@@ -178,13 +179,13 @@ class MT5Models:
         request_id: int = 0
         retcode_external: int = 0
 
-        @computed_field  # type: ignore[prop-decorator]
+        @computed_field
         @property
         def is_success(self) -> bool:
             """Check if order was successful."""
             return self.retcode == c.Order.TradeRetcode.DONE
 
-        @computed_field  # type: ignore[prop-decorator]
+        @computed_field
         @property
         def is_partial(self) -> bool:
             """Check if order was partially filled."""
@@ -233,7 +234,7 @@ class MT5Models:
         margin_level: float = 0.0
         comment: str = ""
 
-        @computed_field  # type: ignore[prop-decorator]
+        @computed_field
         @property
         def is_valid(self) -> bool:
             """Check if order check passed validation."""

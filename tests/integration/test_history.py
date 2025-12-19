@@ -16,7 +16,7 @@ import pytest
 from tests.conftest import tc
 
 if TYPE_CHECKING:
-    from mt5linux import MetaTrader5
+    from mt5linux.client import MetaTrader5
 
 
 class TestHistoryDeals:

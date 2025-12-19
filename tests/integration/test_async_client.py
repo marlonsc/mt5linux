@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -107,7 +108,7 @@ class TestAsyncMetaTrader5Terminal:
         """Test async version retrieval."""
         version = await async_mt5.version()
         assert version is not None
-        assert len(version) == tc.VERSION_TUPLE_LENGTH
+        assert len(version) == tc.VERSION_TUPLE_LEN
         assert isinstance(version[0], int)  # Major version
         assert isinstance(version[1], int)  # Build
         assert isinstance(version[2], str)  # Date
@@ -118,7 +119,7 @@ class TestAsyncMetaTrader5Terminal:
         error = await async_mt5.last_error()
         assert error is not None
         assert isinstance(error, tuple)
-        assert len(error) == tc.ERROR_TUPLE_LENGTH
+        assert len(error) == tc.ERROR_TUPLE_LEN
         assert isinstance(error[0], int)  # Error code
         assert isinstance(error[1], str)  # Error message
 
@@ -572,8 +573,6 @@ class TestAsyncMetaTrader5Login:
         self, async_mt5_raw: AsyncMetaTrader5
     ) -> None:
         """Test async login with valid credentials."""
-        import os
-
         login = int(os.getenv("MT5_LOGIN", "0"))
         password = os.getenv("MT5_PASSWORD", "")
         server = os.getenv("MT5_SERVER", "")

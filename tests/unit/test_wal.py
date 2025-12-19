@@ -1,4 +1,4 @@
-"""Tests for MT5Utilities.WAL - Write-Ahead Log for Order Operations.
+"""Tests for u.WAL - Write-Ahead Log for Order Operations.
 
 Tests verify:
 1. WAL initialization and schema creation
@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from mt5linux.config import MT5Config
-from mt5linux.utilities import MT5Utilities
+from mt5linux.settings import MT5Settings
+from mt5linux.utilities import MT5Utilities as u
 
 # Aliases for convenience
-WAL = MT5Utilities.WAL
+WAL = u.WAL
 
 
 @pytest.fixture
@@ -34,13 +34,13 @@ def temp_db_path() -> str:
 
 
 @pytest.fixture
-def config(temp_db_path: str) -> MT5Config:
+def config(temp_db_path: str) -> MT5Settings:
     """Return config with temp database path."""
-    return MT5Config(wal_path=temp_db_path, wal_retention_days=7)
+    return MT5Settings(wal_path=temp_db_path, wal_retention_days=7)
 
 
 @pytest.fixture
-async def wal(config: MT5Config) -> WAL:
+async def wal(config: MT5Settings) -> WAL:
     """Return initialized WAL for tests."""
     w = WAL(config)
     await w.initialize()
@@ -53,7 +53,7 @@ async def wal(config: MT5Config) -> WAL:
 class TestWALLifecycle:
     """Test WAL initialization and cleanup."""
 
-    async def test_initialize_creates_database(self, config: MT5Config) -> None:
+    async def test_initialize_creates_database(self, config: MT5Settings) -> None:
         """initialize() creates SQLite database with schema."""
         wal = WAL(config)
         await wal.initialize()
@@ -67,14 +67,16 @@ class TestWALLifecycle:
 
         await wal.close()
 
-    async def test_close_is_safe_when_not_initialized(self, config: MT5Config) -> None:
+    async def test_close_is_safe_when_not_initialized(
+        self, config: MT5Settings
+    ) -> None:
         """close() is safe to call even if not initialized."""
         wal = WAL(config)
         await wal.close()  # Should not raise
         await wal.close()  # Should not raise
 
     async def test_operations_safe_when_not_initialized(
-        self, config: MT5Config
+        self, config: MT5Settings
     ) -> None:
         """Operations return gracefully when not initialized."""
         wal = WAL(config)
@@ -237,7 +239,7 @@ class TestWALCleanup:
         incomplete = await wal.get_incomplete()
         assert len(incomplete) == 2
 
-    async def test_cleanup_respects_retention_period(self, config: MT5Config) -> None:
+    async def test_cleanup_respects_retention_period(self, config: MT5Settings) -> None:
         """cleanup_old() respects retention period."""
         wal = WAL(config)
         await wal.initialize()

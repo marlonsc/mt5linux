@@ -11,11 +11,12 @@ Usage:
     python -m mt5linux --server --host 0.0.0.0 --port 50051 --debug
 
     # Client usage (in Python code)
-    from mt5linux import MetaTrader5
     with MetaTrader5(host="windows-ip", port=50051) as mt5:
         mt5.initialize(login=12345)
         account = mt5.account_info()
 """
+
+from __future__ import annotations
 
 import logging
 import sys
@@ -43,7 +44,6 @@ Server Options:
     -d, --debug           Enable debug logging
 
 Client Usage (Python):
-    from mt5linux import MetaTrader5, MT5Constants
 
     with MetaTrader5(host="windows-ip", port=50051) as mt5:
         mt5.initialize(login=12345, password="pass", server="Demo")
@@ -51,7 +51,6 @@ Client Usage (Python):
         rates = mt5.copy_rates_from_pos("EURUSD", c.MarketData.TimeFrame.H1, 0, 100)
 
 Async Client Usage (Python):
-    from mt5linux import AsyncMetaTrader5
 
     async with AsyncMetaTrader5(host="windows-ip", port=50051) as mt5:
         await mt5.initialize(login=12345, password="pass", server="Demo")

@@ -13,14 +13,17 @@ Test Categories:
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 import grpc
 import grpc.aio
 import pytest
 
 from mt5linux import MetaTrader5
 from mt5linux.async_client import AsyncMetaTrader5
-from mt5linux.config import MT5Config
 from mt5linux.constants import MT5Constants as c
+from mt5linux.settings import MT5Settings
+from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
 # Test configuration
 TEST_HOST = "localhost"
@@ -36,7 +39,7 @@ class TestSyncWrapsAsync:
         assert hasattr(mt5, "_async_client")
         assert isinstance(mt5._async_client, AsyncMetaTrader5)
 
-    def test_sync_client_shares_config_with_async(self) -> None:
+    def test_sync_client_shares_settings_with_async(self) -> None:
         """Sync and async clients should use same config."""
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
 
@@ -46,7 +49,7 @@ class TestSyncWrapsAsync:
 
     def test_sync_client_inherits_circuit_breaker_state(self) -> None:
         """Sync client should use async client's circuit breaker."""
-        config = MT5Config()
+        config = MT5Settings()
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
 
         # If circuit breaker is enabled, async client should have it
@@ -113,7 +116,6 @@ class TestCircuitBreakerIntegration:
         mt5.connect()
         try:
             # Initialize and make successful operations
-            from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
             mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
@@ -139,7 +141,6 @@ class TestCircuitBreakerIntegration:
 
         # Don't connect - operations should fail
         # Try operation without connection (will fail gracefully)
-        from contextlib import suppress
 
         with suppress(grpc.RpcError, grpc.aio.AioRpcError, ConnectionError):
             mt5.account_info()
@@ -158,7 +159,6 @@ class TestAutoReconnect:
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()
 
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         result = mt5.initialize(
             login=MT5_LOGIN,
@@ -171,7 +171,6 @@ class TestAutoReconnect:
         yield mt5
 
         # Cleanup - suppress any errors during teardown
-        from contextlib import suppress
 
         with suppress(grpc.RpcError, grpc.aio.AioRpcError, ConnectionError, OSError):
             mt5.shutdown()
@@ -191,7 +190,6 @@ class TestAutoReconnect:
 
         # Reconnect
         mt5.connect()
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         result = mt5.initialize(
             login=MT5_LOGIN,
@@ -209,7 +207,6 @@ class TestAutoReconnect:
         """Should handle multiple connect/disconnect cycles."""
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
 
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         for cycle in range(3):
             # Connect
@@ -240,7 +237,6 @@ class TestConnectionRecovery:
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()
 
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
@@ -276,7 +272,6 @@ class TestConnectionRecovery:
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()
 
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
@@ -307,8 +302,6 @@ class TestGracefulDegradation:
 
     def test_operations_without_init_return_none_or_error(self) -> None:
         """Operations without initialize should handle gracefully."""
-        from contextlib import suppress
-
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()
 
@@ -352,7 +345,6 @@ class TestResilienceInheritance:
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()
 
-        from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
         mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
@@ -374,15 +366,15 @@ class TestResilienceInheritance:
             mt5.shutdown()
             mt5.disconnect()
 
-    def test_config_propagates_to_async_client(self) -> None:
+    def test_settings_propagates_to_async_client(self) -> None:
         """Config settings should propagate to async client."""
-        config = MT5Config()
+        config = MT5Settings()
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
 
-        async_config = mt5._async_client._config
+        async_settings = mt5._async_client._settings
 
         # Verify same config values
-        assert async_config.enable_circuit_breaker == config.enable_circuit_breaker
-        assert async_config.enable_auto_reconnect == config.enable_auto_reconnect
-        assert async_config.cb_threshold == config.cb_threshold
-        assert async_config.cb_recovery == config.cb_recovery
+        assert async_settings.enable_circuit_breaker == config.enable_circuit_breaker
+        assert async_settings.enable_auto_reconnect == config.enable_auto_reconnect
+        assert async_settings.cb_threshold == config.cb_threshold
+        assert async_settings.cb_recovery == config.cb_recovery

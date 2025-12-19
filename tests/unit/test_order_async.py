@@ -13,32 +13,32 @@ Integration tests for actual order execution require MT5 server.
 
 from __future__ import annotations
 
+from asyncio import iscoroutinefunction
+from inspect import signature
+
+from mt5linux.async_client import AsyncMetaTrader5
+from mt5linux.client import MetaTrader5
+from mt5linux.protocols import AsyncMT5Protocol
+from mt5linux.utilities import MT5Utilities as u
+
 
 class TestOrderSendAsyncSignature:
     """Test order_send_async method signature and basic behavior."""
 
     def test_order_send_async_exists_on_async_client(self) -> None:
         """order_send_async method exists on AsyncMetaTrader5."""
-        from mt5linux.async_client import AsyncMetaTrader5
-
         assert hasattr(AsyncMetaTrader5, "order_send_async")
         method = AsyncMetaTrader5.order_send_async
         assert callable(method)
 
     def test_order_send_async_exists_on_sync_client(self) -> None:
         """order_send_async method exists on MetaTrader5 (sync wrapper)."""
-        from mt5linux.client import MetaTrader5
-
         assert hasattr(MetaTrader5, "order_send_async")
         method = MetaTrader5.order_send_async
         assert callable(method)
 
     def test_order_send_async_accepts_callbacks(self) -> None:
         """order_send_async accepts on_complete and on_error callbacks."""
-        from inspect import signature
-
-        from mt5linux.async_client import AsyncMetaTrader5
-
         sig = signature(AsyncMetaTrader5.order_send_async)
         params = sig.parameters
 
@@ -52,26 +52,18 @@ class TestOrderSendBatchSignature:
 
     def test_order_send_batch_exists_on_async_client(self) -> None:
         """order_send_batch method exists on AsyncMetaTrader5."""
-        from mt5linux.async_client import AsyncMetaTrader5
-
         assert hasattr(AsyncMetaTrader5, "order_send_batch")
         method = AsyncMetaTrader5.order_send_batch
         assert callable(method)
 
     def test_order_send_batch_exists_on_sync_client(self) -> None:
         """order_send_batch method exists on MetaTrader5 (sync wrapper)."""
-        from mt5linux.client import MetaTrader5
-
         assert hasattr(MetaTrader5, "order_send_batch")
         method = MetaTrader5.order_send_batch
         assert callable(method)
 
     def test_order_send_batch_accepts_callbacks(self) -> None:
         """order_send_batch accepts batch callbacks."""
-        from inspect import signature
-
-        from mt5linux.async_client import AsyncMetaTrader5
-
         sig = signature(AsyncMetaTrader5.order_send_batch)
         params = sig.parameters
 
@@ -86,14 +78,10 @@ class TestProtocolCompliance:
 
     def test_order_send_async_in_protocol(self) -> None:
         """order_send_async is defined in AsyncMT5Protocol."""
-        from mt5linux.protocols import AsyncMT5Protocol
-
         assert hasattr(AsyncMT5Protocol, "order_send_async")
 
     def test_order_send_batch_in_protocol(self) -> None:
         """order_send_batch is defined in AsyncMT5Protocol."""
-        from mt5linux.protocols import AsyncMT5Protocol
-
         assert hasattr(AsyncMT5Protocol, "order_send_batch")
 
 
@@ -102,19 +90,15 @@ class TestRequestIdGeneration:
 
     def test_request_id_format(self) -> None:
         """Request IDs follow expected format (RQ + 16 hex chars)."""
-        from mt5linux.utilities import MT5Utilities
-
-        tracker = MT5Utilities.TransactionHandler.RequestTracker
+        tracker = u.TransactionHandler.RequestTracker
         request_id = tracker.generate_request_id()
         assert request_id.startswith("RQ")
         assert len(request_id) == 18  # RQ + 16 hex
 
     def test_request_ids_are_unique(self) -> None:
         """Generated request IDs are unique."""
-        from mt5linux.utilities import MT5Utilities
-
         ids = {
-            MT5Utilities.TransactionHandler.RequestTracker.generate_request_id()
+            u.TransactionHandler.RequestTracker.generate_request_id()
             for _ in range(100)
         }
         assert len(ids) == 100
@@ -125,10 +109,6 @@ class TestCallbackSignature:
 
     def test_order_send_async_has_callback_params(self) -> None:
         """order_send_async has on_complete and on_error parameters."""
-        from inspect import signature
-
-        from mt5linux.async_client import AsyncMetaTrader5
-
         sig = signature(AsyncMetaTrader5.order_send_async)
         params = sig.parameters
 
@@ -140,10 +120,6 @@ class TestCallbackSignature:
 
     def test_order_send_batch_has_callback_params(self) -> None:
         """order_send_batch has batch callback parameters."""
-        from inspect import signature
-
-        from mt5linux.async_client import AsyncMetaTrader5
-
         sig = signature(AsyncMetaTrader5.order_send_batch)
         params = sig.parameters
 
@@ -161,10 +137,8 @@ class TestTransactionHandlerIntegration:
 
     def test_prepare_request_adds_request_id(self) -> None:
         """prepare_request adds request_id to comment."""
-        from mt5linux.utilities import MT5Utilities
-
         request = {"action": 1, "symbol": "EURUSD", "volume": 0.1}
-        prepared, request_id = MT5Utilities.TransactionHandler.prepare_request(
+        prepared, request_id = u.TransactionHandler.prepare_request(
             request, "order_send"
         )
 
@@ -175,15 +149,13 @@ class TestTransactionHandlerIntegration:
 
     def test_prepare_request_preserves_existing_comment(self) -> None:
         """prepare_request preserves existing comment."""
-        from mt5linux.utilities import MT5Utilities
-
         request = {
             "action": 1,
             "symbol": "EURUSD",
             "volume": 0.1,
             "comment": "my_strategy",
         }
-        prepared, request_id = MT5Utilities.TransactionHandler.prepare_request(
+        prepared, request_id = u.TransactionHandler.prepare_request(
             request, "order_send"
         )
 
@@ -200,16 +172,8 @@ class TestAsyncBehavior:
 
     async def test_order_send_async_is_coroutine(self) -> None:
         """order_send_async returns a coroutine."""
-        from asyncio import iscoroutinefunction
-
-        from mt5linux.async_client import AsyncMetaTrader5
-
         assert iscoroutinefunction(AsyncMetaTrader5.order_send_async)
 
     async def test_order_send_batch_is_coroutine(self) -> None:
         """order_send_batch returns a coroutine."""
-        from asyncio import iscoroutinefunction
-
-        from mt5linux.async_client import AsyncMetaTrader5
-
         assert iscoroutinefunction(AsyncMetaTrader5.order_send_batch)

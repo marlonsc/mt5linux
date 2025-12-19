@@ -1,3 +1,4 @@
+
 """Real MT5 module validation tests.
 
 These tests validate our protocols and models against the ACTUAL MetaTrader5
@@ -30,7 +31,6 @@ from mt5linux.protocols import MT5Protocol
 
 if TYPE_CHECKING:
     from mt5linux import MetaTrader5
-
 
 # Skip message when server doesn't support introspection RPCs
 SKIP_UNIMPLEMENTED = (
