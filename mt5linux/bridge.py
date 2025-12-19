@@ -24,6 +24,7 @@ Usage:
     wine python.exe -m mt5linux.bridge --host 0.0.0.0 --port 50051
     wine python.exe bridge.py --host 0.0.0.0 --port 50051 --debug
 """
+
 # pylint: disable=no-member  # Protobuf generated code has dynamic members
 from __future__ import annotations
 

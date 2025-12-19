@@ -21,6 +21,7 @@ import pytest
 
 from mt5linux.settings import MT5Settings
 from mt5linux.utilities import MT5Utilities as u
+from tests.constants import TestConstants as tc
 
 # Aliases for convenience
 WAL = u.WAL
@@ -100,17 +101,17 @@ class TestWALStatusTransitions:
     async def test_log_intent_creates_pending_entry(self, wal: WAL) -> None:
         """log_intent() creates entry with PENDING status."""
         request = {"action": 1, "symbol": "EURUSD", "volume": 0.1}
-        await wal.log_intent("RQ001", request)
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, request)
 
         incomplete = await wal.get_incomplete()
         assert len(incomplete) == 1
-        assert incomplete[0].request_id == "RQ001"
+        assert incomplete[0].request_id == tc.Tracking.SAMPLE_REQUEST_ID_1
         assert incomplete[0].status == WAL.Status.PENDING
 
     async def test_mark_sent_updates_status(self, wal: WAL) -> None:
         """mark_sent() updates entry to SENT status."""
-        await wal.log_intent("RQ001", {"action": 1})
-        await wal.mark_sent("RQ001")
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})
+        await wal.mark_sent(tc.Tracking.SAMPLE_REQUEST_ID_1)
 
         incomplete = await wal.get_incomplete()
         assert len(incomplete) == 1
@@ -118,9 +119,11 @@ class TestWALStatusTransitions:
 
     async def test_mark_verified_removes_from_incomplete(self, wal: WAL) -> None:
         """mark_verified() updates entry and removes from incomplete list."""
-        await wal.log_intent("RQ001", {"action": 1})
-        await wal.mark_sent("RQ001")
-        await wal.mark_verified("RQ001", {"retcode": 10009, "order": 12345})
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})
+        await wal.mark_sent(tc.Tracking.SAMPLE_REQUEST_ID_1)
+        await wal.mark_verified(
+            tc.Tracking.SAMPLE_REQUEST_ID_1, {"retcode": 10009, "order": 12345}
+        )
 
         # Should no longer be incomplete
         incomplete = await wal.get_incomplete()
@@ -128,9 +131,9 @@ class TestWALStatusTransitions:
 
     async def test_mark_failed_removes_from_incomplete(self, wal: WAL) -> None:
         """mark_failed() updates entry and removes from incomplete list."""
-        await wal.log_intent("RQ001", {"action": 1})
-        await wal.mark_sent("RQ001")
-        await wal.mark_failed("RQ001", "Order rejected")
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})
+        await wal.mark_sent(tc.Tracking.SAMPLE_REQUEST_ID_1)
+        await wal.mark_failed(tc.Tracking.SAMPLE_REQUEST_ID_1, "Order rejected")
 
         # Should no longer be incomplete
         incomplete = await wal.get_incomplete()
@@ -142,11 +145,13 @@ class TestWALGetEntry:
 
     async def test_get_entry_returns_existing(self, wal: WAL) -> None:
         """get_entry() returns entry for existing request_id."""
-        await wal.log_intent("RQ001", {"action": 1, "symbol": "EURUSD"})
+        await wal.log_intent(
+            tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1, "symbol": "EURUSD"}
+        )
 
-        entry = await wal.get_entry("RQ001")
+        entry = await wal.get_entry(tc.Tracking.SAMPLE_REQUEST_ID_1)
         assert entry is not None
-        assert entry.request_id == "RQ001"
+        assert entry.request_id == tc.Tracking.SAMPLE_REQUEST_ID_1
         assert "EURUSD" in entry.request_json
 
     async def test_get_entry_returns_none_for_missing(self, wal: WAL) -> None:
@@ -156,21 +161,23 @@ class TestWALGetEntry:
 
     async def test_get_entry_with_result(self, wal: WAL) -> None:
         """get_entry() includes result_json after verification."""
-        await wal.log_intent("RQ001", {"action": 1})
-        await wal.mark_sent("RQ001")
-        await wal.mark_verified("RQ001", {"retcode": 10009, "order": 12345})
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})
+        await wal.mark_sent(tc.Tracking.SAMPLE_REQUEST_ID_1)
+        await wal.mark_verified(
+            tc.Tracking.SAMPLE_REQUEST_ID_1, {"retcode": 10009, "order": 12345}
+        )
 
-        entry = await wal.get_entry("RQ001")
+        entry = await wal.get_entry(tc.Tracking.SAMPLE_REQUEST_ID_1)
         assert entry is not None
         assert entry.result_json is not None
         assert "12345" in entry.result_json
 
     async def test_get_entry_with_error(self, wal: WAL) -> None:
         """get_entry() includes error after failure."""
-        await wal.log_intent("RQ001", {"action": 1})
-        await wal.mark_failed("RQ001", "Insufficient margin")
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})
+        await wal.mark_failed(tc.Tracking.SAMPLE_REQUEST_ID_1, "Insufficient margin")
 
-        entry = await wal.get_entry("RQ001")
+        entry = await wal.get_entry(tc.Tracking.SAMPLE_REQUEST_ID_1)
         assert entry is not None
         assert entry.error == "Insufficient margin"
 
@@ -180,30 +187,35 @@ class TestWALRecovery:
 
     async def test_get_incomplete_returns_pending_and_sent(self, wal: WAL) -> None:
         """get_incomplete() returns both PENDING and SENT entries."""
-        await wal.log_intent("RQ001", {"action": 1})  # PENDING
-        await wal.log_intent("RQ002", {"action": 1})
-        await wal.mark_sent("RQ002")  # SENT
-        await wal.log_intent("RQ003", {"action": 1})
-        await wal.mark_sent("RQ003")
-        await wal.mark_verified("RQ003", {})  # VERIFIED - not incomplete
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})  # PENDING
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_2, {"action": 1})
+        await wal.mark_sent(tc.Tracking.SAMPLE_REQUEST_ID_2)  # SENT
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_3, {"action": 1})
+        await wal.mark_sent(tc.Tracking.SAMPLE_REQUEST_ID_3)
+        await wal.mark_verified(
+            tc.Tracking.SAMPLE_REQUEST_ID_3, {}
+        )  # VERIFIED - not incomplete
 
         incomplete = await wal.get_incomplete()
         assert len(incomplete) == 2
         request_ids = {e.request_id for e in incomplete}
-        assert request_ids == {"RQ001", "RQ002"}
+        assert request_ids == {
+            tc.Tracking.SAMPLE_REQUEST_ID_1,
+            tc.Tracking.SAMPLE_REQUEST_ID_2,
+        }
 
     async def test_get_incomplete_ordered_by_timestamp(self, wal: WAL) -> None:
         """get_incomplete() returns entries ordered by timestamp (oldest first)."""
-        await wal.log_intent("RQ002", {"action": 1})
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_2, {"action": 1})
         await asyncio.sleep(0.01)
-        await wal.log_intent("RQ001", {"action": 1})
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})
         await asyncio.sleep(0.01)
-        await wal.log_intent("RQ003", {"action": 1})
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_3, {"action": 1})
 
         incomplete = await wal.get_incomplete()
         assert len(incomplete) == 3
         # First entry should be RQ002 (oldest)
-        assert incomplete[0].request_id == "RQ002"
+        assert incomplete[0].request_id == tc.Tracking.SAMPLE_REQUEST_ID_2
 
 
 class TestWALCleanup:
@@ -211,8 +223,8 @@ class TestWALCleanup:
 
     async def test_cleanup_old_removes_verified(self, wal: WAL) -> None:
         """cleanup_old() removes old VERIFIED entries."""
-        await wal.log_intent("RQ001", {"action": 1})
-        await wal.mark_verified("RQ001", {})
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})
+        await wal.mark_verified(tc.Tracking.SAMPLE_REQUEST_ID_1, {})
 
         # With 0 days retention, should remove immediately
         removed = await wal.cleanup_old(days=0)
@@ -220,17 +232,17 @@ class TestWALCleanup:
 
     async def test_cleanup_old_removes_failed(self, wal: WAL) -> None:
         """cleanup_old() removes old FAILED entries."""
-        await wal.log_intent("RQ001", {"action": 1})
-        await wal.mark_failed("RQ001", "error")
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})
+        await wal.mark_failed(tc.Tracking.SAMPLE_REQUEST_ID_1, "error")
 
         removed = await wal.cleanup_old(days=0)
         assert removed == 1
 
     async def test_cleanup_old_preserves_incomplete(self, wal: WAL) -> None:
         """cleanup_old() never removes PENDING or SENT entries."""
-        await wal.log_intent("RQ001", {"action": 1})  # PENDING
-        await wal.log_intent("RQ002", {"action": 1})
-        await wal.mark_sent("RQ002")  # SENT
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})  # PENDING
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_2, {"action": 1})
+        await wal.mark_sent(tc.Tracking.SAMPLE_REQUEST_ID_2)  # SENT
 
         removed = await wal.cleanup_old(days=0)
         assert removed == 0
@@ -244,8 +256,8 @@ class TestWALCleanup:
         wal = WAL(config)
         await wal.initialize()
 
-        await wal.log_intent("RQ001", {"action": 1})
-        await wal.mark_verified("RQ001", {})
+        await wal.log_intent(tc.Tracking.SAMPLE_REQUEST_ID_1, {"action": 1})
+        await wal.mark_verified(tc.Tracking.SAMPLE_REQUEST_ID_1, {})
 
         # With 7 days retention (default), should not remove recent
         removed = await wal.cleanup_old()
@@ -316,7 +328,7 @@ class TestWALEntry:
     def test_entry_fields(self) -> None:
         """Entry has expected fields."""
         entry = WAL.Entry(
-            request_id="RQ001",
+            request_id=tc.Tracking.SAMPLE_REQUEST_ID_1,
             timestamp=datetime.now(UTC),
             request_json='{"action": 1}',
             status=WAL.Status.PENDING,
@@ -324,7 +336,7 @@ class TestWALEntry:
             error=None,
         )
 
-        assert entry.request_id == "RQ001"
+        assert entry.request_id == tc.Tracking.SAMPLE_REQUEST_ID_1
         assert entry.request_json == '{"action": 1}'
         assert entry.status == WAL.Status.PENDING
         assert entry.result_json is None

@@ -122,7 +122,7 @@ docker compose down -v
 
 Volumes are automatically named based on container name:
 
-```
+```bash
 ${MT5_CONTAINER_NAME}_settings
 ${MT5_CONTAINER_NAME}_downloads
 ${MT5_CONTAINER_NAME}_cache

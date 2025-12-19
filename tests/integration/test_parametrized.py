@@ -17,10 +17,11 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from mt5linux.constants import MT5Constants as c
-from tests.conftest import tc
+from tests.constants import TestConstants as tc
 
 if TYPE_CHECKING:
     from mt5linux.client import MetaTrader5
+
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -521,7 +522,11 @@ class TestCombinedCoverage:
 class TestHypothesisProperties:
     """Property-based tests using Hypothesis."""
 
-    @given(count=st.integers(min_value=1, max_value=tc.HUNDRED_ITEMS))
+    @given(
+        count=st.integers(
+            min_value=tc.Generators.DEVIATION_MIN, max_value=tc.HUNDRED_ITEMS
+        )
+    )
     @settings(
         max_examples=10,
         deadline=None,  # RPyC operations can be slow
@@ -536,7 +541,11 @@ class TestHypothesisProperties:
         if rates is not None:
             assert len(rates) <= count
 
-    @given(days_back=st.integers(min_value=1, max_value=tc.ONE_MONTH))
+    @given(
+        days_back=st.integers(
+            min_value=tc.Generators.DEVIATION_MIN, max_value=tc.ONE_MONTH
+        )
+    )
     @settings(
         max_examples=5,
         deadline=None,  # RPyC operations can be slow
@@ -557,8 +566,8 @@ class TestHypothesisProperties:
             assert first_time >= date_from - timedelta(days=1)  # Allow 1 day tolerance
 
     @given(
-        volume=st.floats(min_value=0.01, max_value=1.0),
-        deviation=st.integers(min_value=1, max_value=50),
+        volume=st.floats(min_value=tc.Generators.VOLUME_MIN, max_value=1.0),
+        deviation=st.integers(min_value=tc.Generators.DEVIATION_MIN, max_value=50),
     )
     @settings(
         max_examples=5,

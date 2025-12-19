@@ -626,6 +626,79 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             msg = f"Circuit breaker OPEN for {operation} ({cb.failure_count} failures)"
             raise ConnectionError(msg)
 
+    async def _ensure_terminal_connected_for_operation(self, operation: str) -> None:
+        """Ensure terminal_info().connected == True before login-dependent operations.
+
+        Operations like symbol_info, order_check, order_send require a valid broker
+        connection. This method waits for the terminal to be connected, retrying
+        gRPC reconnection and terminal reinitialization as needed.
+
+        Excluded operations (don't require terminal connection):
+        - initialize: This IS the connection operation
+        - shutdown: Disconnecting doesn't need connection
+
+        Args:
+            operation: Name of operation for logging.
+
+        Raises:
+            ConnectionError: If terminal cannot be connected after max retries.
+
+        """
+        # Operations that don't require terminal connection
+        excluded_ops = {"initialize", "shutdown"}
+        if operation in excluded_ops:
+            return  # Skip check for these operations
+
+        max_attempts = self._settings.retry_max_attempts
+        for attempt in range(max_attempts):
+            try:
+                # terminal_info uses partial resilience (no CB, no reinit)
+                info = await self.terminal_info()
+                if info is not None and info.connected:
+                    return  # Terminal connected, proceed with operation
+
+                # Not connected - try to reconnect
+                log.info(
+                    "%s: Terminal not connected (attempt %d/%d), reconnecting...",
+                    operation,
+                    attempt + 1,
+                    max_attempts,
+                )
+
+                # First: reconnect gRPC
+                try:
+                    await self._reconnect_with_backoff()
+                except Exception as grpc_error:  # noqa: BLE001
+                    log.warning("gRPC reconnection failed: %s", grpc_error)
+
+                # Second: reinitialize terminal if we have credentials
+                if self._init_credentials and self._settings.enable_auto_reconnect:
+                    try:
+                        await self._reinitialize_terminal()
+                    except Exception as reinit_error:  # noqa: BLE001
+                        log.warning("Terminal reinitialize failed: %s", reinit_error)
+
+                # Wait before next attempt (exponential backoff)
+                if attempt < max_attempts - 1:
+                    delay = self._settings.calculate_retry_delay(attempt)
+                    await asyncio.sleep(delay)
+
+            except Exception as e:  # noqa: BLE001
+                log.warning(
+                    "%s: Error checking terminal connection (attempt %d/%d): %s",
+                    operation,
+                    attempt + 1,
+                    max_attempts,
+                    e,
+                )
+                if attempt < max_attempts - 1:
+                    delay = self._settings.calculate_retry_delay(attempt)
+                    await asyncio.sleep(delay)
+
+        # All attempts exhausted - raise error
+        msg = f"{operation}: Terminal not connected after {max_attempts} attempts"
+        raise ConnectionError(msg)
+
     async def _quick_health_check(self, timeout: float = 2.0) -> bool:
         """Quick health check to verify MT5 is reachable.
 
@@ -681,29 +754,15 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         # 1. Check if circuit allows execution BEFORE retry loop
         self._check_circuit_breaker(operation)
 
-        # 2. Define before_retry callback for gRPC reconnection + terminal reinit
-        # Ensures terminal_info().connected == True before operations that need login
+        # 2. Ensure terminal connected BEFORE executing operation
+        # Operations requiring login MUST have terminal_info().connected == True
+        await self._ensure_terminal_connected_for_operation(operation)
+
+        # 3. Define before_retry callback for gRPC reconnection + terminal reinit
         async def _before_retry() -> None:
-            # First: always try to reconnect gRPC
-            try:
-                await self._reconnect_with_backoff()
-            except Exception as reconnect_error:  # noqa: BLE001
-                log.warning("gRPC reconnection failed: %s", reconnect_error)
-                # Don't return - try terminal_info anyway
+            await self._ensure_terminal_connected_for_operation(operation)
 
-            # Second: check terminal connection and reinitialize if needed
-            # terminal_info() uses partial resilience (no CB, no reinit)
-            if self._init_credentials and self._settings.enable_auto_reconnect:
-                try:
-                    info = await self.terminal_info()
-                    # If None or not connected, reinitialize
-                    if info is None or not info.connected:
-                        log.info("Terminal not connected, reinitializing...")
-                        await self._reinitialize_terminal()
-                except Exception as reinit_error:  # noqa: BLE001
-                    log.warning("Terminal reinitialize failed: %s", reinit_error)
-
-        # 3. Delegate to unified retry implementation with CB hooks
+        # 4. Delegate to unified retry implementation with CB hooks
         return await u.RetryStrategy.async_retry_with_backoff(
             call_factory,
             _settings,

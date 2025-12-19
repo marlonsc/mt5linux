@@ -20,6 +20,7 @@ from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.client import MetaTrader5
 from mt5linux.protocols import AsyncMT5Protocol
 from mt5linux.utilities import MT5Utilities as u
+from tests.constants import TestConstants as tc
 
 
 class TestOrderSendAsyncSignature:
@@ -93,7 +94,7 @@ class TestRequestIdGeneration:
         tracker = u.TransactionHandler.RequestTracker
         request_id = tracker.generate_request_id()
         assert request_id.startswith("RQ")
-        assert len(request_id) == 18  # RQ + 16 hex
+        assert len(request_id) == tc.Tracking.REQUEST_ID_LENGTH  # RQ + 16 hex
 
     def test_request_ids_are_unique(self) -> None:
         """Generated request IDs are unique."""

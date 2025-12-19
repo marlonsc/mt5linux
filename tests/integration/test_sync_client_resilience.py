@@ -159,7 +159,6 @@ class TestAutoReconnect:
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()
 
-
         result = mt5.initialize(
             login=MT5_LOGIN,
             password=MT5_PASSWORD,
@@ -207,7 +206,6 @@ class TestAutoReconnect:
         """Should handle multiple connect/disconnect cycles."""
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
 
-
         for cycle in range(3):
             # Connect
             mt5.connect()
@@ -236,7 +234,6 @@ class TestConnectionRecovery:
         """All operations should work after reconnect."""
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()
-
 
         mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
@@ -271,7 +268,6 @@ class TestConnectionRecovery:
         """Each sync operation should properly manage event loop."""
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()
-
 
         mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 
@@ -344,7 +340,6 @@ class TestResilienceInheritance:
         """Verify operations go through _resilient_call."""
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()
-
 
         mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
 

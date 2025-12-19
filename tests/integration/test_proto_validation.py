@@ -16,6 +16,7 @@ import math
 import pytest
 
 from mt5linux import mt5_pb2, mt5_pb2_grpc
+from tests.constants import TestConstants as tc
 
 
 class TestProtoIntrospectionMessages:
@@ -234,7 +235,7 @@ class TestProtoRequestMessages:
         """PositionsRequest message must exist."""
         request = mt5_pb2.PositionsRequest(
             symbol="EURUSD",
-            ticket=12345,
+            ticket=tc.TestSamples.SAMPLE_ORDER_TICKET,
         )
         assert request.symbol == "EURUSD"
         assert request.ticket == 12345
@@ -244,7 +245,7 @@ class TestProtoRequestMessages:
         request = mt5_pb2.HistoryRequest(
             date_from=1702000000,
             date_to=1702100000,
-            ticket=12345,
+            ticket=tc.TestSamples.SAMPLE_ORDER_TICKET,
         )
         assert request.date_from == 1702000000
         assert request.date_to == 1702100000

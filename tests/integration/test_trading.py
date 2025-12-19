@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from mt5linux.constants import MT5Constants as c
-from tests.conftest import tc
+from tests.constants import TestConstants as tc
 
 if TYPE_CHECKING:
     from mt5linux.client import MetaTrader5

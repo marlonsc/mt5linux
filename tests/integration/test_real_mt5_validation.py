@@ -1,4 +1,3 @@
-
 """Real MT5 module validation tests.
 
 These tests validate our protocols and models against the ACTUAL MetaTrader5

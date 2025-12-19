@@ -11,8 +11,9 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from mt5linux.constants import MT5Constants as c
 from mt5linux.models import MT5Models
-from tests.conftest import c, tc
+from tests.constants import TestConstants as tc
 
 
 class TestOrderRequest:
@@ -104,7 +105,7 @@ class TestOrderRequest:
             symbol="EURUSD",
             volume=tc.TEST_VOLUME_MICRO,
             type=c.Order.OrderType.BUY,
-            sl=1.0900,
+            sl=tc.TestSamples.STOP_LOSS_PRICE,
             tp=tc.TEST_PRICE_HIGH,
         )
         d = request.to_mt5_request()

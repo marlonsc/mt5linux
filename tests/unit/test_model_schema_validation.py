@@ -22,6 +22,7 @@ from pydantic import BaseModel, ValidationError
 
 from mt5linux.constants import MT5Constants as c
 from mt5linux.models import MT5Models
+from tests.constants import TestConstants as tc
 
 if TYPE_CHECKING:
     from mt5linux.client import MetaTrader5
@@ -291,7 +292,7 @@ class TestFrozenModels:
 
     def test_position_is_frozen(self) -> None:
         """Position should be immutable."""
-        pos = MT5Models.Position(ticket=12345)
+        pos = MT5Models.Position(ticket=tc.TestSamples.SAMPLE_ORDER_TICKET)
         with pytest.raises(ValidationError):
             pos.ticket = 99999
 
@@ -303,13 +304,13 @@ class TestFrozenModels:
 
     def test_order_is_frozen(self) -> None:
         """Order should be immutable."""
-        order = MT5Models.Order(ticket=12345)
+        order = MT5Models.Order(ticket=tc.TestSamples.SAMPLE_ORDER_TICKET)
         with pytest.raises(ValidationError):
             order.ticket = 99999
 
     def test_deal_is_frozen(self) -> None:
         """Deal should be immutable."""
-        deal = MT5Models.Deal(ticket=12345)
+        deal = MT5Models.Deal(ticket=tc.TestSamples.SAMPLE_ORDER_TICKET)
         with pytest.raises(ValidationError):
             deal.ticket = 99999
 
@@ -465,8 +466,8 @@ class TestOrderRequestValidation:
             volume=0.1,
             type=c.Order.OrderType.BUY,
             price=1.1000,
-            sl=1.0900,
-            tp=1.1100,
+            sl=tc.TestSamples.STOP_LOSS_PRICE,
+            tp=tc.TestSamples.TAKE_PROFIT_PRICE,
             comment="Test order",
         )
         assert order.symbol == "EURUSD"
@@ -522,8 +523,8 @@ class TestOrderRequestExport:
             symbol="EURUSD",
             volume=0.1,
             type=c.Order.OrderType.BUY,
-            sl=1.0900,
-            tp=1.1100,
+            sl=tc.TestSamples.STOP_LOSS_PRICE,
+            tp=tc.TestSamples.TAKE_PROFIT_PRICE,
         )
         exported = order.to_mt5_request()
 

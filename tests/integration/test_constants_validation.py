@@ -6,6 +6,7 @@ MetaTrader5 library values.
 
 REQUIRES: Docker test container running (use conftest.py fixtures)
 """
+
 from __future__ import annotations
 
 import socket

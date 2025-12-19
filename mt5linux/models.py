@@ -18,8 +18,8 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
+from datetime import datetime  # noqa: TC003 - Pydantic needs datetime at runtime
+from typing import Protocol, Self, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
