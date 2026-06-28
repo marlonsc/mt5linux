@@ -176,16 +176,16 @@ class TestVerifyRequiredEnumValue:
 
     def test_verify_required_value(self) -> None:
         """VERIFY_REQUIRED should have value 3."""
-        assert c.Resilience.ErrorClassification.VERIFY_REQUIRED == 3
+        assert c.Resilience.ErrorClassification.VERIFY_REQUIRED.value == 3
 
     def test_verify_required_between_retryable_and_conditional(self) -> None:
         """VERIFY_REQUIRED should be after RETRYABLE, before CONDITIONAL.
 
         This ordering is important for classification logic.
         """
-        assert c.Resilience.ErrorClassification.RETRYABLE == 2
-        assert c.Resilience.ErrorClassification.VERIFY_REQUIRED == 3
-        assert c.Resilience.ErrorClassification.CONDITIONAL == 4
+        assert c.Resilience.ErrorClassification.RETRYABLE.value == 2
+        assert c.Resilience.ErrorClassification.VERIFY_REQUIRED.value == 3
+        assert c.Resilience.ErrorClassification.CONDITIONAL.value == 4
 
 
 class TestShouldVerifyForVerifyRequired:
@@ -669,9 +669,13 @@ class TestCircuitBreakerThreadSafety:
         config = MT5Settings(cb_threshold=100, cb_recovery=30.0)
         cb = u.CircuitBreaker(config=config, name="test")
 
+        def record_failures() -> None:
+            for _ in range(5):
+                cb.record_failure()
+
         threads = []
         for _ in range(10):
-            t = threading.Thread(target=lambda: [cb.record_failure() for _ in range(5)])
+            t = threading.Thread(target=record_failures)
             threads.append(t)
 
         for t in threads:

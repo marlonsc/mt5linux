@@ -37,7 +37,7 @@ import signal
 import sys
 import threading
 from concurrent import futures
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import grpc
 import MetaTrader5  # pyright: ignore[reportMissingImports]
@@ -46,7 +46,7 @@ import orjson
 from . import mt5_pb2, mt5_pb2_grpc
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from datetime import datetime
     from types import FrameType, ModuleType
 
@@ -963,7 +963,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             return mt5_pb2.SymbolsResponse(total=0, chunks=[])
 
         # MT5 API returns tuple of SymbolInfo namedtuples
-        items = list(result)
+        items = list(cast("Iterable[object]", result))
         total = len(items)
         log.debug("SymbolsGet: total=%s symbols", total)
 
@@ -1096,11 +1096,12 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.date_from,
             request.count,
         )
+        array_result = cast("NDArray[np.void] | None", result)
         log.debug(
             "CopyRatesFrom: returned %s bars",
-            len(result) if result is not None else 0,
+            len(array_result) if array_result is not None else 0,
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(array_result)
 
     def CopyRatesFromPos(
         self,
@@ -1135,11 +1136,12 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.start_pos,
             request.count,
         )
+        array_result = cast("NDArray[np.void] | None", result)
         log.debug(
             "CopyRatesFromPos: returned %s bars",
-            len(result) if result is not None else 0,
+            len(array_result) if array_result is not None else 0,
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(array_result)
 
     def CopyRatesRange(
         self,
@@ -1178,11 +1180,12 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.date_from,
             request.date_to,
         )
+        array_result = cast("NDArray[np.void] | None", result)
         log.debug(
             "CopyRatesRange: returned %s bars",
-            len(result) if result is not None else 0,
+            len(array_result) if array_result is not None else 0,
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(array_result)
 
     # =========================================================================
     # MARKET DATA - TICKS
@@ -1221,11 +1224,12 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.count,
             request.flags,
         )
+        array_result = cast("NDArray[np.void] | None", result)
         log.debug(
             "CopyTicksFrom: returned %s ticks",
-            len(result) if result is not None else 0,
+            len(array_result) if array_result is not None else 0,
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(array_result)
 
     def CopyTicksRange(
         self,
@@ -1264,11 +1268,12 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.date_to,
             request.flags,
         )
+        array_result = cast("NDArray[np.void] | None", result)
         log.debug(
             "CopyTicksRange: returned %s ticks",
-            len(result) if result is not None else 0,
+            len(array_result) if array_result is not None else 0,
         )
-        return self._numpy_to_proto(result)
+        return self._numpy_to_proto(array_result)
 
     # =========================================================================
     # TRADING OPERATIONS
@@ -1839,7 +1844,11 @@ def serve(
     global _server
 
     _server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
-    mt5_pb2_grpc.add_MT5ServiceServicer_to_server(MT5GRPCServicer(), _server)
+    register_servicer = cast(
+        "Callable[[MT5GRPCServicer, grpc.Server], None]",
+        mt5_pb2_grpc.add_MT5ServiceServicer_to_server,
+    )
+    register_servicer(MT5GRPCServicer(), _server)
     server_address = f"{host}:{port}"
     _server.add_insecure_port(server_address)
 

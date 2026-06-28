@@ -328,6 +328,13 @@ class TestMetaTrader5Login:
         result = mt5_raw.login(tc.MT5.INVALID_LOGIN, "wrong_password", "InvalidServer")
         assert result is False
 
+        # Restore valid credentials to not pollute subsequent tests
+        login = int(os.getenv("MT5_LOGIN", "0"))
+        password = os.getenv("MT5_PASSWORD", "")
+        server = os.getenv("MT5_SERVER", "")
+        if all([login, password, server]):
+            mt5_raw.login(login, password, server)
+
     @pytest.mark.integration
     def test_login_after_initialize(self, mt5: MetaTrader5) -> None:
         """Test that login works after initialize."""

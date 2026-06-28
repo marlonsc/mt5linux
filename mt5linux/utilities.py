@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, NoReturn, Protocol, cast, runtime_checkable
 
 import aiosqlite
 import numpy as np
@@ -55,7 +55,7 @@ import orjson
 from mt5linux.constants import MT5Constants as c
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Awaitable, Callable, Coroutine, Sequence
 
     from numpy.typing import NDArray
 
@@ -79,6 +79,13 @@ class _SymbolsResponseProto(Protocol):
 
     total: int
     chunks: Sequence[bytes]
+
+
+class _CircuitBreakerRecorder(Protocol):
+    """Circuit-breaker behavior needed by transaction helpers."""
+
+    def record_success(self) -> None:
+        """Record a successful operation."""
 
 
 log = logging.getLogger(__name__)
@@ -443,7 +450,10 @@ class MT5Utilities:
             """
             if not json_data:
                 return None
-            return orjson.loads(json_data)
+            parsed = orjson.loads(json_data)
+            if not isinstance(parsed, dict):
+                return None
+            return cast("dict[str, object]", parsed)
 
         @staticmethod
         def unwrap_proto_list_to_dicts(
@@ -1067,7 +1077,7 @@ class MT5Utilities:
 
         @staticmethod
         async def execute_with_timeout_and_cancel(
-            coro: Awaitable[T],
+            coro: Coroutine[object, object, T],
             timeout: float,  # noqa: ASYNC109
             operation_name: str,
         ) -> tuple[T | None, bool]:
@@ -1120,14 +1130,14 @@ class MT5Utilities:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
-            else:
-                return result, False
                 log.debug(
                     "%s cancelled after %.1fs timeout",
                     operation_name,
                     timeout,
                 )
                 return None, True
+            else:
+                return result, False
 
     # =========================================================================
     # CIRCUIT BREAKER
@@ -1582,7 +1592,7 @@ class MT5Utilities:
 
         @staticmethod
         def handle_success(
-            cb: object,
+            cb: _CircuitBreakerRecorder,
             result: object,
             outcome: c.Resilience.TransactionOutcome,
         ) -> None:
@@ -2101,7 +2111,7 @@ class MT5Utilities:
             if coalesce_key and coalesce_key in self._coalesce:
                 existing_future = self._coalesce[coalesce_key]
                 log.debug("Request coalesced: %s", coalesce_key)
-                return await existing_future
+                return cast("T", await existing_future)
 
             loop = asyncio.get_running_loop()
             future: asyncio.Future[object] = loop.create_future()
@@ -2126,7 +2136,7 @@ class MT5Utilities:
                 raise MT5Utilities.Exceptions.QueueFullError(msg) from None
 
             try:
-                return await future
+                return cast("T", await future)
             finally:
                 if coalesce_key:
                     self._coalesce.pop(coalesce_key, None)

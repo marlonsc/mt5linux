@@ -438,7 +438,9 @@ class TestRealVsProtocolConsistency:
         methods = _get_methods_safe(mt5)
         if methods is None:
             pytest.fail("SKIP_UNIMPLEMENTED")
-        real_public = {m["name"] for m in methods if m["name"] in MT5_PUBLIC_METHODS}
+        real_public: set[str] = {
+            str(m["name"]) for m in methods if m["name"] in MT5_PUBLIC_METHODS
+        }
 
         protocol_methods = {
             m
@@ -459,17 +461,19 @@ class TestRealVsProtocolConsistency:
         methods = _get_methods_safe(mt5)
         if methods is None:
             pytest.fail("SKIP_UNIMPLEMENTED")
-        real_public = {m["name"] for m in methods if m["name"] in MT5_PUBLIC_METHODS}
+        real_public: set[str] = {
+            str(m["name"]) for m in methods if m["name"] in MT5_PUBLIC_METHODS
+        }
 
-        protocol_methods = {
+        protocol_methods: set[str] = {
             m
             for m in dir(MT5Protocol)
             if not m.startswith("_") and callable(getattr(MT5Protocol, m))
         }
 
         # Sets should be equal
-        only_in_protocol = protocol_methods - real_public
-        only_in_real = real_public - protocol_methods
+        only_in_protocol: set[str] = protocol_methods - real_public
+        only_in_real: set[str] = real_public - protocol_methods
 
         assert not only_in_protocol, (
             f"Methods only in protocol: {sorted(only_in_protocol)}"

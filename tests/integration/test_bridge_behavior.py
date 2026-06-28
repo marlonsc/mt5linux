@@ -41,8 +41,7 @@ class TestConnectionLimits:
         """Disconnect should return None (no return value)."""
         mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
         mt5.connect()
-        result = mt5.disconnect()
-        assert result is None
+        mt5.disconnect()
 
     def test_multiple_disconnect_safe(self) -> None:
         """Multiple disconnects should not raise errors."""

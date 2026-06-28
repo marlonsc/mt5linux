@@ -15,6 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
 import pytest
 
@@ -38,7 +42,7 @@ def config() -> MT5Settings:
 
 
 @pytest.fixture
-async def queue(config: MT5Settings) -> RequestQueue:
+async def queue(config: MT5Settings) -> AsyncGenerator[RequestQueue]:
     """Return started request queue for tests."""
     q = RequestQueue(config)
     await q.start()
@@ -528,9 +532,15 @@ class TestRequestQueueGracefulShutdown:
             completed.append(idx)
             return idx
 
+        def make_slow_call(idx: int) -> Callable[[], Awaitable[int]]:
+            async def call() -> int:
+                return await slow(idx)
+
+            return call
+
         # Start several tasks
         tasks = [
-            asyncio.create_task(queue.submit("test", lambda i=i: slow(i)))
+            asyncio.create_task(queue.submit("test", make_slow_call(i)))
             for i in range(3)
         ]
 

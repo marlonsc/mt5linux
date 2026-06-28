@@ -16,6 +16,10 @@ import asyncio
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 import pytest
 
@@ -25,6 +29,14 @@ from tests.constants import TestConstants as tc
 
 # Aliases for convenience
 WAL = u.WAL
+
+
+def _unlink_path(path: str) -> None:
+    Path(path).unlink(missing_ok=True)
+
+
+def _path_exists(path: str) -> bool:
+    return Path(path).exists()
 
 
 @pytest.fixture
@@ -41,14 +53,14 @@ def config(temp_db_path: str) -> MT5Settings:
 
 
 @pytest.fixture
-async def wal(config: MT5Settings) -> WAL:
+async def wal(config: MT5Settings) -> AsyncGenerator[WAL]:
     """Return initialized WAL for tests."""
     w = WAL(config)
     await w.initialize()
     yield w
     await w.close()
     # Cleanup temp file
-    Path(config.wal_path).unlink(missing_ok=True)
+    await asyncio.to_thread(_unlink_path, config.wal_path)
 
 
 class TestWALLifecycle:
@@ -60,7 +72,7 @@ class TestWALLifecycle:
         await wal.initialize()
 
         # Database file should exist
-        assert Path(config.wal_path).exists()
+        assert await asyncio.to_thread(_path_exists, config.wal_path)
 
         # Should be idempotent
         await wal.initialize()
@@ -308,11 +320,11 @@ class TestWALStatusEnum:
 
     def test_status_values(self) -> None:
         """Status enum has expected integer values."""
-        assert WAL.Status.PENDING == 0
-        assert WAL.Status.SENT == 1
-        assert WAL.Status.VERIFIED == 2
-        assert WAL.Status.FAILED == 3
-        assert WAL.Status.RECOVERED == 4
+        assert WAL.Status.PENDING.value == 0
+        assert WAL.Status.SENT.value == 1
+        assert WAL.Status.VERIFIED.value == 2
+        assert WAL.Status.FAILED.value == 3
+        assert WAL.Status.RECOVERED.value == 4
 
     def test_status_ordering(self) -> None:
         """Status enum values are ordered logically."""

@@ -21,7 +21,7 @@ from __future__ import annotations
 from datetime import datetime  # noqa: TC003 - Pydantic needs datetime at runtime
 from typing import Protocol, Self, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field
 
 from mt5linux.constants import MT5Constants as c
 from mt5linux.settings import MT5Settings
@@ -116,7 +116,6 @@ class MT5Models:
         position: int = Field(ge=0, default=0)
         position_by: int = Field(ge=0, default=0)
 
-        @computed_field
         @property
         def is_market_order(self) -> bool:
             """Check if this is a market order."""
@@ -179,13 +178,11 @@ class MT5Models:
         request_id: int = 0
         retcode_external: int = 0
 
-        @computed_field
         @property
         def is_success(self) -> bool:
             """Check if order was successful."""
             return self.retcode == c.Order.TradeRetcode.DONE
 
-        @computed_field
         @property
         def is_partial(self) -> bool:
             """Check if order was partially filled."""
@@ -234,7 +231,6 @@ class MT5Models:
         margin_level: float = 0.0
         comment: str = ""
 
-        @computed_field
         @property
         def is_valid(self) -> bool:
             """Check if order check passed validation."""

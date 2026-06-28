@@ -37,7 +37,7 @@ import logging
 # pylint: disable=no-member  # Protobuf generated code has dynamic members
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, cast
 
 import grpc
 import grpc.aio
@@ -75,6 +75,15 @@ _CHANNEL_OPTIONS = _settings.get_grpc_channel_options()
 
 # Type alias for convenience (single source of truth)
 JSONValue = t.JSONValue
+
+
+def _make_stub(channel: grpc.aio.Channel) -> mt5_pb2_grpc.MT5ServiceStub:
+    """Create a typed async MT5 service stub from generated gRPC code."""
+    stub_factory = cast(
+        "Callable[[grpc.aio.Channel], mt5_pb2_grpc.MT5ServiceStub]",
+        mt5_pb2_grpc.MT5ServiceStub,
+    )
+    return stub_factory(channel)
 
 
 class AsyncMetaTrader5(AsyncMT5Protocol):
@@ -214,7 +223,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             log.debug("Connecting to gRPC server at %s", target)
 
             self._channel = grpc.aio.insecure_channel(target, options=_CHANNEL_OPTIONS)
-            self._stub = mt5_pb2_grpc.MT5ServiceStub(self._channel)
+            self._stub = _make_stub(self._channel)
 
             # Load constants from server
             await self._load_constants()
@@ -415,7 +424,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             # Create new connection
             target = f"{self._host}:{self._port}"
             self._channel = grpc.aio.insecure_channel(target, options=_CHANNEL_OPTIONS)
-            self._stub = mt5_pb2_grpc.MT5ServiceStub(self._channel)
+            self._stub = _make_stub(self._channel)
 
             # Test connection with health check
             await self._stub.HealthCheck(mt5_pb2.Empty(), timeout=5.0)
@@ -474,16 +483,21 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             stub = self._ensure_connected()
             creds = self._init_credentials
             request = mt5_pb2.InitRequest(portable=bool(creds.get("portable", False)))
-            if creds.get("path") is not None:
-                request.path = str(creds["path"])
-            if creds.get("login") is not None:
-                request.login = int(creds["login"])
-            if creds.get("password") is not None:
-                request.password = str(creds["password"])
-            if creds.get("server") is not None:
-                request.server = str(creds["server"])
-            if creds.get("timeout") is not None:
-                request.timeout = int(creds["timeout"])
+            path = creds.get("path")
+            login = creds.get("login")
+            password = creds.get("password")
+            server = creds.get("server")
+            timeout = creds.get("timeout")
+            if path is not None:
+                request.path = str(path)
+            if login is not None:
+                request.login = int(login)
+            if password is not None:
+                request.password = str(password)
+            if server is not None:
+                request.server = str(server)
+            if timeout is not None:
+                request.timeout = int(timeout)
             response = await stub.Initialize(request, timeout=self._timeout)
         except (grpc.aio.AioRpcError, ConnectionError) as e:
             log.warning("Re-initialization failed: %s", e)
@@ -645,7 +659,11 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         """
         # Operations that don't require terminal connection
-        excluded_ops = {"initialize", "shutdown"}
+        # - initialize/login: These establish the connection
+        # - shutdown: Disconnecting doesn't need connection
+        # - terminal_info: Used BY this check (avoid infinite recursion)
+        # - version: Basic info, doesn't need broker connection
+        excluded_ops = {"initialize", "login", "shutdown", "terminal_info", "version"}
         if operation in excluded_ops:
             return  # Skip check for these operations
 
@@ -866,6 +884,14 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             True if login successful, False otherwise.
 
         """
+        # Quick health check before login to ensure gRPC is responsive
+        # This is faster than full terminal_info check and recovers connection if needed
+        if not await self._quick_health_check(timeout=5.0):
+            log.info("login: gRPC not responsive, attempting reconnection...")
+            try:
+                await self._reconnect_with_backoff()
+            except Exception as e:  # noqa: BLE001
+                log.warning("login: Reconnection failed: %s", e)
 
         async def _call() -> bool:
             stub = self._ensure_connected()
@@ -1443,10 +1469,11 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         # Generate request_id BEFORE enqueuing
         prepared_request, request_id = th.prepare_request(dict(request), "order_send")
+        typed_request = cast("dict[str, JSONValue]", prepared_request)
 
         async def _execute_with_callback() -> MT5Models.OrderResult | None:
             try:
-                result = await self._safe_order_send(prepared_request)
+                result = await self._safe_order_send(typed_request)
                 if on_complete and result is not None:
                     try:
                         on_complete(result)
@@ -1522,16 +1549,18 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         pending: dict[str, asyncio.Future[MT5Models.OrderResult | Exception]] = {}
 
         # Prepare all requests with unique IDs
-        prepared_requests: list[tuple[dict[str, object], str]] = []
+        prepared_requests: list[tuple[dict[str, JSONValue], str]] = []
         for req in requests:
-            prepared_req, request_id = th.prepare_request(dict(req), "order_send")
+            prepared_obj, request_id = th.prepare_request(dict(req), "order_send")
             request_ids.append(request_id)
-            prepared_requests.append((prepared_req, request_id))
+            prepared_requests.append(
+                (cast("dict[str, JSONValue]", prepared_obj), request_id)
+            )
 
             loop = asyncio.get_running_loop()
             pending[request_id] = loop.create_future()
 
-        async def _execute_one(req: dict[str, object], rid: str) -> None:
+        async def _execute_one(req: dict[str, JSONValue], rid: str) -> None:
             try:
                 result = await self._safe_order_send(req)
                 if result is not None:
@@ -1558,15 +1587,21 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                     except Exception:
                         log.exception("order_send_batch on_each_error failed")
 
+        def make_execute_call(
+            req: dict[str, JSONValue], rid: str
+        ) -> Callable[[], Awaitable[None]]:
+            async def call() -> None:
+                await _execute_one(req, rid)
+
+            return call
+
         # Fire all orders in parallel (store task refs to prevent GC)
         for prepared_req, request_id in prepared_requests:
             if self._queue and self._queue.is_running:
                 task = asyncio.create_task(
                     self._queue.submit(
                         operation="order_send",
-                        coro_factory=lambda r=prepared_req, rid=request_id: (
-                            _execute_one(r, rid)
-                        ),
+                        coro_factory=make_execute_call(prepared_req, request_id),
                         coalesce_key=None,
                     )
                 )
@@ -1624,10 +1659,23 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             MaxRetriesError: After exhausting retries.
 
         """
+
         # Create dependencies for the orchestrator
+        async def execute_grpc(
+            grpc_request: dict[str, object], attempt: int
+        ) -> object | None:
+            return await self._execute_order_grpc(
+                cast("dict[str, JSONValue]", grpc_request), attempt
+            )
+
+        async def verify_state(result: object, request_id: str | None) -> object | None:
+            if not isinstance(result, MT5Models.OrderResult):
+                return None
+            return await self._verify_order_state(result, request_id)
+
         deps = u.TransactionOrchestrator.Dependencies(
-            execute_grpc=self._execute_order_grpc,
-            verify_state=self._verify_order_state,
+            execute_grpc=execute_grpc,
+            verify_state=verify_state,
             health_check=self._quick_health_check,
             check_circuit_breaker=(
                 self._check_circuit_breaker if self._circuit_breaker else None
@@ -1649,7 +1697,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         result = await orchestrator.execute(dict(request))
 
         # Cast result to expected type (orchestrator returns generic object)
-        if result is not None:
+        if isinstance(result, MT5Models.OrderResult):
             return result
         return None
 

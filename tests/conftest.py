@@ -22,10 +22,10 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Generator
+    from collections.abc import AsyncGenerator, Callable, Generator
 
 import grpc
 import pytest
@@ -217,7 +217,11 @@ def is_grpc_service_ready(
     _log(f"gRPC check: {host}:{grpc_port} (timeout={timeout:.1f}s)...")
     try:
         channel = grpc.insecure_channel(f"{host}:{grpc_port}")
-        stub = mt5_pb2_grpc.MT5ServiceStub(channel)
+        stub_factory = cast(
+            "Callable[[grpc.Channel], mt5_pb2_grpc.MT5ServiceStub]",
+            mt5_pb2_grpc.MT5ServiceStub,
+        )
+        stub = stub_factory(channel)
         # Use GetConstants instead of HealthCheck - more reliable indicator
         # that MT5 is actually ready to handle requests
         response = stub.GetConstants(mt5_pb2.Empty(), timeout=timeout)

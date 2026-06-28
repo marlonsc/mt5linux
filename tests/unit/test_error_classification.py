@@ -243,13 +243,13 @@ class TestErrorClassificationEnum:
 
     def test_enum_values(self) -> None:
         """Verify enum values are correctly defined."""
-        assert c.Resilience.ErrorClassification.SUCCESS == 0
-        assert c.Resilience.ErrorClassification.PARTIAL == 1
-        assert c.Resilience.ErrorClassification.RETRYABLE == 2
-        assert c.Resilience.ErrorClassification.VERIFY_REQUIRED == 3
-        assert c.Resilience.ErrorClassification.CONDITIONAL == 4
-        assert c.Resilience.ErrorClassification.PERMANENT == 5
-        assert c.Resilience.ErrorClassification.UNKNOWN == 6
+        assert c.Resilience.ErrorClassification.SUCCESS.value == 0
+        assert c.Resilience.ErrorClassification.PARTIAL.value == 1
+        assert c.Resilience.ErrorClassification.RETRYABLE.value == 2
+        assert c.Resilience.ErrorClassification.VERIFY_REQUIRED.value == 3
+        assert c.Resilience.ErrorClassification.CONDITIONAL.value == 4
+        assert c.Resilience.ErrorClassification.PERMANENT.value == 5
+        assert c.Resilience.ErrorClassification.UNKNOWN.value == 6
 
     def test_enum_has_all_members(self) -> None:
         """Verify enum has all expected members."""
@@ -271,10 +271,10 @@ class TestOperationCriticalityEnum:
 
     def test_enum_values(self) -> None:
         """Verify enum values are correctly defined."""
-        assert c.Resilience.OperationCriticality.LOW == 0
-        assert c.Resilience.OperationCriticality.NORMAL == 1
-        assert c.Resilience.OperationCriticality.HIGH == 2
-        assert c.Resilience.OperationCriticality.CRITICAL == 3
+        assert c.Resilience.OperationCriticality.LOW.value == 0
+        assert c.Resilience.OperationCriticality.NORMAL.value == 1
+        assert c.Resilience.OperationCriticality.HIGH.value == 2
+        assert c.Resilience.OperationCriticality.CRITICAL.value == 3
 
     def test_enum_has_all_members(self) -> None:
         """Verify enum has all expected members."""
@@ -288,7 +288,7 @@ class TestRetcodeSetsCompleteness:
 
     def test_all_trade_retcodes_are_classified(self) -> None:
         """Every TradeRetcode should fall into exactly one classification set."""
-        all_codes = set()
+        all_codes: set[int] = set()
         all_codes.update(c.Resilience.MT5_SUCCESS_CODES)
         all_codes.update(c.Resilience.MT5_PARTIAL_CODES)
         all_codes.update(c.Resilience.MT5_VERIFY_REQUIRED_CODES)

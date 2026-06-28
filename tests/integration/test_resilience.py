@@ -158,12 +158,12 @@ class TestCircuitBreaker:
 
         time.sleep(tc.Timing.SLEEP_BRIEF)
         # State changes after timeout - mypy doesn't track time-based transitions
-        assert cb.state == c.Resilience.CircuitBreakerState.HALF_OPEN
+        assert cb.state.value == c.Resilience.CircuitBreakerState.HALF_OPEN.value
 
         # Failure should reopen
         cb.record_failure()
         # State changes after failure in HALF_OPEN
-        assert cb.state == c.Resilience.CircuitBreakerState.OPEN
+        assert cb.state.value == c.Resilience.CircuitBreakerState.OPEN.value
 
     def test_reset_returns_to_closed(self, config: MT5Settings) -> None:
         """Reset returns circuit to CLOSED state."""

@@ -14,6 +14,10 @@ Test Categories:
 from __future__ import annotations
 
 from contextlib import suppress
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 import grpc
 import grpc.aio
@@ -154,7 +158,7 @@ class TestAutoReconnect:
     """Test auto-reconnect behavior."""
 
     @pytest.fixture
-    def mt5_connected(self) -> MetaTrader5:
+    def mt5_connected(self) -> Generator[MetaTrader5]:
         """Create connected MT5 client."""
         mt5 = MetaTrader5(host=TEST_HOST, port=TEST_PORT)
         mt5.connect()

@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import socket
 import warnings
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import grpc
 import pytest
@@ -88,7 +92,11 @@ def _extract_mt5_constants(host: str, port: int) -> dict[str, int]:
     )
 
     try:
-        stub = mt5_pb2_grpc.MT5ServiceStub(channel)
+        stub_factory = cast(
+            "Callable[[grpc.Channel], mt5_pb2_grpc.MT5ServiceStub]",
+            mt5_pb2_grpc.MT5ServiceStub,
+        )
+        stub = stub_factory(channel)
         response = stub.GetConstants(mt5_pb2.Empty(), timeout=30)
         raw_constants = response.values
     finally:

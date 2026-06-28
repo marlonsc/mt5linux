@@ -91,7 +91,7 @@ class TestAsyncMetaTrader5ErrorHandling:
     async def test_ensure_connected_raises_connection_error(self) -> None:
         """Test _ensure_connected raises ConnectionError when not connected."""
         client = AsyncMetaTrader5()
-        with pytest.raises(ConnectionError, match="not established|Connection lost"):
+        with pytest.raises(ConnectionError, match=r"not established|Connection lost"):
             client._ensure_connected()
 
     @pytest.mark.asyncio
