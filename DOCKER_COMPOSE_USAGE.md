@@ -17,7 +17,7 @@
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MT5_CONTAINER_NAME` | `mt5linux-unit` | Container name and volume prefix |
-| `MT5_RPYC_PORT` | `38812` | RPyC server port (Wine → host) |
+| `MT5_GRPC_PORT` | `38812` | gRPC server port (Wine → host) |
 | `MT5_VNC_PORT` | `33000` | VNC GUI port (Wine → host) |
 | `MT5_HEALTH_PORT` | `38002` | Health check port (Wine → host) |
 
@@ -58,7 +58,7 @@ cd /home/marlonsc/invest/mt5linux
 
 # Run tests with custom ports
 MT5_CONTAINER_NAME=mt5-test-custom \
-MT5_RPYC_PORT=48812 \
+MT5_GRPC_PORT=48812 \
 MT5_VNC_PORT=43000 \
 pytest tests/
 ```
@@ -104,7 +104,7 @@ docker compose up -d
 
 # Start with custom configuration
 MT5_CONTAINER_NAME=mt5-custom \
-MT5_RPYC_PORT=48812 \
+MT5_GRPC_PORT=48812 \
 MT5_VNC_PORT=43000 \
 docker compose up -d
 
@@ -153,12 +153,12 @@ pytest tests/ -m "not slow"
 
 # Terminal 2: Alternative configuration
 MT5_CONTAINER_NAME=mt5-alt \
-MT5_RPYC_PORT=48812 \
+MT5_GRPC_PORT=48812 \
 pytest tests/ -m "not slow"
 
 # Terminal 3: High-security configuration
 MT5_CONTAINER_NAME=mt5-secure \
-MT5_RPYC_PORT=58812 \
+MT5_GRPC_PORT=58812 \
 MT5_SERVER=MyBroker-Secure \
 pytest tests/ -k "security"
 ```
@@ -203,7 +203,7 @@ docker system prune -f
 # Verify container is running
 docker ps | grep mt5
 
-# Check RPyC port is exposed
+# Check gRPC port is exposed
 docker inspect mt5linux-unit | grep -A 10 PortBindings
 
 # Test port directly
