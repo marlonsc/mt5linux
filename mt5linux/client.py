@@ -364,6 +364,15 @@ class MetaTrader5(MT5Protocol):
         """
         return self._run(self._async_client.account_info())
 
+    def current_account(self) -> MT5Models.CurrentAccount:
+        """Report which broker/login this container is on (mt5linux extension).
+
+        Returns host/port + connection state and, when connected, the live
+        account (login/server/company/...). Works even when the terminal is not
+        logged in (connected=False, account fields None).
+        """
+        return self._run(self._async_client.current_account())
+
     # =========================================================================
     # SYMBOL METHODS
     # =========================================================================

@@ -284,6 +284,26 @@ class MT5Models:
         currency: str = "USD"  # 26
         company: str = ""  # 27
 
+    class CurrentAccount(Base):
+        """Unified "who am I" view of a container's account (mt5linux extension).
+
+        Combines connection/health state with the live account so a caller can
+        answer "which broker/login is this mt5docker container on" -- and still
+        get host/port + connected=False when the terminal is not logged in.
+        """
+
+        host: str
+        port: int
+        connected: bool = False
+        trade_allowed: bool = False
+        build: int | None = None
+        login: int | None = None
+        server: str | None = None
+        company: str | None = None
+        name: str | None = None
+        balance: float | None = None
+        currency: str | None = None
+
     class SymbolInfo(Base):
         """MT5 symbol information (complete 96 fields from real MT5)."""
 

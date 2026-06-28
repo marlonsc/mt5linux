@@ -1031,6 +1031,35 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         return await self._resilient_call("account_info", _call)
 
+    async def current_account(self) -> MT5Models.CurrentAccount:
+        """Report which broker/login this container is on (mt5linux extension).
+
+        Always returns a value: host/port + connection state via HealthCheck, plus
+        the live account (login/server/company/...) when the terminal is logged in.
+        When it is NOT connected, the account fields stay None and connected is
+        False -- so a caller can still tell "this container is reachable at
+        host:port but not authorized" without an error.
+        """
+        health = await self.health_check()
+        connected = bool(health.get("connected"))
+        # Only fetch the account when the terminal is actually connected; otherwise
+        # account_info would fail. This is honest state reporting, not a fallback.
+        acct = await self.account_info() if connected else None
+        build = health.get("build")
+        return MT5Models.CurrentAccount(
+            host=self._host,
+            port=self._port,
+            connected=connected,
+            trade_allowed=bool(health.get("trade_allowed")),
+            build=build if isinstance(build, int) and build else None,
+            login=acct.login if acct is not None else None,
+            server=acct.server if acct is not None else None,
+            company=acct.company if acct is not None else None,
+            name=acct.name if acct is not None else None,
+            balance=acct.balance if acct is not None else None,
+            currency=acct.currency if acct is not None else None,
+        )
+
     # =========================================================================
     # SYMBOL METHODS
     # =========================================================================

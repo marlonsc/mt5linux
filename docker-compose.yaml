@@ -56,9 +56,18 @@ services:
       timeout: 10s
       retries: 3
       start_period: 120s
+    networks:
+      - mt5-net
 
 volumes:
   mt5_settings:
     name: ${MT5_CONTAINER_NAME:-mt5linux-test}_settings
     labels:
       description: "MT5 test configuration (isolated)"
+
+networks:
+  # Per-instance network so multiple containers (distinct MT5_CONTAINER_NAME /
+  # ports / volume) also get distinct, isolated networks -- no cross-talk and no
+  # collision when running several mt5docker instances in parallel.
+  mt5-net:
+    name: ${MT5_NETWORK_NAME:-${MT5_CONTAINER_NAME:-mt5linux-test}-network}
