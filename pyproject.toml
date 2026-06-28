@@ -28,7 +28,7 @@ orjson = ">=3.9.0"
 # mt5docker Wine pin (versions.env PROTOBUF_VERSION) and regenerate stubs together.
 protobuf = ">=6.31.1,<7"
 pydantic = "^2.10.0"
-pydantic-settings = "^2.12.0"
+pydantic-settings = "^2.14.2"
 python = ">=3.13,<3.14"
 structlog = "^25.5.0"
 
