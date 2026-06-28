@@ -1060,6 +1060,63 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             currency=acct.currency if acct is not None else None,
         )
 
+    @staticmethod
+    def _provisioned_from_proto(
+        resp: mt5_pb2.ProvisionedAccount,
+    ) -> MT5Models.ProvisionedAccount:
+        return MT5Models.ProvisionedAccount(
+            login=resp.login,
+            server=resp.server,
+            email=resp.email,
+            created_at=resp.created_at,
+            login_confirmed=resp.login_confirmed,
+            credentials_persisted=resp.credentials_persisted,
+            connected=resp.connected,
+            source=resp.source,
+        )
+
+    async def recover_provisioned_account(self) -> MT5Models.ProvisionedAccount:
+        """Recover the account this container provisioned (mt5linux extension).
+
+        Reads the container's auto_demo.json via the bridge so you can recover an
+        AUTO-created demo's identity (login/server/email) even when the terminal is
+        offline. Use initialize() + current_account() afterwards to test it live.
+        Read-only and idempotent.
+        """
+
+        async def _call() -> MT5Models.ProvisionedAccount:
+            stub = self._ensure_connected()
+            resp = await stub.GetProvisionedAccount(
+                mt5_pb2.Empty(), timeout=self._timeout
+            )
+            return self._provisioned_from_proto(resp)
+
+        return await self._resilient_call("recover_provisioned_account", _call)
+
+    async def create_demo_account(
+        self,
+        spec: MT5Models.CreateDemoSpec,
+    ) -> MT5Models.ProvisionedAccount:
+        """Create a fresh demo account at runtime from a CreateDemoSpec.
+
+        Sends broker/email/phone/name to the bridge, which drives the MT5 demo
+        wizard, and returns the provisioned account. The zero-touch env-at-launch
+        path (MT5_DEMO_* at boot) is the primary mechanism; this is the on-demand
+        variant. NOT retried -- creating an account is non-idempotent. Long-running
+        (drives the GUI wizard, up to a few minutes).
+        """
+        stub = self._ensure_connected()
+        request = mt5_pb2.CreateDemoRequest(
+            server=spec.server,
+            email=spec.email,
+            phone=spec.phone,
+            first_name=spec.first_name,
+            last_name=spec.last_name,
+            dob_year=spec.dob_year,
+        )
+        resp = await stub.CreateDemoAccount(request, timeout=max(self._timeout, 300))
+        return self._provisioned_from_proto(resp)
+
     # =========================================================================
     # SYMBOL METHODS
     # =========================================================================

@@ -304,6 +304,37 @@ class MT5Models:
         balance: float | None = None
         currency: str | None = None
 
+    class ProvisionedAccount(Base):
+        """The account a container provisioned, recovered from auto_demo.json.
+
+        Lets a client recover an AUTO-created demo's identity (login/server/email)
+        even when the terminal is offline. The password is never included;
+        `connected` is the live terminal state.
+        """
+
+        login: int = 0
+        server: str = ""
+        email: str = ""
+        created_at: str = ""
+        login_confirmed: bool = False
+        credentials_persisted: bool = False
+        connected: bool = False
+        source: str = ""
+
+    class CreateDemoSpec(Base):
+        """Parameters for create_demo_account() (maps 1:1 to the bridge request).
+
+        Empty fields fall back to the wizard defaults server-side. The common ask
+        is server/email/phone; name + birth-year have sensible defaults.
+        """
+
+        server: str = ""
+        email: str = ""
+        phone: str = ""
+        first_name: str = ""
+        last_name: str = ""
+        dob_year: str = ""
+
     class SymbolInfo(Base):
         """MT5 symbol information (complete 96 fields from real MT5)."""
 

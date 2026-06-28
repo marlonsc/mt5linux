@@ -373,6 +373,25 @@ class MetaTrader5(MT5Protocol):
         """
         return self._run(self._async_client.current_account())
 
+    def recover_provisioned_account(self) -> MT5Models.ProvisionedAccount:
+        """Recover the account this container provisioned (mt5linux extension).
+
+        Returns the AUTO-created demo's identity (login/server/email) from the
+        container's auto_demo.json, even when the terminal is offline.
+        """
+        return self._run(self._async_client.recover_provisioned_account())
+
+    def create_demo_account(
+        self,
+        spec: MT5Models.CreateDemoSpec,
+    ) -> MT5Models.ProvisionedAccount:
+        """Create a fresh demo account at runtime from a CreateDemoSpec.
+
+        Sends broker/email/phone/name to the bridge (which drives the MT5 demo
+        wizard) and returns the provisioned account. Long-running.
+        """
+        return self._run(self._async_client.create_demo_account(spec))
+
     # =========================================================================
     # SYMBOL METHODS
     # =========================================================================

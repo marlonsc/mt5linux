@@ -555,6 +555,9 @@ class TestModelCatalog:
         "Deal",
         "BookEntry",
         "TerminalInfo",
+        "CurrentAccount",
+        "ProvisionedAccount",
+        "CreateDemoSpec",
     ]
 
     def test_all_models_exist(self) -> None:
@@ -563,13 +566,13 @@ class TestModelCatalog:
             assert hasattr(MT5Models, model_name), f"MT5Models missing: {model_name}"
 
     def test_model_count(self) -> None:
-        """MT5Models should have exactly 12 model classes."""
+        """MT5Models should have exactly 15 model classes."""
         models = [
             name
             for name in dir(MT5Models)
             if not name.startswith("_") and isinstance(getattr(MT5Models, name), type)
         ]
-        assert len(models) == 12, f"Expected 12 models, found {len(models)}: {models}"
+        assert len(models) == 15, f"Expected 15 models, found {len(models)}: {models}"
 
     @pytest.mark.parametrize("model_name", EXPECTED_MODELS[1:])  # Skip Base
     def test_model_inherits_from_base_or_basemodel(self, model_name: str) -> None:
