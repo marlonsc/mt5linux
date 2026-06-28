@@ -19,7 +19,10 @@ grpcio = ">=1.60.0"
 grpcio-tools = ">=1.60.0"
 numpy = ">=1.26.4,<2.0"
 orjson = ">=3.9.0"
-protobuf = ">=4.25.0"
+# protobuf floor MUST be >= the gencode baked into mt5_pb2.py (currently 6.31.1);
+# an older runtime raises VersionError at import. Keep in lockstep with the
+# mt5docker Wine pin (versions.env PROTOBUF_VERSION) and regenerate stubs together.
+protobuf = ">=6.31.1,<7"
 pydantic = "^2.10.0"
 pydantic-settings = "^2.12.0"
 python = ">=3.13,<3.14"
