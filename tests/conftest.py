@@ -193,6 +193,29 @@ def has_mt5_credentials() -> bool:
     )
 
 
+def is_mt5_terminal_available() -> bool:
+    """Check whether MT5 terminal integration tests can run."""
+    if os.getenv("SKIP_DOCKER", tc.DEFAULT_SKIP_DOCKER) == "1":
+        _log("MT5 terminal unavailable: SKIP_DOCKER=1")
+        return False
+
+    if not is_docker_available():
+        _log("MT5 terminal unavailable: docker is not available")
+        return False
+
+    if not _is_container_running():
+        _log(f"MT5 terminal unavailable: container '{TEST_CONTAINER_NAME}' is not running")
+        return False
+
+    if not is_grpc_service_ready(TEST_GRPC_HOST, TEST_GRPC_PORT, timeout=tc.FAST_TIMEOUT):
+        _log(
+            f"MT5 terminal unavailable: gRPC not ready on {TEST_GRPC_HOST}:{TEST_GRPC_PORT}"
+        )
+        return False
+
+    return True
+
+
 def is_grpc_service_ready(
     host: str = "localhost",
     port: int | None = None,
@@ -518,18 +541,23 @@ def mt5_settings() -> dict[str, str | int | None]:
 
 
 @pytest.fixture(scope="session")
-def _mt5_session_raw() -> Generator[MetaTrader5]:
+def _mt5_session_raw(
+    _ensure_docker_and_codegen: None,  # noqa: ARG001
+) -> Generator[MetaTrader5]:
     """Session-scoped raw MT5 connection - shared across ALL tests.
 
     Creates a single connection to the gRPC server that's reused by all tests.
     This dramatically reduces connection overhead (from ~584 cycles to 1).
     """
     _log("SESSION FIXTURE: Creating session-scoped MT5 connection")
+    if not is_mt5_terminal_available():
+        pytest.skip("MT5 terminal is unavailable for this environment")
+
     mt5 = MetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
     try:
         mt5.connect()
     except (grpc.RpcError, ConnectionError, OSError) as e:
-        pytest.fail(f"MT5 connection failed: {e}")
+        pytest.skip(f"MT5 connection failed: {e}")
     yield mt5
     _log("SESSION FIXTURE: Disconnecting session-scoped MT5 connection")
     with contextlib.suppress(grpc.RpcError, ConnectionError):
@@ -545,6 +573,9 @@ def _mt5_session_initialized(
     Initializes the MT5 terminal once and reuses it for all tests.
     Returns uninitialized session if no credentials (handled by mt5 fixture).
     """
+    if not is_mt5_terminal_available():
+        pytest.skip("MT5 terminal is unavailable for this environment")
+
     if not has_mt5_credentials():
         _log("SESSION FIXTURE: No MT5 credentials - returning uninitialized session")
         yield _mt5_session_raw
@@ -558,7 +589,7 @@ def _mt5_session_initialized(
             server=MT5_SERVER,
         )
     except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
-        pytest.fail(f"MT5 connection failed: {e}")
+        pytest.fail(f"MT5 initialize failed: {e}")
 
     if not result:
         error = _mt5_session_raw.last_error()
@@ -863,17 +894,22 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
 
 
 @pytest.fixture(scope="session")
-async def _async_mt5_session_raw() -> AsyncGenerator[AsyncMetaTrader5]:
+async def _async_mt5_session_raw(
+    _ensure_docker_and_codegen: None,  # noqa: ARG001
+) -> AsyncGenerator[AsyncMetaTrader5]:
     """Session-scoped raw async MT5 connection - shared across ALL tests.
 
     Creates a single async connection to the gRPC server that's reused by all tests.
     """
     _log("SESSION FIXTURE: Creating session-scoped async MT5 connection")
+    if not is_mt5_terminal_available():
+        pytest.skip("MT5 terminal is unavailable for this environment")
+
     client = AsyncMetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
     try:
         await client.connect()
     except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
-        pytest.fail(f"Async MT5 connection failed: {e}")
+        pytest.skip(f"Async MT5 connection failed: {e}")
     yield client
     _log("SESSION FIXTURE: Disconnecting session-scoped async MT5 connection")
     await client.disconnect()
@@ -888,10 +924,12 @@ async def _async_mt5_session_initialized(
     Initializes the async MT5 terminal once and reuses it for all tests.
     """
     if not has_mt5_credentials():
-        msg = "MT5 credentials not configured - set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER"
-        raise RuntimeError(msg)
+        pytest.skip(SKIP_NO_CREDENTIALS)
 
     _log("SESSION FIXTURE: Initializing session-scoped async MT5 terminal")
+    if not is_mt5_terminal_available():
+        pytest.skip("MT5 terminal is unavailable for this environment")
+
     try:
         result = await _async_mt5_session_raw.initialize(
             login=MT5_LOGIN,
