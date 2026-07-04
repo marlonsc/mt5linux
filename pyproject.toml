@@ -33,7 +33,6 @@ python = ">=3.13,<3.14"
 structlog = "^25.5.0"
 
 [tool.poetry.group.dev.dependencies]
-grpc-stubs = "^1.53.0.6"
 hypothesis = "^6.0"
 mypy = "^1.15.0"
 pyrefly = "^0.46.0"
@@ -43,6 +42,7 @@ pytest-cov = "^6.0.0"
 pytest-xdist = "^3.0"
 python-dotenv = "^1.0.0"
 ruff = "^0.11.0"
+types-grpcio = "^1.0.0"
 types-protobuf = "^6.32.1.20251210"
 
 [tool.ruff]
@@ -144,7 +144,7 @@ exclude = [
 
 [tool.pyright]
 # Pyright config for MetaTrader5 module (Wine-only)
-excludee = [
+exclude = [
     '.*\.pyi$',
     "mt5linux/mt5_pb2.py",
     "mt5linux/mt5_pb2_grpc.py",

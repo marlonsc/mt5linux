@@ -52,7 +52,11 @@ class TestAsyncMetaTrader5Connection:
     @pytest.mark.asyncio
     async def test_concurrent_connect_is_safe(self) -> None:
         """Test that concurrent _connect() calls are thread-safe."""
-        client = AsyncMetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
+        client = AsyncMetaTrader5(
+            host=TEST_GRPC_HOST,
+            port=TEST_GRPC_PORT,
+            timeout=tc.FAST_TIMEOUT,
+        )
 
         # Simulate many concurrent connect calls - should not raise
         await asyncio.gather(

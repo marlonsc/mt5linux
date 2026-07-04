@@ -663,7 +663,16 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         # - shutdown: Disconnecting doesn't need connection
         # - terminal_info: Used BY this check (avoid infinite recursion)
         # - version: Basic info, doesn't need broker connection
-        excluded_ops = {"initialize", "login", "shutdown", "terminal_info", "version"}
+        excluded_ops = {
+            "health_check",
+            "initialize",
+            "last_error",
+            "login",
+            "recover_provisioned_account",
+            "shutdown",
+            "terminal_info",
+            "version",
+        }
         if operation in excluded_ops:
             return  # Skip check for these operations
 

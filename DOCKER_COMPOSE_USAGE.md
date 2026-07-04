@@ -7,8 +7,8 @@
 ## File Locations
 
 - **Main configuration**: `/home/marlonsc/invest/mt5linux/docker-compose.yaml`
-- **Test fixture**: `tests/conftest.py` (auto-parametrizes via environment variables)
-- **Environment file**: `.env` (contains MT5_LOGIN, MT5_PASSWORD, MT5_SERVER defaults)
+- **Test fixture**: `tests/conftest.py` (loads `.env.test` first, then `.env`)
+- **Environment files**: `.env.test` for isolated defaults, `.env` for MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
 ## Parametrizable Options
 
@@ -16,10 +16,10 @@
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MT5_CONTAINER_NAME` | `mt5linux-unit` | Container name and volume prefix |
-| `MT5_GRPC_PORT` | `38812` | gRPC server port (Wine → host) |
-| `MT5_VNC_PORT` | `33000` | VNC GUI port (Wine → host) |
-| `MT5_HEALTH_PORT` | `38002` | Health check port (Wine → host) |
+| `MT5_CONTAINER_NAME` | `mt5linux-test` | Container name and volume prefix |
+| `MT5_GRPC_PORT` | `28812` | gRPC server port (Wine → host) |
+| `MT5_VNC_PORT` | `23000` | VNC GUI port (Wine → host) |
+| `MT5_HEALTH_PORT` | `28002` | Health check port (Wine → host) |
 
 ### MT5 Credentials
 
@@ -46,10 +46,10 @@ pytest tests/
 
 **What happens**:
 
-- conftest.py reads `.env` for MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+- conftest.py reads `.env.test` first, then `.env` for MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 - conftest.py uses defaults for container name and ports
-- Docker container starts as `mt5linux-unit` on port 38812
-- Tests connect to `localhost:38812`
+- Docker container starts as `mt5linux-test` on port 28812
+- Tests connect to `localhost:28812`
 
 ### 2. Custom Test Scenario (different container name and ports)
 
@@ -84,7 +84,7 @@ pytest tests/
 **What happens**:
 
 - Container initializes with custom MT5 credentials
-- Uses default container name `mt5linux-unit` and ports
+- Uses default container name `mt5linux-test` and ports
 
 ### 4. Custom Environment File
 
@@ -186,7 +186,7 @@ Set environment variables in CI/CD pipeline:
 
 ```bash
 # Check if port is in use
-lsof -i :38812
+lsof -i :28812
 
 # Check logs
 docker compose logs
@@ -204,10 +204,10 @@ docker system prune -f
 docker ps | grep mt5
 
 # Check gRPC port is exposed
-docker inspect mt5linux-unit | grep -A 10 PortBindings
+docker inspect mt5linux-test | grep -A 10 PortBindings
 
 # Test port directly
-nc -zv localhost 38812
+nc -zv localhost 28812
 ```
 
 ### Volume cleanup issues
@@ -217,7 +217,7 @@ nc -zv localhost 38812
 docker volume ls | grep mt5
 
 # Remove specific volume
-docker volume rm mt5linux-unit_settings
+docker volume rm mt5linux-test_settings
 
 # Clean all unused volumes
 docker volume prune -f

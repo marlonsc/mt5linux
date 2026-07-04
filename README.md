@@ -39,7 +39,7 @@ pip install git+https://github.com/marlonsc/mt5linux.git@master
 ```python
 from mt5linux import MetaTrader5
 
-with MetaTrader5(host="localhost", port=8001) as mt5:
+with MetaTrader5(host="localhost", port=50051) as mt5:
     mt5.initialize(login=12345, password="pass", server="Demo")
 
     # Account info
@@ -62,7 +62,7 @@ import asyncio
 from mt5linux import AsyncMetaTrader5
 
 async def main():
-    async with AsyncMetaTrader5(host="localhost", port=8001) as mt5:
+    async with AsyncMetaTrader5(host="localhost", port=50051) as mt5:
         await mt5.initialize(login=12345, password="pass", server="Demo")
 
         # Parallel data fetching
@@ -135,17 +135,17 @@ Run the gRPC bridge server directly on Windows with MetaTrader5 installed:
 # Install mt5linux on Windows
 pip install mt5linux
 
-# Start server (default port 8001, aligned with MT5Settings)
-python -m mt5linux.bridge
+# Start server (default port 50051)
+python -m mt5linux --server
 
-# With custom options
-python -m mt5linux.bridge --host 0.0.0.0 --port 8001 --debug
+# Or call the bridge module directly
+python -m mt5linux.bridge --host 0.0.0.0 --port 50051 --debug
 ```
 
 Server options:
 
 - `--host HOST` - Bind address (default: 0.0.0.0)
-- `-p, --port PORT` - Listen port (default: 8001)
+- `-p, --port PORT` - Listen port (default: 50051)
 - `--workers N` - Worker threads (default: 10)
 - `-d, --debug` - Enable debug logging
 
@@ -183,6 +183,10 @@ All [official MT5 Python functions](https://www.mql5.com/en/docs/python_metatrad
 
 - `order_calc_margin()`, `order_calc_profit()`
 - `order_check()`, `order_send()`
+
+**Market Depth (DOM)**:
+
+- `market_book_add()`, `market_book_get()`, `market_book_release()`
 
 **Positions & Orders**:
 
@@ -228,7 +232,7 @@ The library uses **fail-fast** error handling:
 ```python
 from mt5linux import MetaTrader5
 
-mt5 = MetaTrader5(host="localhost", port=8001)
+mt5 = MetaTrader5(host="localhost", port=50051)
 
 try:
     result = mt5.order_send(request)

@@ -204,12 +204,20 @@ def is_mt5_terminal_available() -> bool:
         return False
 
     if not _is_container_running():
-        _log(f"MT5 terminal unavailable: container '{TEST_CONTAINER_NAME}' is not running")
+        _log(
+            f"MT5 terminal unavailable: container '{TEST_CONTAINER_NAME}' "
+            "is not running"
+        )
         return False
 
-    if not is_grpc_service_ready(TEST_GRPC_HOST, TEST_GRPC_PORT, timeout=tc.FAST_TIMEOUT):
+    if not is_grpc_service_ready(
+        TEST_GRPC_HOST,
+        TEST_GRPC_PORT,
+        timeout=tc.FAST_TIMEOUT,
+    ):
         _log(
-            f"MT5 terminal unavailable: gRPC not ready on {TEST_GRPC_HOST}:{TEST_GRPC_PORT}"
+            "MT5 terminal unavailable: gRPC not ready on "
+            f"{TEST_GRPC_HOST}:{TEST_GRPC_PORT}"
         )
         return False
 
@@ -542,7 +550,7 @@ def mt5_settings() -> dict[str, str | int | None]:
 
 @pytest.fixture(scope="session")
 def _mt5_session_raw(
-    _ensure_docker_and_codegen: None,  # noqa: ARG001
+    ensure_docker_and_codegen: None,
 ) -> Generator[MetaTrader5]:
     """Session-scoped raw MT5 connection - shared across ALL tests.
 
@@ -895,7 +903,7 @@ def create_test_history(mt5: MetaTrader5) -> Generator[dict[str, Any]]:  # noqa:
 
 @pytest.fixture(scope="session")
 async def _async_mt5_session_raw(
-    _ensure_docker_and_codegen: None,  # noqa: ARG001
+    ensure_docker_and_codegen: None,
 ) -> AsyncGenerator[AsyncMetaTrader5]:
     """Session-scoped raw async MT5 connection - shared across ALL tests.
 
@@ -905,7 +913,11 @@ async def _async_mt5_session_raw(
     if not is_mt5_terminal_available():
         pytest.skip("MT5 terminal is unavailable for this environment")
 
-    client = AsyncMetaTrader5(host=TEST_GRPC_HOST, port=TEST_GRPC_PORT)
+    client = AsyncMetaTrader5(
+        host=TEST_GRPC_HOST,
+        port=TEST_GRPC_PORT,
+        timeout=tc.FAST_TIMEOUT,
+    )
     try:
         await client.connect()
     except (grpc.RpcError, RuntimeError, OSError, ConnectionError) as e:
