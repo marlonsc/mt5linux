@@ -193,6 +193,17 @@ def has_mt5_credentials() -> bool:
     )
 
 
+def _attach_authorized_terminal(mt5: MetaTrader5) -> bool:
+    """Attach to a terminal session that is already authorized in the container."""
+    try:
+        if not mt5.initialize():
+            return False
+        current = mt5.current_account()
+    except (grpc.RpcError, RuntimeError, OSError, ConnectionError):
+        return False
+    return current.connected and current.login is not None
+
+
 def is_mt5_terminal_available() -> bool:
     """Check whether MT5 terminal integration tests can run."""
     if os.getenv("SKIP_DOCKER", tc.DEFAULT_SKIP_DOCKER) == "1":
@@ -584,6 +595,11 @@ def _mt5_session_initialized(
     if not is_mt5_terminal_available():
         pytest.skip("MT5 terminal is unavailable for this environment")
 
+    if _attach_authorized_terminal(_mt5_session_raw):
+        _log("SESSION FIXTURE: Attached to already-authorized MT5 terminal")
+        yield _mt5_session_raw
+        return
+
     if not has_mt5_credentials():
         _log("SESSION FIXTURE: No MT5 credentials - returning uninitialized session")
         yield _mt5_session_raw
@@ -635,13 +651,16 @@ def mt5(_mt5_session_initialized: MetaTrader5) -> MetaTrader5:
 
     This fixture returns the session-scoped initialized connection.
     The client itself handles resilience/auto-reconnect internally.
-    Skips test if MT5_LOGIN is not configured.
+    Skips test if neither an authorized terminal nor MT5_LOGIN is configured.
 
     Resets circuit breaker before each test to prevent failures from
     accumulating across tests.
     """
-    # Skip test if no MT5 credentials configured
-    if not has_mt5_credentials():
+    # Auto-demo containers are already authorized; env credentials are only needed
+    # when the fixture must perform a fresh login itself.
+    if not has_mt5_credentials() and not _attach_authorized_terminal(
+        _mt5_session_initialized,
+    ):
         pytest.skip(SKIP_NO_CREDENTIALS)
 
     # Reset circuit breaker to prevent cross-test failure accumulation
