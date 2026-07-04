@@ -149,10 +149,31 @@ exclude = [
     "mt5linux/mt5_pb2.py",
     "mt5linux/mt5_pb2_grpc.py",
     "typings/",
+    "../.venv",
+    "../.venv/**",
+    "**/.venv",
+    "**/.venv/**",
+    "**/venv",
+    "**/venv/**",
+    "**/site-packages",
+    "**/site-packages/**",
+]
+ignore = [
+    "../.venv",
+    "../.venv/**",
+    "**/.venv",
+    "**/.venv/**",
+    "**/venv",
+    "**/venv/**",
+    "**/site-packages",
+    "**/site-packages/**",
 ]
 executionEnvironments = [{ root = ".", extraPaths = ["."] }]
 pythonVersion = "3.13"
 pythonPlatform = "Linux"
+venvPath = ".."
+venv = ".venv"
+useLibraryCodeForTypes = true
 typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]
