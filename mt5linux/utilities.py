@@ -595,7 +595,11 @@ class MT5Utilities:
                 name
                 for name in dir(tuple_cls)
                 if not name.startswith("_")
-                and type(getattr(tuple_cls, name, None)).__name__ == "member_descriptor"
+                and type(getattr(tuple_cls, name, None)).__name__
+                in (
+                    "member_descriptor",
+                    "MemberDescriptor",
+                )
             ]
 
             if not member_fields:

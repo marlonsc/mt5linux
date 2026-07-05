@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import TYPE_CHECKING
 
 from mt5linux import __version__
-from mt5linux.bridge import main as bridge_main
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,19 @@ Documentation:
     logger.info(info)
 
 
+def _bridge_main(args: Sequence[str]) -> int:
+    """Lazy wrapper around the Wine-only bridge entry point.
+
+    The bridge imports the Windows ``MetaTrader5`` module, which is unavailable
+    on Linux. Importing it at the top level would break ``python -m mt5linux``
+    for help/info on non-Windows hosts, so it is loaded only when the user
+    explicitly requests server mode.
+    """
+    from mt5linux.bridge import main as bridge_main  # noqa: PLC0415
+
+    return bridge_main(list(args))
+
+
 def main() -> int:
     """Entry point."""
     args = sys.argv[1:]
@@ -75,7 +91,7 @@ def main() -> int:
     if "--server" in args or "-s" in args:
         # Remove --server/-s flag and pass remaining args to bridge
         server_args = [a for a in args if a not in {"--server", "-s"}]
-        return bridge_main(server_args)
+        return _bridge_main(server_args)
 
     # Check for help
     if "-h" in args or "--help" in args:

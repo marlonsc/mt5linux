@@ -9,11 +9,20 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from mt5linux.async_client import AsyncMetaTrader5
+from mt5linux.utilities import MT5Utilities as u
 from tests.conftest import (
     TEST_GRPC_HOST,
     TEST_GRPC_PORT,
+    is_mt5_terminal_available,
     tc,
 )
+
+
+@pytest.fixture
+def _skip_if_no_terminal() -> None:
+    """Skip integration tests when MT5 terminal is not available."""
+    if not is_mt5_terminal_available():
+        pytest.skip("MT5 terminal unavailable for integration tests")
 
 
 class TestAsyncMetaTrader5Connection:
@@ -77,18 +86,28 @@ class TestAsyncMetaTrader5ErrorHandling:
     async def test_method_raises_connection_error_when_not_connected(
         self,
     ) -> None:
-        """Test async methods raise ConnectionError when not connected."""
+        """Test async methods raise errors when not connected.
+
+        ConnectionError/MaxRetriesError are raised.
+        """
         client = AsyncMetaTrader5()
 
-        # Error can be "not established", "not connected", or "Connection lost"
+        # Error can be "not established", "not connected", or "Connection lost";
+        # resilience layer may wrap consecutive failures as MaxRetriesError.
         err_pattern = "not established|not connected|Connection"
-        with pytest.raises(ConnectionError, match=err_pattern):
+        with pytest.raises(
+            (ConnectionError, u.Exceptions.MaxRetriesError), match=err_pattern
+        ):
             await client.version()
 
-        with pytest.raises(ConnectionError, match=err_pattern):
+        with pytest.raises(
+            (ConnectionError, u.Exceptions.MaxRetriesError), match=err_pattern
+        ):
             await client.account_info()
 
-        with pytest.raises(ConnectionError, match=err_pattern):
+        with pytest.raises(
+            (ConnectionError, u.Exceptions.MaxRetriesError), match=err_pattern
+        ):
             await client.symbols_total()
 
     @pytest.mark.asyncio
@@ -106,6 +125,7 @@ class TestAsyncMetaTrader5ErrorHandling:
             _ = client.TIMEFRAME_H1
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5Terminal:
     """Test terminal operations with real server."""
 
@@ -139,6 +159,7 @@ class TestAsyncMetaTrader5Terminal:
         assert terminal.path, f"Expected terminal path, got {terminal.path!r}"
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5Account:
     """Test account operations with real server."""
 
@@ -161,6 +182,7 @@ class TestAsyncMetaTrader5Account:
         )
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5Symbols:
     """Test symbol operations with real server."""
 
@@ -226,6 +248,7 @@ class TestAsyncMetaTrader5Symbols:
         assert async_mt5.ORDER_TYPE_SELL is not None
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5MarketData:
     """Test market data operations with real server."""
 
@@ -299,6 +322,7 @@ class TestAsyncMetaTrader5MarketData:
             assert "ask" in ticks.dtype.names
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5Positions:
     """Test position operations with real server."""
 
@@ -320,6 +344,7 @@ class TestAsyncMetaTrader5Positions:
             assert isinstance(positions, tuple)
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5Orders:
     """Test order operations with real server."""
 
@@ -341,6 +366,7 @@ class TestAsyncMetaTrader5Orders:
             assert isinstance(orders, tuple)
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5History:
     """Test history operations with real server."""
 
@@ -397,6 +423,7 @@ class TestAsyncMetaTrader5History:
             assert isinstance(deals, tuple)
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5Trading:
     """Test trading operations with real server (read-only)."""
 
@@ -468,6 +495,7 @@ class TestAsyncMetaTrader5Trading:
         )
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5Concurrent:
     """Test concurrent async operations with real server."""
 
@@ -570,6 +598,7 @@ class TestAsyncMetaTrader5Concurrent:
             raise
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5Login:
     """Tests for async login functionality."""
 
@@ -595,6 +624,7 @@ class TestAsyncMetaTrader5Login:
         assert result is True
 
 
+@pytest.mark.usefixtures("_skip_if_no_terminal")
 class TestAsyncMetaTrader5HealthCheck:
     """Tests for async health_check functionality."""
 

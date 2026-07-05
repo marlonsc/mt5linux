@@ -293,6 +293,9 @@ class TestProtoServiceDefinition:
             # Account/Terminal info
             "TerminalInfo",
             "AccountInfo",
+            # Provisioning / demo account operations
+            "CreateDemoAccount",
+            "GetProvisionedAccount",
             # Symbol operations
             "SymbolsTotal",
             "SymbolsGet",
@@ -333,9 +336,9 @@ class TestProtoServiceDefinition:
             )
 
     def test_servicer_method_count(self) -> None:
-        """Servicer should have exactly 36 RPC methods."""
+        """Servicer should have exactly 38 RPC methods."""
         servicer_class = mt5_pb2_grpc.MT5ServiceServicer
         # Get all methods that don't start with underscore
         methods = [name for name in dir(servicer_class) if not name.startswith("_")]
-        # Should have 36 methods (as defined in proto)
-        assert len(methods) == 36, f"Expected 36 methods, got {len(methods)}: {methods}"
+        # Should have 38 methods (as defined in proto)
+        assert len(methods) == 38, f"Expected 38 methods, got {len(methods)}: {methods}"

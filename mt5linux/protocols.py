@@ -321,7 +321,7 @@ class MT5Protocol(Protocol):
         ...
 
     # =========================================================================
-    # TRADING OPERATIONS (4 methods)
+    # TRADING OPERATIONS (6 methods: 4 standard + 2 mt5linux extensions)
     # =========================================================================
 
     def order_calc_margin(
@@ -390,6 +390,48 @@ class MT5Protocol(Protocol):
 
         Returns:
             OrderResult model or None.
+
+        """
+        ...
+
+    def order_send_async(
+        self,
+        request: dict[str, JSONValue],
+        on_complete: Callable[[MT5Models.OrderResult], None] | None = None,
+        on_error: Callable[[Exception], None] | None = None,
+    ) -> str:
+        """Send order asynchronously with callback notification (sync interface).
+
+        Args:
+            request: Order request dict (same format as order_send).
+            on_complete: Callback called with OrderResult on success.
+            on_error: Callback called with Exception on failure.
+
+        Returns:
+            request_id: Unique ID to track this order.
+
+        """
+        ...
+
+    def order_send_batch(
+        self,
+        requests: list[dict[str, JSONValue]],
+        on_each_complete: Callable[[str, MT5Models.OrderResult], None] | None = None,
+        on_each_error: Callable[[str, Exception], None] | None = None,
+        on_all_complete: (
+            Callable[[dict[str, MT5Models.OrderResult | Exception]], None] | None
+        ) = None,
+    ) -> list[str]:
+        """Send multiple orders in parallel with batch callbacks (sync interface).
+
+        Args:
+            requests: List of order request dicts.
+            on_each_complete: Called for each successful order (request_id, result).
+            on_each_error: Called for each failed order (request_id, exception).
+            on_all_complete: Called when ALL orders complete (dict of results/errors).
+
+        Returns:
+            List of request_ids for all orders.
 
         """
         ...

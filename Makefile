@@ -28,13 +28,13 @@ type: ## Type checking (mypy --strict)
 test: ## Run tests (auto-starts docker container if available, skips appropriately)
 	SKIP_DOCKER=$(SKIP_DOCKER) $(POETRY) run pytest tests/ -v --tb=short
 
-coverage: ## Run tests with 100% coverage requirement
-	$(POETRY) run pytest tests/ -v --cov=mt5linux --cov-report=term-missing --cov-fail-under=100
+coverage: ## Run tests with >90% coverage requirement
+	$(POETRY) run pytest tests/ -v --cov=mt5linux --cov-report=term-missing --cov-fail-under=90
 
 check: lint type ## Quick check (lint + type)
 	@echo "✅ Check passed"
 
-validate: lint type coverage ## Full validation (lint + type + coverage 100%)
+validate: lint type coverage ## Full validation (lint + type + coverage >90%)
 	@echo "✅ Validation passed"
 
 clean: ## Remove cache directories

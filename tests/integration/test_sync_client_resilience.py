@@ -27,7 +27,20 @@ from mt5linux import MetaTrader5
 from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.constants import MT5Constants as c
 from mt5linux.settings import MT5Settings
-from tests.conftest import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+from tests.conftest import (
+    MT5_LOGIN,
+    MT5_PASSWORD,
+    MT5_SERVER,
+    is_mt5_terminal_available,
+)
+
+
+@pytest.fixture(autouse=True)
+def _skip_if_no_terminal() -> None:
+    """Skip integration tests when MT5 terminal is not available."""
+    if not is_mt5_terminal_available():
+        pytest.skip("MT5 terminal unavailable for integration tests")
+
 
 # Test configuration
 TEST_HOST = "localhost"

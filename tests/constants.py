@@ -744,6 +744,7 @@ class TestConstants:
     # Network aliases
     GRPC_MAX_MESSAGE_SIZE = Network.GRPC_MAX_MESSAGE_SIZE
     TEST_GRPC_HOST = Network.TEST_GRPC_HOST
+    TEST_PROTOCOL_PORT = MT5.GRPC_PORT
     CONCURRENT_CONNECTIONS = Network.CONCURRENT_CONNECTIONS
 
     # Timing additional aliases

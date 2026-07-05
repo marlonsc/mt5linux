@@ -21,7 +21,15 @@ from tests.conftest import (
     MT5_SERVER,
     TEST_GRPC_HOST,
     TEST_GRPC_PORT,
+    is_mt5_terminal_available,
 )
+
+
+@pytest.fixture(autouse=True)
+def _skip_if_no_terminal() -> None:
+    """Skip integration tests when MT5 terminal is not available."""
+    if not is_mt5_terminal_available():
+        pytest.skip("MT5 terminal unavailable for integration tests")
 
 
 class TestConnectionLimits:

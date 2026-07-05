@@ -26,7 +26,7 @@ from mt5linux import MetaTrader5
 from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.protocols import AsyncMT5Protocol, MT5Protocol
 
-# Exact 32 methods that MUST be in the protocol (matching MetaTrader5 PyPI)
+# Exact 34 methods that MUST be in the protocol (matching mt5linux implementation)
 MT5_PROTOCOL_METHODS = [
     # Terminal (7 methods)
     "initialize",
@@ -48,11 +48,13 @@ MT5_PROTOCOL_METHODS = [
     "copy_rates_range",
     "copy_ticks_from",
     "copy_ticks_range",
-    # Trading (4 methods)
+    # Trading (6 methods: MT5 PyPI standard + mt5linux async/batch extensions)
     "order_calc_margin",
     "order_calc_profit",
     "order_check",
     "order_send",
+    "order_send_async",
+    "order_send_batch",
     # Positions (2 methods)
     "positions_total",
     "positions_get",
@@ -145,36 +147,36 @@ def compare_signatures(
 
 
 class TestProtocolMethodCount:
-    """Validate protocol has exactly 32 methods."""
+    """Validate protocol has exactly 34 methods."""
 
-    def test_mt5_protocol_has_exactly_32_methods(self) -> None:
-        """MT5Protocol should have exactly 32 methods (matching MT5 PyPI)."""
+    def test_mt5_protocol_has_exactly_34_methods(self) -> None:
+        """MT5Protocol should have exactly 34 methods (matching mt5linux)."""
         protocol_methods = [
             m
             for m in dir(MT5Protocol)
             if not m.startswith("_") and callable(getattr(MT5Protocol, m))
         ]
-        assert len(protocol_methods) == 32, (
-            f"MT5Protocol should have 32 methods, found {len(protocol_methods)}: "
+        assert len(protocol_methods) == 34, (
+            f"MT5Protocol should have 34 methods, found {len(protocol_methods)}: "
             f"{sorted(protocol_methods)}"
         )
 
-    def test_async_mt5_protocol_has_exactly_32_methods(self) -> None:
-        """AsyncMT5Protocol should have exactly 32 methods (matching MT5 PyPI)."""
+    def test_async_mt5_protocol_has_exactly_34_methods(self) -> None:
+        """AsyncMT5Protocol should have exactly 34 methods (matching mt5linux)."""
         protocol_methods = [
             m
             for m in dir(AsyncMT5Protocol)
             if not m.startswith("_") and callable(getattr(AsyncMT5Protocol, m))
         ]
-        assert len(protocol_methods) == 32, (
-            f"AsyncMT5Protocol should have 32 methods, found {len(protocol_methods)}: "
+        assert len(protocol_methods) == 34, (
+            f"AsyncMT5Protocol should have 34 methods, found {len(protocol_methods)}: "
             f"{sorted(protocol_methods)}"
         )
 
-    def test_expected_methods_list_has_32_items(self) -> None:
-        """Our expected methods list should have exactly 32 items."""
-        assert len(MT5_PROTOCOL_METHODS) == 32, (
-            f"MT5_PROTOCOL_METHODS should have 32 items, "
+    def test_expected_methods_list_has_34_items(self) -> None:
+        """Our expected methods list should have exactly 34 items."""
+        assert len(MT5_PROTOCOL_METHODS) == 34, (
+            f"MT5_PROTOCOL_METHODS should have 34 items, "
             f"found {len(MT5_PROTOCOL_METHODS)}"
         )
 
@@ -279,7 +281,7 @@ class TestAsyncProtocolCompliance:
 
 
 class TestProtocolConsistency:
-    """Validate sync and async protocols are identical (same 32 methods)."""
+    """Validate sync and async protocols are identical (same 34 methods)."""
 
     def test_same_method_names(self) -> None:
         """Both protocols must have the exact same 32 methods."""

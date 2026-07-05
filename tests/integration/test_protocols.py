@@ -28,7 +28,7 @@ class TestSyncClientProtocol:
         extensions NOT part of the standard MT5Protocol (MetaTrader5 PyPI).
         """
         required_methods = {
-            # Terminal (Protocol methods only - 32 methods matching MT5 PyPI)
+            # Terminal (Protocol methods only - 34 methods matching mt5linux)
             "initialize",
             "login",
             "shutdown",
@@ -48,11 +48,13 @@ class TestSyncClientProtocol:
             "copy_rates_range",
             "copy_ticks_from",
             "copy_ticks_range",
-            # Trading
+            # Trading (includes mt5linux async/batch extensions)
             "order_calc_margin",
             "order_calc_profit",
             "order_check",
             "order_send",
+            "order_send_async",
+            "order_send_batch",
             # Positions
             "positions_total",
             "positions_get",
@@ -113,7 +115,7 @@ class TestAsyncClientProtocol:
         extensions NOT part of the standard MT5Protocol (MetaTrader5 PyPI).
         """
         required_methods = {
-            # Terminal (Protocol methods only - 32 methods matching MT5 PyPI)
+            # Terminal (Protocol methods only - 34 methods matching mt5linux)
             "initialize",
             "login",
             "shutdown",
@@ -133,11 +135,13 @@ class TestAsyncClientProtocol:
             "copy_rates_range",
             "copy_ticks_from",
             "copy_ticks_range",
-            # Trading
+            # Trading (includes mt5linux async/batch extensions)
             "order_calc_margin",
             "order_calc_profit",
             "order_check",
             "order_send",
+            "order_send_async",
+            "order_send_batch",
             # Positions
             "positions_total",
             "positions_get",
