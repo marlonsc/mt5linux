@@ -29,7 +29,7 @@ test: ## Run tests (auto-starts docker container if available, skips appropriate
 	SKIP_DOCKER=$(SKIP_DOCKER) $(POETRY) run pytest tests/ -v --tb=short
 
 coverage: ## Run tests with >90% coverage requirement
-	$(POETRY) run pytest tests/ -v --cov=mt5linux --cov-report=term-missing --cov-fail-under=90
+	SKIP_DOCKER=$(SKIP_DOCKER) $(POETRY) run pytest tests/ -v --cov=mt5linux --cov-report=term-missing --cov-fail-under=90
 
 check: lint type ## Quick check (lint + type)
 	@echo "✅ Check passed"
