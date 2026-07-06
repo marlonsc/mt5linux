@@ -54,6 +54,9 @@ exclude = [
     "*.pyi",
     "mt5linux/mt5_pb2.py",
     "mt5linux/mt5_pb2_grpc.py",
+    "mt5linux/generated_pb2.py",
+    "mt5linux/generated_grpc.py",
+    "mt5linux/generated_aio_grpc.py",
     "typings/",
 ]
 ignore = [
@@ -96,16 +99,21 @@ select = ["ALL"]
     "ASYNC109",
     "PLR0913",  # too many arguments - MT5 API requires specific method signatures
 ]
+"mt5linux/types.py" = [
+    "ANN401",  # Any return is required for the numpy structured-array protocol stub
+]
 
 [tool.mypy]
 exclude = [
     '.*\.pyi$',
     'mt5linux/mt5_pb2\.py$',
     'mt5linux/mt5_pb2_grpc\.py$',
+    'mt5linux/generated_pb2\.py$',
+    'mt5linux/generated_grpc\.py$',
+    'mt5linux/generated_aio_grpc\.py$',
     'typings/',
     'setup\.py$',
 ]
-mypy_path = "typings"
 python_version = "3.13"
 strict = true
 ignore_missing_imports = true
@@ -125,7 +133,11 @@ warn_unused_configs = true
 
 # Ignore protobuf modules (auto-generated)
 [[tool.mypy.overrides]]
-module = ["mt5linux.mt5_pb2", "mt5linux.mt5_pb2_grpc"]
+module = [
+    "mt5linux.generated_pb2",
+    "mt5linux.generated_grpc",
+    "mt5linux.generated_aio_grpc",
+]
 ignore_errors = true
 
 # Test files with complex fixtures and protobuf usage
@@ -142,20 +154,30 @@ disable_error_code = [
 ]
 
 [tool.pyrefly]
-exclude = [
-    '.*\.pyi$',
+project-excludes = [
     "mt5linux/mt5_pb2.py",
     "mt5linux/mt5_pb2_grpc.py",
+    "mt5linux/generated_pb2.py",
+    "mt5linux/generated_grpc.py",
+    "mt5linux/generated_aio_grpc.py",
     "typings/",
+    "../.venv/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/site-packages/**",
 ]
+search-path = ["."]
+python-version = "3.13"
+python-platform = "Linux"
 
 [tool.pyright]
 # Pyright config for MetaTrader5 module (Wine-only)
 exclude = [
-    '.*\.pyi$',
     "mt5linux/mt5_pb2.py",
     "mt5linux/mt5_pb2_grpc.py",
-    "typings/",
+    "mt5linux/generated_pb2.py",
+    "mt5linux/generated_grpc.py",
+    "mt5linux/generated_aio_grpc.py",
     "../.venv",
     "../.venv/**",
     "**/.venv",

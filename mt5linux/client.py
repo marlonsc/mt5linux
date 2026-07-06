@@ -27,7 +27,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Self
 
-from mt5linux import mt5_pb2
+from mt5linux import generated_pb2 as mt5_pb2
 from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.protocols import MT5Protocol
 from mt5linux.settings import MT5Settings
@@ -37,10 +37,8 @@ if TYPE_CHECKING:
     from datetime import datetime
     from types import TracebackType
 
-    import numpy as np
-    from numpy.typing import NDArray
-
     from mt5linux.models import MT5Models
+    from mt5linux.types import MT5Types as t
 
 log = logging.getLogger(__name__)
 
@@ -175,7 +173,7 @@ class MetaTrader5(MT5Protocol):
         """
 
         async def _async_impl() -> list[dict[str, object]]:
-            stub = self._async_client._ensure_connected()  # noqa: SLF001
+            stub = self._async_client.ensure_connected()
             response = await stub.GetMethods(mt5_pb2.Empty())
 
             methods: list[dict[str, object]] = []
@@ -221,7 +219,7 @@ class MetaTrader5(MT5Protocol):
         """
 
         async def _async_impl() -> list[dict[str, object]]:
-            stub = self._async_client._ensure_connected()  # noqa: SLF001
+            stub = self._async_client.ensure_connected()
             response = await stub.GetModels(mt5_pb2.Empty())
 
             models: list[dict[str, object]] = []
@@ -466,7 +464,7 @@ class MetaTrader5(MT5Protocol):
         timeframe: int,
         date_from: datetime | int,
         count: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates from a specific date.
 
         Args:
@@ -489,7 +487,7 @@ class MetaTrader5(MT5Protocol):
         timeframe: int,
         start_pos: int,
         count: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates from a bar position.
 
         Args:
@@ -512,7 +510,7 @@ class MetaTrader5(MT5Protocol):
         timeframe: int,
         date_from: datetime | int,
         date_to: datetime | int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates in a date range.
 
         Args:
@@ -535,7 +533,7 @@ class MetaTrader5(MT5Protocol):
         date_from: datetime | int,
         count: int,
         flags: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.TicksArray | None:
         """Copy tick data from a specific date.
 
         Args:
@@ -558,7 +556,7 @@ class MetaTrader5(MT5Protocol):
         date_from: datetime | int,
         date_to: datetime | int,
         flags: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.TicksArray | None:
         """Copy tick data in a date range.
 
         Args:

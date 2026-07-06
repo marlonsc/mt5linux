@@ -51,13 +51,11 @@ from mt5linux.types import MT5Types as t
 from mt5linux.types import T
 from mt5linux.utilities import MT5Utilities as u
 
-from . import mt5_pb2, mt5_pb2_grpc
+from . import generated_aio_grpc as mt5_pb2_grpc
+from . import generated_pb2 as mt5_pb2
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-    import numpy as np
-    from numpy.typing import NDArray
+    from collections.abc import Awaitable, Callable, Mapping
 
 # TypeVar for generic return type in _resilient_call
 
@@ -301,6 +299,10 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
             # Never connected - programming error, not retryable
             raise ConnectionError(_NOT_CONNECTED_MSG)
         return self._stub
+
+    def ensure_connected(self) -> mt5_pb2_grpc.MT5ServiceStub:
+        """Return the connected gRPC stub for public sync-client composition."""
+        return self._ensure_connected()
 
     # =========================================================================
     # QUEUE AND WAL INTEGRATION (100% TRANSPARENT)
@@ -1244,7 +1246,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         timeframe: int,
         date_from: datetime | int,
         count: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates from a specific date.
 
         Args:
@@ -1258,7 +1260,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         """
 
-        async def _call() -> NDArray[np.void] | None:
+        async def _call() -> t.RatesArray | None:
             stub = self._ensure_connected()
             request = mt5_pb2.CopyRatesRequest(
                 symbol=symbol,
@@ -1277,7 +1279,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         timeframe: int,
         start_pos: int,
         count: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates from a bar position.
 
         Args:
@@ -1291,7 +1293,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         """
 
-        async def _call() -> NDArray[np.void] | None:
+        async def _call() -> t.RatesArray | None:
             stub = self._ensure_connected()
             request = mt5_pb2.CopyRatesPosRequest(
                 symbol=symbol,
@@ -1310,7 +1312,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         timeframe: int,
         date_from: datetime | int,
         date_to: datetime | int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates in a date range.
 
         Args:
@@ -1324,7 +1326,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         """
 
-        async def _call() -> NDArray[np.void] | None:
+        async def _call() -> t.RatesArray | None:
             stub = self._ensure_connected()
             request = mt5_pb2.CopyRatesRangeRequest(
                 symbol=symbol,
@@ -1343,7 +1345,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         date_from: datetime | int,
         count: int,
         flags: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.TicksArray | None:
         """Copy tick data from a specific date.
 
         Args:
@@ -1357,7 +1359,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         """
 
-        async def _call() -> NDArray[np.void] | None:
+        async def _call() -> t.TicksArray | None:
             stub = self._ensure_connected()
             request = mt5_pb2.CopyTicksRequest(
                 symbol=symbol,
@@ -1376,7 +1378,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         date_from: datetime | int,
         date_to: datetime | int,
         flags: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.TicksArray | None:
         """Copy tick data in a date range.
 
         Args:
@@ -1390,7 +1392,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         """
 
-        async def _call() -> NDArray[np.void] | None:
+        async def _call() -> t.TicksArray | None:
             stub = self._ensure_connected()
             request = mt5_pb2.CopyTicksRangeRequest(
                 symbol=symbol,
@@ -1757,10 +1759,10 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         # Create dependencies for the orchestrator
         async def execute_grpc(
-            grpc_request: dict[str, object], attempt: int
+            grpc_request: Mapping[str, object], attempt: int
         ) -> object | None:
             return await self._execute_order_grpc(
-                cast("dict[str, JSONValue]", grpc_request), attempt
+                cast("dict[str, JSONValue]", dict(grpc_request)), attempt
             )
 
         async def verify_state(result: object, request_id: str | None) -> object | None:

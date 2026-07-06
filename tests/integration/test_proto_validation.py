@@ -15,7 +15,8 @@ import math
 
 import pytest
 
-from mt5linux import mt5_pb2, mt5_pb2_grpc
+from mt5linux import generated_grpc as mt5_pb2_grpc
+from mt5linux import generated_pb2 as mt5_pb2
 from tests.constants import TestConstants as tc
 
 

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 import pytest
 
-from mt5linux import mt5_pb2
+from mt5linux import generated_pb2 as mt5_pb2
 from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.models import MT5Models
 

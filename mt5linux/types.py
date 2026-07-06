@@ -19,13 +19,41 @@ Usage:
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TypedDict, TypeVar
-
-import numpy as np
-from numpy.typing import NDArray
+from collections.abc import Callable, Mapping
+from typing import Protocol, Self, TypedDict, TypeVar, overload
 
 T = TypeVar("T")
+
+type _ArrayValue = int | float
+type _ArrayRow = Mapping[str, _ArrayValue]
+
+type _JSONPrimitive = str | int | float | bool | None
+type _JSONValue = _JSONPrimitive | list["_JSONValue"] | dict[str, "_JSONValue"]
+
+
+class _ArrayDType(Protocol):
+    """NumPy dtype surface used by callers and serializers."""
+
+    names: tuple[str, ...] | None
+
+    def __str__(self) -> str: ...
+
+
+class _StructuredArray(Protocol):
+    """NumPy structured array surface returned by MT5 market-data methods."""
+
+    dtype: _ArrayDType
+    shape: tuple[int, ...]
+
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> _ArrayRow: ...
+    @overload
+    def __getitem__(self, key: slice) -> Self: ...
+    @overload
+    def __getitem__(self, key: str) -> tuple[_ArrayValue, ...]: ...
+    def reshape(self, shape: tuple[int, ...]) -> Self: ...
+    def tobytes(self) -> bytes: ...
 
 
 class MT5Types:
@@ -47,10 +75,16 @@ class MT5Types:
     # ARRAY TYPE ALIASES
     # =========================================================================
 
-    type RatesArray = NDArray[np.void]
+    type ArrayDType = _ArrayDType
+    """NumPy dtype surface used by callers and serializers."""
+
+    type StructuredArray = _StructuredArray
+    """NumPy structured array surface returned by MT5 market-data methods."""
+
+    type RatesArray = _StructuredArray
     """NumPy array for OHLCV rate data from copy_rates_* functions."""
 
-    type TicksArray = NDArray[np.void]
+    type TicksArray = _StructuredArray
     """NumPy array for tick data from copy_ticks_* functions."""
 
     # =========================================================================
@@ -67,7 +101,7 @@ class MT5Types:
     type JSONPrimitive = str | int | float | bool | None
     """Primitive JSON-compatible values."""
 
-    type JSONValue = JSONPrimitive | list[JSONValue] | dict[str, JSONValue]
+    type JSONValue = _JSONValue
     """Recursive JSON-compatible value type (strict typing, no Any)."""
 
     # =========================================================================
@@ -129,3 +163,6 @@ class MT5Types:
         tick_volume: int
         spread: int
         real_volume: int
+
+
+t = MT5Types

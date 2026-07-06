@@ -31,7 +31,9 @@ import grpc
 import pytest
 from dotenv import load_dotenv
 
-from mt5linux import AsyncMetaTrader5, MetaTrader5, mt5_pb2, mt5_pb2_grpc
+from mt5linux import AsyncMetaTrader5, MetaTrader5
+from mt5linux import generated_grpc as mt5_pb2_grpc
+from mt5linux import generated_pb2 as mt5_pb2
 from mt5linux.constants import MT5Constants as c
 from mt5linux.settings import MT5Settings
 from mt5linux.utilities import MT5Utilities as u

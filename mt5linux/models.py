@@ -19,7 +19,7 @@ Usage:
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic needs datetime at runtime
-from typing import Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,12 +29,16 @@ from mt5linux.settings import MT5Settings
 # Default config instance for model defaults
 _settings = MT5Settings()
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-@runtime_checkable
-class _NamedTupleProtocol(Protocol):
-    """Protocol for objects with _asdict method (namedtuple-like)."""
 
-    def _asdict(self) -> dict[str, object]: ...
+def _mt5_record_dict(obj: object) -> dict[str, object] | None:
+    """Return namedtuple-like MT5 record data without direct private access."""
+    as_dict = getattr(obj, "_asdict", None)
+    if not callable(as_dict):
+        return None
+    return dict(cast("Callable[[], dict[str, object]]", as_dict)())
 
 
 class MT5Models:
@@ -77,8 +81,8 @@ class MT5Models:
             if obj is None:
                 return None
             # Check for real namedtuple (_asdict returns actual dict)
-            if isinstance(obj, _NamedTupleProtocol):
-                result = obj._asdict()
+            result = _mt5_record_dict(obj)
+            if result is not None:
                 return cls.model_validate(result)
             # Use from_attributes for objects with direct attribute access
             return cls.model_validate(obj)
@@ -189,24 +193,24 @@ class MT5Models:
             return self.retcode == c.Order.TradeRetcode.DONE_PARTIAL
 
         @classmethod
-        def from_mt5(cls, result: object) -> Self | None:
+        def from_mt5(cls, obj: object) -> Self | None:
             """Create from MT5 OrderSendResult.
 
             Special handling: returns error result instead of None for None input.
 
             Args:
-                result: MT5 OrderSendResult object or dict.
+                obj: MT5 OrderSendResult object or dict.
 
             Returns:
                 OrderResult instance (error result if input is None).
 
             """
-            if result is None:
+            if obj is None:
                 return cls(
                     retcode=c.Order.TradeRetcode.ERROR,
                     comment="No result from MT5",
                 )
-            return super().from_mt5(result)
+            return super().from_mt5(obj)
 
     class OrderCheckResult(Base):
         """MT5 order check result.
@@ -237,19 +241,19 @@ class MT5Models:
             return self.retcode == c.Order.TradeRetcode.DONE
 
         @classmethod
-        def from_mt5(cls, result: object) -> Self | None:
+        def from_mt5(cls, obj: object) -> Self | None:
             """Create from MT5 OrderCheckResult.
 
             Args:
-                result: MT5 OrderCheckResult object or dict.
+                obj: MT5 OrderCheckResult object or dict.
 
             Returns:
                 OrderCheckResult instance or None if input is None.
 
             """
-            if result is None:
+            if obj is None:
                 return None
-            return super().from_mt5(result)
+            return super().from_mt5(obj)
 
     class AccountInfo(Base):
         """MT5 account information (28 fields, positional order from real MT5)."""
@@ -601,3 +605,6 @@ class MT5Models:
         path: str = ""
         data_path: str = ""
         commondata_path: str = ""
+
+
+m = MT5Models

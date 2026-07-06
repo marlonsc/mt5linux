@@ -26,20 +26,162 @@ validation of client implementations.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
-    import numpy as np
-    from numpy.typing import NDArray
-
     from mt5linux.models import MT5Models
+    from mt5linux.types import MT5Types as t
 
 # Type alias for JSON values (single source of truth)
 type JSONPrimitive = str | int | float | bool | None
 type JSONValue = JSONPrimitive | list[JSONValue] | dict[str, JSONValue]
+
+
+class _NamedTupleRecord(Protocol):
+    """Namedtuple-like MT5 record that can be serialized to a dict."""
+
+
+class _TerminalInfoRecord(_NamedTupleRecord, Protocol):
+    """Subset of terminal_info fields used by bridge health checks."""
+
+    connected: bool
+    trade_allowed: bool
+    build: int
+
+
+class _ArrayDType(Protocol):
+    """NumPy dtype behavior used by bridge serializers."""
+
+    names: tuple[str, ...] | None
+
+    def __str__(self) -> str: ...
+
+
+class _StructuredArray(Protocol):
+    """NumPy structured array behavior used by bridge serializers."""
+
+    dtype: _ArrayDType
+    shape: tuple[int, ...]
+
+    def __len__(self) -> int: ...
+    def tobytes(self) -> bytes: ...
+
+
+class _MT5Callable(Protocol):
+    """Callable exported by the MetaTrader5 runtime module."""
+
+    __doc__: str | None
+
+    def __call__(self, *args: JSONValue, **kwargs: JSONValue) -> JSONValue: ...
+
+
+type _MT5Attribute = int | str | type[tuple[JSONValue, ...]] | _MT5Callable
+type _RequestValue = JSONValue
+type _RequestKwargs = Mapping[str, _RequestValue]
+type _RecordTuple = tuple[_NamedTupleRecord, ...]
+
+
+class _MetaTrader5Module(Protocol):
+    """Runtime MetaTrader5 module surface used by bridge.py."""
+
+    __version__: str
+
+    def __dir__(self) -> list[str]: ...
+    def __getattr__(self, name: str) -> _MT5Attribute: ...
+    def initialize(self, **kwargs: _RequestValue) -> bool: ...
+    def shutdown(self) -> None: ...
+    def login(
+        self,
+        *,
+        login: int,
+        password: str,
+        server: str,
+        timeout: int,
+    ) -> bool: ...
+    def version(self) -> tuple[int, int, str | int] | None: ...
+    def last_error(self) -> tuple[int, str]: ...
+    def terminal_info(self) -> _TerminalInfoRecord | None: ...
+    def account_info(self) -> _NamedTupleRecord | None: ...
+    def symbols_total(self) -> int: ...
+    def symbols_get(self, group: str | None = None) -> _RecordTuple | None: ...
+    def symbol_info(self, symbol: str) -> _NamedTupleRecord | None: ...
+    def symbol_info_tick(self, symbol: str) -> _NamedTupleRecord | None: ...
+    def symbol_select(self, symbol: str, *, enable: bool) -> bool: ...
+    def copy_rates_from(
+        self,
+        symbol: str,
+        timeframe: int,
+        date_from: int,
+        count: int,
+    ) -> _StructuredArray | None: ...
+    def copy_rates_from_pos(
+        self,
+        symbol: str,
+        timeframe: int,
+        start_pos: int,
+        count: int,
+    ) -> _StructuredArray | None: ...
+    def copy_rates_range(
+        self,
+        symbol: str,
+        timeframe: int,
+        date_from: int,
+        date_to: int,
+    ) -> _StructuredArray | None: ...
+    def copy_ticks_from(
+        self,
+        symbol: str,
+        date_from: int,
+        count: int,
+        flags: int,
+    ) -> _StructuredArray | None: ...
+    def copy_ticks_range(
+        self,
+        symbol: str,
+        date_from: int,
+        date_to: int,
+        flags: int,
+    ) -> _StructuredArray | None: ...
+    def order_calc_margin(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price: float,
+    ) -> float | None: ...
+    def order_calc_profit(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price_open: float,
+        price_close: float,
+    ) -> float | None: ...
+    def order_check(self, request: _RequestKwargs) -> _NamedTupleRecord | None: ...
+    def order_send(self, request: _RequestKwargs) -> _NamedTupleRecord | None: ...
+    def positions_total(self) -> int: ...
+    def positions_get(self, **kwargs: _RequestValue) -> _RecordTuple | None: ...
+    def orders_total(self) -> int: ...
+    def orders_get(self, **kwargs: _RequestValue) -> _RecordTuple | None: ...
+    def history_orders_total(self, date_from: int, date_to: int) -> int: ...
+    def history_orders_get(
+        self,
+        *args: int,
+        **kwargs: _RequestValue,
+    ) -> _RecordTuple | None: ...
+    def history_deals_total(self, date_from: int, date_to: int) -> int: ...
+    def history_deals_get(
+        self,
+        *args: int,
+        **kwargs: _RequestValue,
+    ) -> _RecordTuple | None: ...
+    def market_book_add(self, symbol: str) -> bool: ...
+    def market_book_get(self, symbol: str) -> _RecordTuple | None: ...
+    def market_book_release(self, symbol: str) -> bool: ...
 
 
 @runtime_checkable
@@ -221,7 +363,7 @@ class MT5Protocol(Protocol):
         timeframe: int,
         date_from: datetime | int,
         count: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates from a specific date.
 
         Args:
@@ -242,7 +384,7 @@ class MT5Protocol(Protocol):
         timeframe: int,
         start_pos: int,
         count: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates from a bar position.
 
         Args:
@@ -263,7 +405,7 @@ class MT5Protocol(Protocol):
         timeframe: int,
         date_from: datetime | int,
         date_to: datetime | int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates in a date range.
 
         Args:
@@ -284,7 +426,7 @@ class MT5Protocol(Protocol):
         date_from: datetime | int,
         count: int,
         flags: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.TicksArray | None:
         """Copy tick data from a specific date.
 
         Args:
@@ -305,7 +447,7 @@ class MT5Protocol(Protocol):
         date_from: datetime | int,
         date_to: datetime | int,
         flags: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.TicksArray | None:
         """Copy tick data in a date range.
 
         Args:
@@ -726,7 +868,7 @@ class AsyncMT5Protocol(Protocol):
         timeframe: int,
         date_from: datetime | int,
         count: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates from a specific date (async)."""
         ...
 
@@ -736,7 +878,7 @@ class AsyncMT5Protocol(Protocol):
         timeframe: int,
         start_pos: int,
         count: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates from a bar position (async)."""
         ...
 
@@ -746,7 +888,7 @@ class AsyncMT5Protocol(Protocol):
         timeframe: int,
         date_from: datetime | int,
         date_to: datetime | int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.RatesArray | None:
         """Copy OHLCV rates in a date range (async)."""
         ...
 
@@ -756,7 +898,7 @@ class AsyncMT5Protocol(Protocol):
         date_from: datetime | int,
         count: int,
         flags: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.TicksArray | None:
         """Copy tick data from a specific date (async)."""
         ...
 
@@ -766,7 +908,7 @@ class AsyncMT5Protocol(Protocol):
         date_from: datetime | int,
         date_to: datetime | int,
         flags: int,
-    ) -> NDArray[np.void] | None:
+    ) -> t.TicksArray | None:
         """Copy tick data in a date range (async)."""
         ...
 
@@ -956,6 +1098,32 @@ class AsyncMT5Protocol(Protocol):
         ...
 
 
-# Backwards compatibility aliases (deprecated, will be removed)
+# Backwards-compatible aliases used by tests and external consumers.
 SyncClientProtocol = MT5Protocol
 AsyncClientProtocol = AsyncMT5Protocol
+
+__all__ = [
+    "AsyncClientProtocol",
+    "AsyncMT5Protocol",
+    "JSONPrimitive",
+    "JSONValue",
+    "MT5Protocol",
+    "MT5Protocols",
+    "SyncClientProtocol",
+]
+
+
+class MT5Protocols:
+    """Canonical protocol facade for mt5linux."""
+
+    type JSONPrimitive = JSONPrimitive
+    type JSONValue = JSONValue
+    type NamedTupleRecord = _NamedTupleRecord
+    type StructuredArray = _StructuredArray
+    type MetaTrader5Module = _MetaTrader5Module
+
+    SyncClient = MT5Protocol
+    AsyncClient = AsyncMT5Protocol
+
+
+p = MT5Protocols

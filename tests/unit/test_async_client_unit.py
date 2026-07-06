@@ -25,7 +25,8 @@ import grpc
 import orjson
 import pytest
 
-from mt5linux import mt5_pb2, mt5_pb2_grpc
+from mt5linux import generated_aio_grpc as mt5_pb2_grpc
+from mt5linux import generated_pb2 as mt5_pb2
 from mt5linux.async_client import AsyncMetaTrader5
 from mt5linux.models import MT5Models
 from mt5linux.settings import MT5Settings

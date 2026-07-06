@@ -45,22 +45,58 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, Protocol, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    NoReturn,
+    Protocol,
+    cast,
+    overload,
+    runtime_checkable,
+)
 
 import aiosqlite
-import numpy as np
 import orjson
 
 from mt5linux.constants import MT5Constants as c
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Sequence
+    from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 
-    from numpy.typing import NDArray
-
+    from mt5linux.protocols import MT5Protocols as p
     from mt5linux.settings import MT5Settings
+    from mt5linux.types import MT5Types as t
     from mt5linux.types import T
+
+
+def _string_tuple(value: object) -> tuple[str, ...] | None:
+    """Return value as a string tuple when every item is a string."""
+    if not isinstance(value, tuple):
+        return None
+    items = cast("tuple[object, ...]", value)
+    result: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            return None
+        result.append(item)
+    return tuple(result)
+
+
+def _tuple_of_objects(
+    value: object,
+    expected_len: int,
+    expected: str,
+) -> tuple[object, ...]:
+    """Validate tuple shape and return explicitly typed items."""
+    if not isinstance(value, tuple):
+        msg = f"Expected {expected}, got object that is not a tuple"
+        raise TypeError(msg)
+    tuple_value = cast("tuple[object, ...]", value)
+    if len(tuple_value) != expected_len:
+        msg = f"Expected {expected}, got tuple with {len(tuple_value)} items"
+        raise TypeError(msg)
+    return tuple_value
 
 
 # Protocols for gRPC protobuf types
@@ -78,7 +114,37 @@ class _SymbolsResponseProto(Protocol):
     """Protocol for SymbolsResponse protobuf message."""
 
     total: int
-    chunks: Sequence[bytes]
+    chunks: Sequence[str]
+
+
+class _NumpyModule(Protocol):
+    """Small NumPy surface needed by mt5linux serialization."""
+
+    def dtype(self, value: str | list[tuple[str, str]]) -> t.ArrayDType: ...
+    def frombuffer(
+        self, buffer: bytes, *, dtype: t.ArrayDType
+    ) -> t.StructuredArray: ...
+
+
+@runtime_checkable
+class _GrpcStatusCodeProto(Protocol):
+    """gRPC status-code value surface used by retry classification."""
+
+    value: tuple[int, str]
+
+
+@runtime_checkable
+class _GrpcErrorProto(Protocol):
+    """Exception surface provided by grpc.RpcError implementations."""
+
+    def code(self) -> _GrpcStatusCodeProto | int: ...
+
+
+@runtime_checkable
+class _RetcodeResultProto(Protocol):
+    """Result surface for MT5 trade return-code handling."""
+
+    retcode: int
 
 
 class _CircuitBreakerRecorder(Protocol):
@@ -102,6 +168,19 @@ class MT5Utilities:
     Note: All constants moved to MT5Constants.Validation:
     VERSION_TUPLE_LEN, ERROR_TUPLE_LEN, REQUEST_ID_*
     """
+
+    class External:
+        """External runtime module loaders."""
+
+        @staticmethod
+        def load_metatrader5() -> p.MetaTrader5Module:
+            """Load the real MetaTrader5 module through a typed protocol."""
+            return cast("p.MetaTrader5Module", import_module("MetaTrader5"))
+
+        @staticmethod
+        def load_numpy() -> _NumpyModule:
+            """Load NumPy through the typed serialization protocol."""
+            return cast("_NumpyModule", import_module("numpy"))
 
     # =========================================================================
     # EXCEPTIONS
@@ -294,11 +373,16 @@ class MT5Utilities:
             if value is None:
                 return None
             expected_len = c.Validation.VERSION_TUPLE_LEN
-            if not isinstance(value, tuple) or len(value) != expected_len:
-                msg = f"Expected version tuple | None, got {type(value).__name__}"
-                raise TypeError(msg)
+            items = cast(
+                "tuple[int, int, str]",
+                _tuple_of_objects(
+                    value,
+                    expected_len,
+                    "version tuple | None",
+                ),
+            )
             try:
-                return (int(value[0]), int(value[1]), str(value[2]))
+                return (int(items[0]), int(items[1]), str(items[2]))
             except (ValueError, IndexError, TypeError) as e:
                 msg = f"Invalid version tuple: {e}"
                 raise TypeError(msg) from e
@@ -307,11 +391,16 @@ class MT5Utilities:
         def validate_last_error(value: object) -> tuple[int, str]:
             """Validate and convert Any to last_error tuple."""
             expected_len = c.Validation.ERROR_TUPLE_LEN
-            if not isinstance(value, tuple) or len(value) != expected_len:
-                msg = f"Expected tuple[int, str], got {type(value).__name__}"
-                raise TypeError(msg)
+            items = cast(
+                "tuple[int, str]",
+                _tuple_of_objects(
+                    value,
+                    expected_len,
+                    "tuple[int, str]",
+                ),
+            )
             try:
-                return (int(value[0]), str(value[1]))
+                return (int(items[0]), str(items[1]))
             except (ValueError, IndexError, TypeError) as e:
                 msg = f"Invalid error tuple: {e}"
                 raise TypeError(msg) from e
@@ -370,7 +459,7 @@ class MT5Utilities:
 
             """
             if isinstance(d, dict):
-                return MT5Utilities.Data.Wrapper(d)
+                return MT5Utilities.Data.Wrapper(cast("dict[str, object]", d))
             return d
 
         @staticmethod
@@ -392,7 +481,7 @@ class MT5Utilities:
 
         @staticmethod
         def unwrap_chunks(
-            result: dict[str, object] | None,
+            result: dict[str, object] | tuple[object, ...] | list[object] | None,
         ) -> tuple[object, ...] | None:
             """Reassemble chunked response from server into tuple of objects.
 
@@ -403,28 +492,41 @@ class MT5Utilities:
                 Tuple of wrapped objects or None.
 
             """
+            unwrapped: tuple[object, ...] | None
             if result is None:
                 return None
-
-            if isinstance(result, dict) and "chunks" in result:
+            if isinstance(result, dict):
+                if "chunks" not in result:
+                    return None
+                chunks = result.get("chunks")
+                if not isinstance(chunks, list):
+                    return ()
                 all_items: list[MT5Utilities.Data.Wrapper] = []
-                chunks = result["chunks"]
-                if isinstance(chunks, list):
-                    for chunk in chunks:
-                        if isinstance(chunk, list):
-                            all_items.extend(
-                                MT5Utilities.Data.Wrapper(d)
-                                for d in chunk
-                                if isinstance(d, dict)
-                            )
-                return tuple(all_items)
-
-            if isinstance(result, tuple | list):
-                return MT5Utilities.Data.wrap_many(list(result))
-
-            return None
+                chunks_list = cast("list[object]", chunks)
+                for chunk in chunks_list:
+                    if not isinstance(chunk, list):
+                        return None
+                    all_items.extend(
+                        MT5Utilities.Data.Wrapper(cast("dict[str, object]", item))
+                        for item in cast("list[object]", chunk)
+                        if isinstance(item, dict)
+                    )
+                unwrapped = tuple(all_items)
+            elif isinstance(result, tuple):
+                unwrapped = MT5Utilities.Data.wrap_many(result)
+            else:
+                unwrapped = MT5Utilities.Data.wrap_many(tuple(result))
+            return unwrapped
 
         # --- DateTime ---
+
+        @staticmethod
+        @overload
+        def to_timestamp(dt: datetime | int) -> int: ...
+
+        @staticmethod
+        @overload
+        def to_timestamp(dt: None) -> None: ...
 
         @staticmethod
         def to_timestamp(dt: datetime | int | None) -> int | None:
@@ -499,7 +601,7 @@ class MT5Utilities:
         @staticmethod
         def numpy_from_proto(
             proto: _NumpyArrayProto | None,
-        ) -> NDArray[np.void] | None:
+        ) -> t.StructuredArray | None:
             """Convert NumpyArray proto to numpy array.
 
             Used by both sync and async clients to deserialize OHLCV and tick data
@@ -521,15 +623,16 @@ class MT5Utilities:
 
             # Parse dtype string to numpy dtype
             dtype_str = proto.dtype
+            numpy = MT5Utilities.External.load_numpy()
             if dtype_str.startswith("["):
                 # Structured array dtype - parse the list of tuples
-                dtype_spec = ast.literal_eval(dtype_str)
-                dtype = np.dtype(dtype_spec)
+                dtype_spec = cast("list[tuple[str, str]]", ast.literal_eval(dtype_str))
+                dtype = numpy.dtype(dtype_spec)
             else:
                 # Simple dtype like 'float64', '<f8'
-                dtype = np.dtype(dtype_str)
+                dtype = numpy.dtype(dtype_str)
 
-            arr: NDArray[np.void] = np.frombuffer(proto.data, dtype=dtype)
+            arr = numpy.frombuffer(proto.data, dtype=dtype)
             if proto.shape:
                 arr = arr.reshape(tuple(proto.shape))
             return arr
@@ -582,13 +685,15 @@ class MT5Utilities:
                 List of field names in positional order, or None if fails.
 
             """
-            # Python 3.10+ structseq types have __match_args__
-            if hasattr(tuple_cls, "__match_args__"):
-                return list(tuple_cls.__match_args__)
+            # Python 3.10+ structseq types have __match_args__.
+            match_args = _string_tuple(getattr(tuple_cls, "__match_args__", None))
+            if match_args is not None:
+                return list(match_args)
 
-            # Standard namedtuples have _fields
-            if hasattr(tuple_cls, "_fields"):
-                return list(tuple_cls._fields)
+            # Standard namedtuples have _fields.
+            fields = _string_tuple(getattr(tuple_cls, "_fields", None))
+            if fields is not None:
+                return list(fields)
 
             # For types without either, create test instance and map indices
             member_fields = [
@@ -689,16 +794,18 @@ class MT5Utilities:
                 True if exception is retryable.
 
             """
+            # MT5 client errors. Checked before gRPC protocol detection because
+            # both RetryableError and PermanentError expose a `code` attribute
+            # that would satisfy _GrpcErrorProto.
+            if isinstance(error, MT5Utilities.Exceptions.Error):
+                return isinstance(error, MT5Utilities.Exceptions.RetryableError)
+
             # Check for gRPC errors (duck typing to avoid import)
-            if hasattr(error, "code") and callable(error.code):
+            if isinstance(error, _GrpcErrorProto):
                 code = error.code()
                 # grpc.StatusCode is an enum, get its value
-                code_value = code.value[0] if hasattr(code, "value") else int(code)
+                code_value = code if isinstance(code, int) else code.value[0]
                 return MT5Utilities.ErrorClassifier.is_retryable_grpc_code(code_value)
-
-            # MT5 retryable errors (includes EmptyResponseError)
-            if isinstance(error, MT5Utilities.Exceptions.RetryableError):
-                return True
 
             # Connection/timeout errors are retryable, EXCEPT "not established"
             # which means client was never connected (programming error, not transient)
@@ -1648,7 +1755,7 @@ class MT5Utilities:
                 MaxRetriesError: Otherwise.
 
             """
-            if last_result and hasattr(last_result, "retcode") and last_result.retcode:
+            if isinstance(last_result, _RetcodeResultProto) and last_result.retcode:
                 raise MT5Utilities.Exceptions.PermanentError(
                     last_result.retcode,
                     f"Max retries exceeded. Last retcode: {last_result.retcode}",
@@ -1696,7 +1803,9 @@ class MT5Utilities:
             """
 
             # Required callbacks
-            execute_grpc: Callable[[dict[str, object], int], Awaitable[object | None]]
+            execute_grpc: Callable[
+                [Mapping[str, object], int], Awaitable[object | None]
+            ]
             verify_state: Callable[[object, str | None], Awaitable[object | None]]
             health_check: Callable[[], Awaitable[bool]]
 
@@ -1707,11 +1816,11 @@ class MT5Utilities:
 
             # WAL (optional - can be None if disabled)
             wal_log_intent: (
-                Callable[[str, dict[str, object]], Awaitable[None]] | None
+                Callable[[str, Mapping[str, object]], Awaitable[None]] | None
             ) = None
             wal_mark_sent: Callable[[str], Awaitable[None]] | None = None
             wal_mark_verified: (
-                Callable[[str, dict[str, object]], Awaitable[None]] | None
+                Callable[[str, Mapping[str, object]], Awaitable[None]] | None
             ) = None
             wal_mark_failed: Callable[[str, str], Awaitable[None]] | None = None
 
@@ -2313,7 +2422,11 @@ class MT5Utilities:
             self._initialized = False
             log.debug("WAL closed")
 
-        async def log_intent(self, request_id: str, request: dict[str, object]) -> None:
+        async def log_intent(
+            self,
+            request_id: str,
+            request: Mapping[str, object],
+        ) -> None:
             """Log order intent BEFORE sending.
 
             Args:
@@ -2361,7 +2474,7 @@ class MT5Utilities:
         async def mark_verified(
             self,
             request_id: str,
-            result: dict[str, object],
+            result: Mapping[str, object],
         ) -> None:
             """Mark as verified after MT5 confirmation.
 

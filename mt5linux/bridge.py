@@ -41,27 +41,49 @@ import threading
 import time
 from concurrent import futures
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import grpc
-import MetaTrader5  # pyright: ignore[reportMissingImports]
 import orjson
 
-from . import mt5_pb2, mt5_pb2_grpc
+from . import generated_grpc as mt5_pb2_grpc
+from . import generated_pb2 as mt5_pb2
+from .utilities import MT5Utilities as u
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
     from datetime import datetime
-    from types import FrameType, ModuleType
+    from types import FrameType
 
-    import numpy as np
-    from numpy.typing import NDArray
+    from .protocols import MT5Protocols as p
+
+
+@runtime_checkable
+class _GrpcServerLike(Protocol):
+    """Subset of grpc.Server methods used by this module."""
+
+    def add_insecure_port(self, address: str) -> int: ...
+    def start(self) -> None: ...
+    def wait_for_termination(self, timeout: float | None = None) -> bool: ...
+    def stop(self, grace: float | None = None) -> object: ...
+
 
 # Module logger
 log = logging.getLogger("mt5bridge")
 
+
+def _as_tuple_of_strings(value: object) -> tuple[str, ...] | None:
+    """Return the value as tuple[str, ...] when every element is a string."""
+    if not isinstance(value, tuple):
+        return None
+    names = cast("tuple[object, ...]", value)
+    if not all(isinstance(name, str) for name in names):
+        return None
+    return cast("tuple[str, ...]", names)
+
+
 # Global server reference for signal handler
-_server: grpc.Server | None = None  # pylint: disable=invalid-name  # Module-private global
+_server: _GrpcServerLike | None = None  # pylint: disable=invalid-name  # Module-private global
 
 # Global MT5 call timeout (configurable via --mt5-timeout)
 _mt5_call_timeout: float = 30.0  # pylint: disable=invalid-name  # Module-private global
@@ -161,7 +183,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
     - Market depth (DOM)
     """
 
-    _mt5_module: ModuleType = MetaTrader5
+    _mt5_module: p.MetaTrader5Module = u.External.load_metatrader5()
     _mt5_lock: threading.RLock = threading.RLock()
     # Only one demo-creation wizard may run at a time (it drives the shared GUI);
     # a non-blocking acquire lets CreateDemoAccount REJECT concurrent calls instead
@@ -174,15 +196,12 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         log.info("MT5GRPCServicer initializing...")
 
         # Auto-initialize connection to MT5 terminal
-        if self._mt5_module is not None:
-            result = self._mt5_module.initialize()
-            if result:
-                log.info("MT5 auto-initialize: SUCCESS")
-            else:
-                error = self._mt5_module.last_error()
-                log.warning("MT5 auto-initialize: FAILED - %s", error)
+        result = self._mt5_module.initialize()
+        if result:
+            log.info("MT5 auto-initialize: SUCCESS")
         else:
-            log.warning("MT5 module not available for auto-initialize")
+            error = self._mt5_module.last_error()
+            log.warning("MT5 auto-initialize: FAILED - %s", error)
 
         log.info("MT5GRPCServicer initialized")
 
@@ -197,13 +216,11 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             RuntimeError: If MT5 module is not available.
 
         """
-        if self._mt5_module is None:
-            msg = "MT5 module not loaded - initialize first"
-            raise RuntimeError(msg)
+        return
 
     def _namedtuple_to_dict(
         self,
-        obj: object,
+        obj: p.NamedTupleRecord,
         nested_fields: list[str] | None = None,
     ) -> dict[str, JSONValue]:
         """Convert namedtuple to JSON-serializable dict.
@@ -216,19 +233,25 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             Dictionary representation.
 
         """
-        if not hasattr(obj, "_asdict"):
+        as_dict = getattr(obj, "_asdict", None)
+        if not callable(as_dict):
             return {}
-        data: dict[str, JSONValue] = obj._asdict()
+        data = dict(cast("Callable[[], dict[str, JSONValue]]", as_dict)())
         if nested_fields:
             for field in nested_fields:
                 nested = data.get(field)
-                if nested is not None and hasattr(nested, "_asdict"):
-                    data[field] = nested._asdict()
+                if nested is None:
+                    continue
+                nested_as_dict = getattr(nested, "_asdict", None)
+                if callable(nested_as_dict):
+                    data[field] = dict(
+                        cast("Callable[[], dict[str, JSONValue]]", nested_as_dict)()
+                    )
         return data
 
     def _numpy_to_proto(
         self,
-        arr: NDArray[np.void] | None,
+        arr: p.StructuredArray | None,
     ) -> mt5_pb2.NumpyArray:
         """Convert numpy array to protobuf NumpyArray message.
 
@@ -337,17 +360,6 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
 
         """
         log.debug("HealthCheck: called")
-
-        if self._mt5_module is None:
-            log.debug("HealthCheck: MT5 module not loaded")
-            return mt5_pb2.HealthStatus(
-                healthy=False,
-                mt5_available=False,
-                connected=False,
-                trade_allowed=False,
-                build=0,
-                reason="MT5 module not loaded",
-            )
 
         # Service is healthy if MT5 module is loaded and responding
         # Terminal connection is separate - happens during Initialize/Login
@@ -569,7 +581,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         return mt5_pb2.Constants(values=constants)
 
     @staticmethod
-    def _get_tuple_field_order(klass: type) -> list[str] | None:
+    def _get_tuple_field_order(klass: type[tuple[JSONValue, ...]]) -> list[str] | None:
         """Get field names in correct positional order from tuple subclass.
 
         Uses Python's built-in introspection - NO hardcoding.
@@ -585,13 +597,15 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             List of field names in positional order, or None if fails.
 
         """
-        # Python 3.10+ structseq types have __match_args__ in positional order
-        if hasattr(klass, "__match_args__"):
-            return list(klass.__match_args__)
+        # Python 3.10+ structseq types have __match_args__ in positional order.
+        match_args = _as_tuple_of_strings(getattr(klass, "__match_args__", None))
+        if match_args is not None:
+            return list(match_args)
 
-        # Standard namedtuples have _fields
-        if hasattr(klass, "_fields"):
-            return list(klass._fields)
+        # Standard namedtuples have _fields.
+        fields = _as_tuple_of_strings(getattr(klass, "_fields", None))
+        if fields is not None:
+            return list(fields)
 
         # For types without either, create test instance and map indices
         member_fields = [
@@ -607,7 +621,8 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         # Create instance with sentinel values to determine positional order
         try:
             n = len(member_fields)
-            instance = klass.__new__(klass, tuple(range(n)))
+            tuple_type = cast("type[tuple[object, ...]]", klass)
+            instance = tuple_type(tuple(range(n)))
 
             # Map each field to its positional index
             field_to_index: dict[str, int] = {}
@@ -823,7 +838,8 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
                 continue
 
             # Get fields in correct positional order (dynamic introspection)
-            field_order = self._get_tuple_field_order(attr)
+            tuple_class = cast("type[tuple[JSONValue, ...]]", attr)
+            field_order = self._get_tuple_field_order(tuple_class)
 
             if field_order is None:
                 # Log warning but skip this type if introspection fails
@@ -1075,7 +1091,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             return mt5_pb2.SymbolsResponse(total=0, chunks=[])
 
         # MT5 API returns tuple of SymbolInfo namedtuples
-        items = list(cast("Iterable[object]", result))
+        items = list(cast("Iterable[p.NamedTupleRecord]", result))
         total = len(items)
         log.debug("SymbolsGet: total=%s symbols", total)
 
@@ -1167,7 +1183,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
         )
         if not self._validate_symbol(request.symbol, "SymbolSelect"):
             return mt5_pb2.BoolResponse(result=False)
-        result = self._mt5_module.symbol_select(request.symbol, request.enable)
+        result = self._mt5_module.symbol_select(request.symbol, enable=request.enable)
         log.debug("SymbolSelect: result=%s", result)
         return mt5_pb2.BoolResponse(result=bool(result))
 
@@ -1208,7 +1224,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.date_from,
             request.count,
         )
-        array_result = cast("NDArray[np.void] | None", result)
+        array_result = cast("p.StructuredArray | None", result)
         log.debug(
             "CopyRatesFrom: returned %s bars",
             len(array_result) if array_result is not None else 0,
@@ -1248,7 +1264,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.start_pos,
             request.count,
         )
-        array_result = cast("NDArray[np.void] | None", result)
+        array_result = cast("p.StructuredArray | None", result)
         log.debug(
             "CopyRatesFromPos: returned %s bars",
             len(array_result) if array_result is not None else 0,
@@ -1292,7 +1308,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.date_from,
             request.date_to,
         )
-        array_result = cast("NDArray[np.void] | None", result)
+        array_result = cast("p.StructuredArray | None", result)
         log.debug(
             "CopyRatesRange: returned %s bars",
             len(array_result) if array_result is not None else 0,
@@ -1336,7 +1352,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.count,
             request.flags,
         )
-        array_result = cast("NDArray[np.void] | None", result)
+        array_result = cast("p.StructuredArray | None", result)
         log.debug(
             "CopyTicksFrom: returned %s ticks",
             len(array_result) if array_result is not None else 0,
@@ -1380,7 +1396,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             request.date_to,
             request.flags,
         )
-        array_result = cast("NDArray[np.void] | None", result)
+        array_result = cast("p.StructuredArray | None", result)
         log.debug(
             "CopyTicksRange: returned %s ticks",
             len(array_result) if array_result is not None else 0,
@@ -1955,21 +1971,24 @@ def serve(
     """
     global _server
 
-    _server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+    if not isinstance(server, _GrpcServerLike):
+        raise RuntimeError("grpc.server returned incompatible server interface")
+    _server = server
     register_servicer = cast(
-        "Callable[[MT5GRPCServicer, grpc.Server], None]",
+        "Callable[[MT5GRPCServicer, _GrpcServerLike], None]",
         mt5_pb2_grpc.add_MT5ServiceServicer_to_server,
     )
-    register_servicer(MT5GRPCServicer(), _server)
+    register_servicer(MT5GRPCServicer(), server)
     server_address = f"{host}:{port}"
-    _server.add_insecure_port(server_address)
+    server.add_insecure_port(server_address)
 
     log.info("Starting MT5 gRPC server on %s", server_address)
     log.info("Python %s", sys.version)
 
-    _server.start()
+    server.start()
     log.info("Server started, waiting for connections...")
-    _server.wait_for_termination()
+    server.wait_for_termination()
 
 
 def main(argv: list[str] | None = None) -> int:

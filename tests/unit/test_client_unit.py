@@ -6,7 +6,7 @@ Docker container, or MetaTrader5 terminal is required.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,6 +16,8 @@ from mt5linux.models import MT5Models
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from mt5linux.async_client import AsyncMetaTrader5
 
 
 @pytest.fixture
@@ -111,7 +113,7 @@ class TestConstants:
                 msg = f"'{type(self).__name__}' object has no attribute '{name}'"
                 raise AttributeError(msg)
 
-        mt5._async_client = RaisingClient()
+        mt5._async_client = cast("AsyncMetaTrader5", RaisingClient())
         with pytest.raises(AttributeError, match="UNKNOWN_CONSTANT"):
             _ = mt5.UNKNOWN_CONSTANT
 
@@ -139,7 +141,7 @@ class TestIntrospection:
         response.methods = [method]
         stub = MagicMock()
         stub.GetMethods = AsyncMock(return_value=response)
-        async_mock._ensure_connected = MagicMock(return_value=stub)
+        async_mock.ensure_connected = MagicMock(return_value=stub)
         result = mt5.get_methods()
         stub.GetMethods.assert_awaited_once()
         assert result == [
@@ -176,7 +178,7 @@ class TestIntrospection:
         response.models = [model]
         stub = MagicMock()
         stub.GetModels = AsyncMock(return_value=response)
-        async_mock._ensure_connected = MagicMock(return_value=stub)
+        async_mock.ensure_connected = MagicMock(return_value=stub)
         result = mt5.get_models()
         stub.GetModels.assert_awaited_once()
         assert result == [
