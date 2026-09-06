@@ -1973,7 +1973,8 @@ def serve(
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
     if not isinstance(server, _GrpcServerLike):
-        raise RuntimeError("grpc.server returned incompatible server interface")
+        msg = "grpc.server returned incompatible server interface"
+        raise TypeError(msg)
     _server = server
     register_servicer = cast(
         "Callable[[MT5GRPCServicer, _GrpcServerLike], None]",
