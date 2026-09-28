@@ -3,9 +3,10 @@
 
 .PHONY: setup lint format type test coverage check validate clean help
 
-# Use workspace venv poetry
-VENV_BIN ?= $(shell dirname $(shell which python 2>/dev/null || echo "../../.venv/bin/python"))
-POETRY ?= $(VENV_BIN)/poetry
+# Poetry is provided by the toolchain on PATH (mise), never by the workspace
+# venv: the invest root no longer installs poetry into .venv, so resolving it
+# from the interpreter directory fails with "No such file or directory".
+POETRY ?= poetry
 
 help: ## Show help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
