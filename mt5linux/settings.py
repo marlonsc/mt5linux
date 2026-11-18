@@ -23,7 +23,7 @@ import random
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from mt5linux.constants import MT5Constants
+from mt5linux.grpc_constants import MT5Constants
 
 
 class MT5Settings(BaseSettings):
@@ -164,9 +164,9 @@ class MT5Settings(BaseSettings):
     """Auto-cleanup verified/failed WAL entries older than this."""
 
     # =========================================================================
-    # SERVER (bridge.py)  # noqa: ERA001
+    # SERVER (bridge.py)
     # =========================================================================
-    server_host: str = "0.0.0.0"  # Server bind address  # noqa: S104
+    server_host: str = "0.0.0.0"  # Server bind address
     server_port: int = 8001  # Server listen port (aligned with grpc_port)
     server_grace_period: int = 5  # Graceful shutdown timeout
     thread_pool_size: int = 10
@@ -211,7 +211,7 @@ class MT5Settings(BaseSettings):
         )
         if self.retry_jitter:
             # Add 0-100% jitter (random is fine for jitter)
-            delay *= 0.5 + random.random()  # noqa: S311
+            delay *= 0.5 + random.random()
         return delay
 
     def calculate_backoff_delay(self, attempt: int) -> float:
@@ -227,7 +227,7 @@ class MT5Settings(BaseSettings):
         delay = self.restart_delay_base * (self.restart_delay_multiplier**attempt)
         delay = min(delay, self.restart_delay_max)
         # random is fine for jitter - not cryptographic
-        jitter = delay * self.jitter_factor * (2 * random.random() - 1)  # noqa: S311
+        jitter = delay * self.jitter_factor * (2 * random.random() - 1)
         return max(0, delay + jitter)
 
     def calculate_critical_retry_delay(self, attempt: int) -> float:
@@ -261,7 +261,7 @@ class MT5Settings(BaseSettings):
         )
         if self.retry_jitter:
             # Add 0-100% jitter (random is fine for jitter)
-            delay *= 0.5 + random.random()  # noqa: S311
+            delay *= 0.5 + random.random()
         return delay
 
     def get_grpc_channel_options(self) -> list[tuple[str, int]]:

@@ -1,59 +1,6 @@
-# Python
-*.pyc
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-.hypothesis/
-
-# Virtual environments
-.venv/
-venv/
-ENV/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*.bak
-*.backup
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-
-# mypy
-.mypy_cache/
-
-# ruff
-.ruff_cache/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Environment files (contain secrets)
+__pycache__
 .env
-.env.local
-.env.*.local
-!.env.example
+.venv
+.pytest_cache
+.ruff_cache
+*.egg-info

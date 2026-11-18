@@ -43,12 +43,12 @@ import grpc
 import grpc.aio
 import orjson
 
-from mt5linux.constants import MT5Constants as c
+from mt5linux.grpc_constants import MT5Constants as c
+from mt5linux.grpc_types import MT5Types as t
+from mt5linux.grpc_types import T
 from mt5linux.models import MT5Models
 from mt5linux.protocols import AsyncMT5Protocol
 from mt5linux.settings import MT5Settings
-from mt5linux.types import MT5Types as t
-from mt5linux.types import T
 from mt5linux.utilities import MT5Utilities as u
 
 from . import generated_aio_grpc as mt5_pb2_grpc
@@ -1576,7 +1576,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
                         on_complete(result)
                     except Exception:
                         log.exception("order_send_async on_complete callback failed")
-                return result  # noqa: TRY300 - callback has its own try-except
+                return result
             except Exception as e:
                 if on_error:
                     try:
@@ -1604,7 +1604,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
 
         return request_id
 
-    async def order_send_batch(  # noqa: C901, PLR0915 - batch logic is inherently complex
+    async def order_send_batch(
         self,
         requests: list[dict[str, JSONValue]],
         on_each_complete: Callable[[str, MT5Models.OrderResult], None] | None = None,
@@ -1868,7 +1868,7 @@ class AsyncMetaTrader5(AsyncMT5Protocol):
         async with self._operation_lock:
             return await self._verify_order_state_impl(result, request_id)
 
-    async def _verify_order_state_impl(  # noqa: C901,PLR0912,PLR0915
+    async def _verify_order_state_impl(
         self,
         result: MT5Models.OrderResult,
         request_id: str | None = None,

@@ -33,8 +33,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
+    from mt5linux.grpc_types import MT5Types as t
     from mt5linux.models import MT5Models
-    from mt5linux.types import MT5Types as t
 
 # Type alias for JSON values (single source of truth)
 type JSONPrimitive = str | int | float | bool | None

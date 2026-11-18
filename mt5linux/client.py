@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from datetime import datetime
     from types import TracebackType
 
+    from mt5linux.grpc_types import MT5Types as t
     from mt5linux.models import MT5Models
-    from mt5linux.types import MT5Types as t
 
 log = logging.getLogger(__name__)
 
@@ -248,7 +248,7 @@ class MetaTrader5(MT5Protocol):
     # TERMINAL METHODS
     # =========================================================================
 
-    def initialize(  # noqa: PLR0913
+    def initialize(
         self,
         path: str | None = None,
         login: int | None = None,

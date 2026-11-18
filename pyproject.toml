@@ -1,240 +1,50 @@
 [build-system]
-build-backend = "poetry.core.masonry.api"
-requires = ["poetry-core"]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.poetry]
-authors = ["Lucas Prett Campagna"]
-description = "MetaTrader5 bridge for Linux via gRPC"
-homepage = "https://github.com/lucas-campagna/mt5linux"
-license = "MIT"
+[project]
 name = "mt5linux"
-packages = [{ include = "mt5linux" }]
+version = "1.1.1"
+description = "MetaTrader5 for linux users"
 readme = "README.md"
-repository = "https://github.com/lucas-campagna/mt5linux"
-version = "0.6.0"
-
-[tool.poetry.dependencies]
-aiosqlite = ">=0.19.0"
-grpcio = ">=1.60.0"
-grpcio-tools = ">=1.60.0"
-# numpy>=2.1 for Python 3.13: numpy 1.26.x has NO cp313 wheel (would force a
-# broken MKL source build). The Wine bridge keeps numpy 1.26.4 separately
-# (mt5docker versions.env NUMPY_VERSION) -- this pin is the host/client side only.
-# Cross-version array transfer is safe: arrays move as raw bytes + explicit dtype.
-numpy = ">=2.1,<3"
-orjson = ">=3.11.6"
-# protobuf floor MUST be >= the gencode baked into mt5_pb2.py (currently 6.31.1);
-# an older runtime raises VersionError at import. Keep in lockstep with the
-# mt5docker Wine pin (versions.env PROTOBUF_VERSION) and regenerate stubs together.
-protobuf = ">=6.33.5,<7"
-pydantic = "^2.10.0"
-pydantic-settings = "^2.15.0"
-python = ">=3.13,<3.14"
-structlog = "^25.5.0"
-
-[tool.poetry.group.dev.dependencies]
-hypothesis = "^6.0"
-mypy = "^1.15.0"
-pyrefly = "^0.46.0"
-pytest = "^9.0.3"
-pytest-asyncio = "^1.0.0"
-pytest-cov = "^6.0.0"
-pytest-xdist = "^3.0"
-python-dotenv = "^1.2.2"
-ruff = "^0.11.0"
-types-grpcio = "^1.0.0"
-types-protobuf = "^6.32.1.20251210"
-
-[tool.ruff]
-line-length = 88
-target-version = "py313"
-
-[tool.ruff.lint]
-exclude = [
-    "*.pyi",
-    "mt5linux/mt5_pb2.py",
-    "mt5linux/mt5_pb2_grpc.py",
-    "mt5linux/generated_pb2.py",
-    "mt5linux/generated_grpc.py",
-    "mt5linux/generated_aio_grpc.py",
-    "typings/",
-]
-ignore = [
-    "D203",
-    "D213",
-    "COM812", # missing-trailing-comma (conflicts with formatter)
-    "ISC001", # single-line-implicit-string-concatenation (conflicts with formatter)
-    "N813",   # CamelCase variable name - not applicable for runtime aliases
-    # CPY001 missing-copyright-notice: licensing is declared once by the repository-level
-    # MIT LICENSE; per-file notices are not a convention of this workspace (the flext-infra
-    # generated ruff policy of the invest root ignores the same rule).
-    "CPY001",
-]
-select = ["ALL"]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = [
-    "ARG001",  # unused arguments in fixtures
-    "ARG002",  # unused arguments in fixtures
-    "B017",
-    "PLR2004", # magic values ok in tests
-    "PT011",
-    "S101",    # assert ok in tests
-    "SLF001",  # private member access ok in tests
-    "TRY301",  # raise in inner function not needed in tests
-
-]
-"mt5linux/bridge.py" = [
-    "ARG002",  # unused arguments are required by gRPC framework (request, context)
-    "N802",    # function names must be PascalCase for gRPC service methods
-    "PLW0603", # global statement needed for server lifecycle management
-    "S104",    # binding to all interfaces is intentional for gRPC server
-    "TRY400",  # log.error before raise - not in exception handler
-]
-"mt5linux/protocols.py" = [
-    "ASYNC109", # async function with timeout - required for protocol compatibility
-    "PLR0913",  # too many arguments - protocol methods require specific signatures
-]
-"mt5linux/config.py" = [
-    "S104", # binding to all interfaces is intentional for server configuration
-    "S311", # random usage is for jitter/backoff, not cryptography
-]
-"mt5linux/async_client.py" = [
-    "ASYNC109",
-    "PLR0913",  # too many arguments - MT5 API requires specific method signatures
-]
-"mt5linux/types.py" = [
-    "ANN401",  # Any return is required for the numpy structured-array protocol stub
+license = {text = "MIT"}
+authors = [{name = "Lucas Prett Campagna"}]
+dependencies = [
+    "numpy",
+    "plumbum==1.7.0",
+    "pyparsing>=3.1.0,<4",
+    "python-dotenv",
+    "rpyc>=6.0.0,<7",
 ]
 
-[tool.mypy]
-exclude = [
-    '.*\.pyi$',
-    'mt5linux/mt5_pb2\.py$',
-    'mt5linux/mt5_pb2_grpc\.py$',
-    'mt5linux/generated_pb2\.py$',
-    'mt5linux/generated_grpc\.py$',
-    'mt5linux/generated_aio_grpc\.py$',
-    'typings/',
-    'setup\.py$',
-]
-python_version = "3.13"
-strict = true
-ignore_missing_imports = true
-disable_error_code = [
-    "assignment",
-    "attr-defined",
-    "call-arg",
-    "misc",
-    "name-defined",
-    "no-any-return",
-    "no-untyped-call",
-    "prop-decorator",
-    "valid-type",
-]
-warn_return_any = true
-warn_unused_configs = true
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mt5linux*"]
 
-# Ignore protobuf modules (auto-generated)
-[[tool.mypy.overrides]]
-module = [
-    "mt5linux.generated_pb2",
-    "mt5linux.generated_grpc",
-    "mt5linux.generated_aio_grpc",
-]
-ignore_errors = true
+[project.urls]
+Homepage = "https://github.com/lucas-campagna/mt5linux"
 
-# Test files with complex fixtures and protobuf usage
-[[tool.mypy.overrides]]
-module = ["tests.*"]
-disable_error_code = [
-    "attr-defined",
-    "arg-type",
-    "union-attr",
-    "operator",
-    "return-value",
-    "call-overload",
-    "type-arg",
+[project.optional-dependencies]
+dev = ["build", "twine", "pytest", "ruff"]
+# gRPC transport (client + in-container bridge). Additive to the RPyC runtime:
+# nothing here is imported unless mt5linux.grpc or mt5linux.bridge is used.
+grpc = [
+    "aiosqlite>=0.19.0",
+    "grpcio>=1.60.0",
+    "numpy>=2.1,<3",
+    "orjson>=3.11.6",
+    "protobuf>=6.33.5,<7",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.15.0",
+    "structlog>=25.5.0",
 ]
-
-[tool.pyrefly]
-project-excludes = [
-    "mt5linux/mt5_pb2.py",
-    "mt5linux/mt5_pb2_grpc.py",
-    "mt5linux/generated_pb2.py",
-    "mt5linux/generated_grpc.py",
-    "mt5linux/generated_aio_grpc.py",
-    "typings/",
-    "../.venv/**",
-    "**/.venv/**",
-    "**/venv/**",
-    "**/site-packages/**",
-]
-search-path = ["."]
-python-version = "3.13"
-python-platform = "Linux"
-
-[tool.pyright]
-# Pyright config for MetaTrader5 module (Wine-only)
-exclude = [
-    "mt5linux/mt5_pb2.py",
-    "mt5linux/mt5_pb2_grpc.py",
-    "mt5linux/generated_pb2.py",
-    "mt5linux/generated_grpc.py",
-    "mt5linux/generated_aio_grpc.py",
-    "../.venv",
-    "../.venv/**",
-    "**/.venv",
-    "**/.venv/**",
-    "**/venv",
-    "**/venv/**",
-    "**/site-packages",
-    "**/site-packages/**",
-]
-ignore = [
-    "../.venv",
-    "../.venv/**",
-    "**/.venv",
-    "**/.venv/**",
-    "**/venv",
-    "**/venv/**",
-    "**/site-packages",
-    "**/site-packages/**",
-]
-executionEnvironments = [{ root = ".", extraPaths = ["."] }]
-pythonVersion = "3.13"
-pythonPlatform = "Linux"
-venvPath = ".."
-venv = ".venv"
-useLibraryCodeForTypes = true
-typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]
-addopts = "-v --tb=short"
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "session"
-asyncio_default_test_loop_scope = "session"
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "trading: marks tests that place real orders",
-    "market_depth: marks tests requiring market depth subscription",
-    "integration: marks tests requiring MT5 server",
-    "unit: marks pure unit tests (no server needed)",
-]
-testpaths = ["tests"]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "raise NotImplementedError",
+    "e2e: end-to-end tests that need a live MetaTrader 5 server (see tests/e2e)",
+    "trading: e2e tests that place real orders (opt-in via MT5_E2E_ALLOW_ORDER_SEND=1)",
 ]
 
-[tool.coverage.run]
-branch = true
-source = ["mt5linux"]
-omit = [
-    "mt5linux/bridge.py",
-    "mt5linux/mt5_pb2.py",
-    "mt5linux/mt5_pb2_grpc.py",
-]
+[tool.ruff.lint.per-file-ignores]
+# Best-effort cleanup in e2e teardowns must not mask test results.
+"tests/e2e/*" = ["S110", "BLE001"]

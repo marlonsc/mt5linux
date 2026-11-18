@@ -2,7 +2,6 @@
 """Client and server classes corresponding to protobuf-defined services."""
 
 import grpc
-import warnings
 
 try:
     from . import mt5_pb2 as mt5__pb2
@@ -32,7 +31,7 @@ if _version_not_supported:
     )
 
 
-class MT5ServiceStub(object):
+class MT5ServiceStub:
     """=============================================================================
     MT5 Service Definition
     =============================================================================
@@ -275,7 +274,7 @@ class MT5ServiceStub(object):
         )
 
 
-class MT5ServiceServicer(object):
+class MT5ServiceServicer:
     """=============================================================================
     MT5 Service Definition
     =============================================================================
@@ -712,7 +711,7 @@ def add_MT5ServiceServicer_to_server(servicer, server):
 
 
 # This class is part of an EXPERIMENTAL API.
-class MT5Service(object):
+class MT5Service:
     """=============================================================================
     MT5 Service Definition
     =============================================================================

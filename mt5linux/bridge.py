@@ -1006,7 +1006,7 @@ class MT5GRPCServicer(mt5_pb2_grpc.MT5ServiceServicer):
             if guard.exists():
                 stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
                 guard.replace(guard.with_name(f"auto_demo.{stamp}.json"))
-            proc = subprocess.run(  # noqa: S603  # fixed argv, no shell
+            proc = subprocess.run(  # fixed argv, no shell
                 [sys.executable, str(script)],
                 check=False,
                 capture_output=True,

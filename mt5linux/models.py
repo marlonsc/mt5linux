@@ -18,12 +18,12 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003 - Pydantic needs datetime at runtime
+from datetime import datetime
 from typing import TYPE_CHECKING, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from mt5linux.constants import MT5Constants as c
+from mt5linux.grpc_constants import MT5Constants as c
 from mt5linux.settings import MT5Settings
 
 # Default config instance for model defaults

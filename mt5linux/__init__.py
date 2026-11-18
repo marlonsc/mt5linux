@@ -1,37 +1,37 @@
-"""MT5 Linux Package.
+from .constants import Constants
+from .metatrader5 import MetaTrader5 as MetaTrader5Base
+from .types import (
+    MT5_TYPES,
+    AccountInfo,
+    BookInfo,
+    OrderCheckResult,
+    OrderSendResult,
+    SymbolInfo,
+    TerminalInfo,
+    Tick,
+    TradeDeal,
+    TradeOrder,
+    TradePosition,
+    TradeRequest,
+)
 
-A Python package for MetaTrader5 operations on Linux platforms.
-Provides both synchronous and asynchronous clients for MT5 trading operations.
 
-Main components:
-- AsyncMetaTrader5: Asynchronous gRPC client for MT5 operations
-- MetaTrader5: Synchronous client for MT5 operations
-- MT5Settings: Configuration management with environment variable support
-"""
+class MetaTrader5(MetaTrader5Base, Constants):
+    pass
 
-from importlib.metadata import version
-
-__version__ = version("mt5linux")
-
-
-from mt5linux.async_client import AsyncMetaTrader5
-from mt5linux.client import MetaTrader5
-from mt5linux.constants import c
-from mt5linux.models import MT5Models, m
-from mt5linux.protocols import p
-from mt5linux.settings import MT5Settings
-from mt5linux.types import t
-from mt5linux.utilities import u
 
 __all__ = [
-    "AsyncMetaTrader5",
-    "MT5Models",
-    "MT5Settings",
+    "MT5_TYPES",
+    "AccountInfo",
+    "BookInfo",
     "MetaTrader5",
-    "__version__",
-    "c",
-    "m",
-    "p",
-    "t",
-    "u",
+    "OrderCheckResult",
+    "OrderSendResult",
+    "SymbolInfo",
+    "TerminalInfo",
+    "Tick",
+    "TradeDeal",
+    "TradeOrder",
+    "TradePosition",
+    "TradeRequest",
 ]
