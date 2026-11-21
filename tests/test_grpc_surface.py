@@ -45,3 +45,33 @@ class TestsGrpcSurface:
         assert AsyncGrpcMetaTrader5 is not None
         assert MT5Settings is not None
         assert MT5Utilities.Exceptions.MaxRetriesError is not None
+
+
+import importlib.metadata
+import tomllib
+from pathlib import Path
+
+import pytest
+
+from packaging.specifiers import SpecifierSet
+
+
+class TestsProtobufFloor:
+    """Prove the protobuf floor declared in pyproject.toml is satisfied at runtime."""
+
+    @staticmethod
+    def test_protobuf_floor_matches_declared_specifier() -> None:
+        """The installed protobuf version must satisfy the fork's declared floor."""
+        pytest.importorskip("google.protobuf")
+        pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+        grpc_deps = pyproject["project"]["optional-dependencies"]["grpc"]
+        protobuf_spec = next(
+            dep for dep in grpc_deps if dep.startswith("protobuf")
+        )
+        # Extract specifier from "protobuf>=6.33.5,<7"
+        specifier_str = protobuf_spec.split("protobuf", 1)[1].strip()
+        spec = SpecifierSet(specifier_str)
+        installed = importlib.metadata.version("protobuf")
+        assert installed in spec, (
+            f"installed protobuf {installed} does not satisfy {specifier_str}"
+        )
